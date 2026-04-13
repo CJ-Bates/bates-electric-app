@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /tmp/safety_hub)",
+      "Read(//tmp/**)",
+      "Bash(unzip -o \"/c/Users/cjbates/Downloads/bates_safety_hub_v29_sv8.zip\")",
+      "Bash(npm install:*)",
+      "Bash(node scripts/test-connections.js)",
+      "Bash(node server.js)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(curl -s -X POST http://localhost:3000/auth/signup -H \"Content-Type: application/json\" -d '{\"email\":\"random@gmail.com\",\"password\":\"testpass123\"}')",
+      "Bash(netstat -ano)",
+      "Bash(tasklist:*)",
+      "Bash(powershell:*)",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(curl -s -X POST http://localhost:4000/auth/signup -H \"Content-Type: application/json\" -d '{\"email\":\"random@gmail.com\",\"password\":\"testpass123\"}')",
+      "Bash(curl -s -X POST http://localhost:4000/auth/signup -H \"Content-Type: application/json\" -d '{\"email\":\"test@bates-electric.com\",\"password\":\"short\"}')",
+      "Bash(curl -s http://localhost:4000/me)",
+      "Bash(npx --yes serve -p 5173 -L)",
+      "Bash(curl -sI http://localhost:5173/)",
+      "Bash(curl -sI http://localhost:5173/inspection.html)",
+      "Bash(curl -sI http://localhost:5173/inspection)"
+    ]
+  }
+}

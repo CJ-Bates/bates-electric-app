@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0B2545" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Electrical Safety Inspection</title>
+</head>
+<body class="hub-body insp-body">
+
+  <header class="hub-header">
+    <div class="hub-header-inner">
+      <div class="hub-brand">
+        <a href="home.html" class="back-link" aria-label="Back to hub">&larr;</a>
+        <div class="hub-brand-text">
+          <h1>Electrical Safety Inspection</h1>
+          <p class="hub-subtitle">
+            Bates Electric, Inc.
+            <span id="autosave-badge" class="autosave-badge">Saved</span>
+          </p>
+        </div>
+      </div>
+      <div class="hub-user">
+        <button type="button" class="btn-signout" id="reset-btn">Reset</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="insp-main">
+    <form id="inspection-form" class="insp-form" novalidate>
+
+      <!-- ================= JOB INFORMATION ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>JOB INFORMATION</span></div>
+        <div class="insp-fields">
+          <div class="insp-field"><label>Date</label><input type="date" name="job_date" autocomplete="off"></div>
+          <div class="insp-field"><label>Job #</label><input type="text" name="job_num" autocomplete="off"></div>
+          <div class="insp-field"><label>Invoice #</label><input type="text" name="job_inv" autocomplete="off"></div>
+          <div class="insp-field"><label>Technician</label><input type="text" name="job_tech" autocomplete="off"></div>
+          <div class="insp-field"><label>Customer Name</label><input type="text" name="job_cust" autocomplete="off"></div>
+          <div class="insp-field"><label>Customer Address</label><input type="text" name="job_addr" autocomplete="off"></div>
+          <div class="insp-field"><label>Customer Email</label><input type="email" name="job_email" placeholder="customer@email.com" autocomplete="off"></div>
+          <div class="insp-field"><label>Year Home Built</label><input type="text" name="job_yr" autocomplete="off"></div>
+          <div class="insp-field">
+            <label>Property Type</label>
+            <select name="job_type">
+              <option value="">Select...</option>
+              <option value="Residential">Residential</option>
+              <option value="Commercial">Commercial</option>
+              <option value="Industrial">Industrial</option>
+              <option value="Multi-Family">Multi-Family</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div class="insp-field"><label># Photos Taken</label><input type="text" name="job_photos" autocomplete="off"></div>
+        </div>
+      </section>
+
+      <!-- ================= MAIN ELECTRICAL PANEL ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>MAIN ELECTRICAL PANEL<span class="insp-section-sub"> &nbsp;* Use additional form if multiple panels</span></span></div>
+        <div class="insp-fields">
+          <div class="insp-field"><label>Manufacturer</label><input type="text" name="mp_mfr"></div>
+          <div class="insp-field"><label>Voltage</label><input type="text" name="mp_volt"></div>
+          <div class="insp-field"><label>Ampere Rating</label><input type="text" name="mp_amps"></div>
+          <div class="insp-field"><label>Phase</label><input type="text" name="mp_phase"></div>
+          <div class="insp-field"><label>Approx. Age</label><input type="text" name="mp_age"></div>
+          <div class="insp-field">
+            <label>Obsolete?</label>
+            <div class="radio-group">
+              <label class="radio-opt r-y"><input type="radio" name="mp_obs" value="Y"><span class="radio-chip">Y</span></label>
+              <label class="radio-opt r-n"><input type="radio" name="mp_obs" value="N"><span class="radio-chip">N</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="insp-rows" data-rows="mp_main"></div>
+        <div class="insp-subhdr"><span>Panel Wiring Detail</span></div>
+        <div class="insp-rows" data-rows="mp_wiring"></div>
+      </section>
+
+      <!-- ================= SECONDARY / SUB PANEL ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>SECONDARY / SUB PANEL<span class="insp-section-sub"> &nbsp;* Use additional form if multiple panels</span></span></div>
+        <div class="insp-fields">
+          <div class="insp-field"><label>Manufacturer</label><input type="text" name="sp_mfr"></div>
+          <div class="insp-field"><label>Voltage</label><input type="text" name="sp_volt"></div>
+          <div class="insp-field"><label>Ampere Rating</label><input type="text" name="sp_amps"></div>
+          <div class="insp-field"><label>Phase</label><input type="text" name="sp_phase"></div>
+          <div class="insp-field"><label>Approx. Age</label><input type="text" name="sp_age"></div>
+          <div class="insp-field">
+            <label>Obsolete?</label>
+            <div class="radio-group">
+              <label class="radio-opt r-y"><input type="radio" name="sp_obs" value="Y"><span class="radio-chip">Y</span></label>
+              <label class="radio-opt r-n"><input type="radio" name="sp_obs" value="N"><span class="radio-chip">N</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="insp-rows" data-rows="sp_main"></div>
+        <div class="insp-subhdr"><span>Panel Wiring Detail</span></div>
+        <div class="insp-rows" data-rows="sp_wiring"></div>
+      </section>
+
+      <!-- ================= MAIN ELECTRICAL SERVICE ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>MAIN ELECTRICAL SERVICE</span></div>
+        <div class="insp-fields">
+          <div class="insp-field"><label>Ampere Rating</label><input type="text" name="svc_amps"></div>
+          <div class="insp-field"><label>Phase</label><input type="text" name="svc_phase"></div>
+          <div class="insp-field"><label>Approx. Age</label><input type="text" name="svc_age"></div>
+          <div class="insp-field"><label>Riser Type (PVC/SE/Other)</label><input type="text" name="svc_riser"></div>
+          <div class="insp-field"><label>POA Condition</label><input type="text" name="svc_poa"></div>
+        </div>
+        <div class="insp-rows" data-rows="svc"></div>
+      </section>
+
+      <!-- ================= GENERAL WIRING ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>GENERAL WIRING</span></div>
+        <div class="insp-rows" data-rows="gw"></div>
+      </section>
+
+      <!-- ================= SMOKE & CO ALARMS ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>SMOKE &amp; CO ALARMS</span></div>
+        <div class="insp-rows" data-rows="sm"></div>
+      </section>
+
+      <!-- ================= ATTIC & CRAWLSPACE ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>ATTIC &amp; CRAWLSPACE</span></div>
+        <div class="insp-rows" data-rows="ac"></div>
+      </section>
+
+      <!-- ================= FURNACE & A/C WIRING ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>FURNACE &amp; A/C WIRING</span></div>
+        <div class="insp-rows" data-rows="hv"></div>
+      </section>
+
+      <!-- ================= RECOMMENDED SERVICES ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>RECOMMENDED SERVICES &amp; UPGRADES</span></div>
+        <p class="insp-help">Checked items were identified during inspection and are recommended for safety, code compliance, or performance.</p>
+        <div class="upsell-grid" id="upsell-grid"></div>
+        <div class="insp-field insp-field-full">
+          <label for="up_other">Other:</label>
+          <input type="text" name="up_other" id="up_other" placeholder="Describe any additional recommendations">
+        </div>
+      </section>
+
+      <!-- ================= PHOTOS ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>JOB SITE PHOTOS</span></div>
+        <p class="insp-help">Tap the button to take or choose a photo. Photos are stored with this inspection.</p>
+        <div class="photo-grid" id="photo-grid"></div>
+        <label class="btn-secondary photo-add">
+          <input type="file" accept="image/*" capture="environment" id="photo-input" multiple hidden>
+          + Add Photo
+        </label>
+      </section>
+
+      <!-- ================= NOTES ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>NOTES &amp; RECOMMENDATIONS</span></div>
+        <textarea name="insp_notes" rows="6" placeholder="Additional observations, follow-up items, or customer questions..."></textarea>
+      </section>
+
+      <!-- ================= SIGNATURES ================= -->
+      <section class="insp-section">
+        <div class="insp-section-hdr"><span>AUTHORIZATION &amp; SIGNATURES</span></div>
+        <div class="insp-fields">
+          <div class="insp-field"><label>Technician Name</label><input type="text" name="sig_tech_name"></div>
+          <div class="insp-field"><label>Date</label><input type="date" name="sig_date"></div>
+          <div class="insp-field"><label>Customer Printed Name</label><input type="text" name="sig_cust_name"></div>
+        </div>
+
+        <div class="sig-pair">
+          <div class="sig-block">
+            <div class="sig-label">Technician Signature</div>
+            <canvas id="sigTech" class="sig-canvas" width="600" height="180"></canvas>
+            <button type="button" class="btn-text" data-clear="sigTech">Clear</button>
+          </div>
+          <div class="sig-block">
+            <div class="sig-label">Customer Signature</div>
+            <canvas id="sigCust" class="sig-canvas" width="600" height="180"></canvas>
+            <button type="button" class="btn-text" data-clear="sigCust">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= ACTIONS ================= -->
+      <div class="insp-actions">
+        <button type="button" class="btn-secondary" id="save-draft-btn">Save Draft</button>
+        <button type="submit" class="btn-primary" id="submit-btn">Submit &amp; Email Report</button>
+      </div>
+
+      <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+    </form>
+  </main>
+
+  <script src="inspection-fields.js"></script>
+  <script src="inspection.js"></script>
+</body>
+</html>

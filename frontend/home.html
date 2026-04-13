@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0B2545" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Field Hub</title>
+</head>
+<body class="hub-body">
+  <header class="hub-header">
+    <div class="hub-header-inner">
+      <div class="hub-brand">
+        <div class="brand-mark small" aria-hidden="true"><span class="bolt">&#9889;</span></div>
+        <div class="hub-brand-text">
+          <h1>Bates Electric</h1>
+          <p class="hub-subtitle" id="hub-subtitle">Field Hub</p>
+        </div>
+      </div>
+      <div class="hub-user">
+        <div class="hub-user-meta">
+          <span class="hub-user-name" id="user-name">&mdash;</span>
+          <span class="hub-user-role" id="user-role"></span>
+        </div>
+        <button type="button" class="btn-signout" id="signout-btn">Sign Out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="hub-main">
+    <section class="hub-welcome">
+      <h2 id="welcome-title">Welcome</h2>
+      <p id="welcome-copy">Choose a tool to get started.</p>
+    </section>
+
+    <section class="tile-grid" id="tile-grid" aria-label="Available tools">
+      <!-- Tiles inserted by home.js based on role -->
+    </section>
+  </main>
+
+  <script src="home.js"></script>
+</body>
+</html>

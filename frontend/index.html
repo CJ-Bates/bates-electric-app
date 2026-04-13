@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0B2545" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Tech Sign In</title>
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-card" aria-labelledby="login-title">
+      <header class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span class="bolt">&#9889;</span>
+        </div>
+        <h1 id="login-title">Bates Electric</h1>
+        <p class="tagline">Field Technician Sign In</p>
+      </header>
+
+      <form id="login-form" class="login-form" novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autocomplete="username"
+            inputmode="email"
+            spellcheck="false"
+            autocapitalize="off"
+            required
+            placeholder="you@bateselectric.com"
+          />
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="password-wrap">
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              placeholder="Enter your password"
+            />
+            <button type="button" class="toggle-password" id="toggle-password" aria-label="Show password">
+              Show
+            </button>
+          </div>
+        </div>
+
+        <div class="row-between">
+          <label class="remember">
+            <input type="checkbox" id="remember" name="remember" />
+            <span>Keep me signed in</span>
+          </label>
+          <a href="#" class="forgot" id="forgot-link">Forgot password?</a>
+        </div>
+
+        <button type="submit" class="btn-primary" id="submit-btn">
+          <span class="btn-label">Sign In</span>
+        </button>
+
+        <div
+          id="status"
+          class="status"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></div>
+      </form>
+
+      <footer class="legal">
+        <p>Authorized personnel only. &copy; Bates Electric, Inc.</p>
+      </footer>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

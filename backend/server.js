@@ -1,31 +1,34 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
 
-// Create the server
+const authRoutes = require('./routes/auth');
+const inspectionRoutes = require('./routes/inspections');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Connect to Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-// Middleware - tools that run on every request
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-// Test route - just to make sure everything works
 app.get('/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'Bates Electric API is running!',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 
-// Start the server
+app.use('/auth', authRoutes);
+// GET /me lives on the auth router but is commonly called without the prefix;
+// mount it there as well for convenience.
+app.use('/', authRoutes);
+app.use('/inspections', inspectionRoutes);
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Server error' });
+});
+
 app.listen(PORT, () => {
   console.log(`Bates Electric backend running on port ${PORT}`);
 });
