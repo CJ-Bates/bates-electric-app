@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — SDS Sheets</title>
+</head>
+<body class="hub-body">
+
+  <main class="hub-main">
+
+    <!-- Search bar -->
+    <div class="toc-search-wrap">
+      <span class="toc-search-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </span>
+      <input type="search" class="toc-search-input" id="sds-search" placeholder="Search chemicals...">
+    </div>
+
+    <!-- Count display -->
+    <p class="sds-count" id="sds-count">37 chemicals</p>
+
+    <!-- Cards container -->
+    <div class="sds-grid" id="sds-grid"></div>
+
+    <p class="docs-footer">
+      SDS Booklet — Bates Electric Safety Department<br>
+      For updates contact (636) 464-3939
+    </p>
+
+  </main>
+
+  <script>
+    // ─── Chemical inventory data ────────────────────────
+    var SDS_DATA = [
+      { name: 'Acetone', brand: 'Klean-Strip', use: 'PVC cement cleanup', page: 10, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Aqua-Gel II', brand: 'Ideal Industries', use: 'Cold-weather wire pulling', page: 18, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Citrus-Based Degreaser', brand: 'Simple Green', use: 'Electrical panel wipe-down', page: 27, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Cold Galvanizing Compound', brand: 'Rust-Oleum', use: 'Conduit touch-up', page: 33, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Construction Adhesive', brand: 'Loctite', use: 'Panel and equipment mounting', page: 40, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Diesel Fuel', brand: 'Chevron', use: 'Temporary generator fuel', page: 47, signal: 'Danger', tags: ['Flammable', 'Health Hazard'] },
+      { name: 'Duct Seal Compound', brand: 'Gardner Bender', use: 'Conduit and box sealing', page: 57, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Electrical Contact Cleaner', brand: 'CRC', use: 'Switchgear and contact cleaning', page: 63, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Electrical Insulating Varnish', brand: 'Glyptal', use: 'Motor and coil coating', page: 75, signal: 'Danger', tags: ['Flammable', 'Health Hazard'] },
+      { name: 'Firestop Caulk', brand: '3M', use: 'Fire-rated wall penetrations', page: 86, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Gasoline', brand: 'Chevron', use: 'Small engine fuel', page: 100, signal: 'Danger', tags: ['Flammable', 'Health Hazard', 'Toxic'] },
+      { name: 'Isopropyl Alcohol 99%', brand: 'MG Chemicals', use: 'Fiber optic and PCB cleaning', page: 116, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Lead-Free Solder Wire', brand: 'Kester', use: 'Circuit board soldering', page: 129, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Liquid Electrical Tape', brand: 'Gardner Bender', use: 'Splice and termination sealing', page: 137, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Lithium-Ion Tool Battery', brand: 'Milwaukee', use: 'Cordless power tools', page: 153, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Loctite 242 (Blue)', brand: 'Henkel', use: 'Conduit fitting lock', page: 162, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'MAPP Gas', brand: 'Worthington', use: 'High-temperature brazing', page: 169, signal: 'Danger', tags: ['Flammable', 'Compressed Gas'] },
+      { name: 'Mastic Tape', brand: '3M', use: 'Moisture sealing', page: 182, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Mineral Spirits', brand: 'Sunnyside', use: 'Paint preparation', page: 187, signal: 'Danger', tags: ['Flammable', 'Health Hazard'] },
+      { name: 'Never-Seez Nickel Grade', brand: 'Bostik', use: 'Ground rod threading', page: 200, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'No-Clean Flux Pen', brand: 'Techspray', use: 'Field electronics repair', page: 211, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Panel Enclosure Paint', brand: 'Hoffman', use: 'Custom panel painting', page: 225, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Penetrating Oil', brand: 'WD-40', use: 'Rusted fitting release', page: 230, signal: 'Warning', tags: ['Flammable', 'Irritant'] },
+      { name: 'Polywater J Lubricant', brand: 'American Polywater', use: 'High-voltage cable pulling', page: 236, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Portland Cement (Type I/II)', brand: 'Quikrete', use: 'Anchor base setting', page: 247, signal: 'Danger', tags: ['Irritant', 'Corrosive'] },
+      { name: 'Propane (20 lb cylinder)', brand: 'Bernzomatic', use: 'Torch heating', page: 258, signal: 'Danger', tags: ['Flammable', 'Compressed Gas'] },
+      { name: 'PVC Glue (Cement)', brand: 'Oatey / Weld-On', use: 'PVC conduit and fitting bonding', page: 267, signal: 'Danger', tags: ['Flammable', 'Health Hazard'] },
+      { name: 'PVC Primer', brand: 'Oatey / Weld-On', use: 'Surface prep for PVC bonding', page: 278, signal: 'Danger', tags: ['Flammable', 'Health Hazard'] },
+      { name: 'Rapid-Set Concrete Mix', brand: 'CTS Cement', use: 'Emergency pad repairs', page: 289, signal: 'Danger', tags: ['Irritant', 'Corrosive'] },
+      { name: 'Rubber Splicing Tape', brand: '3M', use: 'Medium-voltage splices', page: 302, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'RTV Silicone (clear)', brand: 'CRC', use: 'Junction box gasketing', page: 308, signal: 'Warning', tags: ['Irritant'] },
+      { name: 'Safety Yellow Spray Paint', brand: 'Krylon', use: 'Equipment marking', page: 318, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Scotchkote Electrical Coating', brand: '3M', use: 'Conduit corrosion protection', page: 342, signal: 'Danger', tags: ['Flammable', 'Irritant'] },
+      { name: 'Sealed Lead-Acid Battery', brand: 'Interstate Batteries', use: 'UPS backup power', page: 363, signal: 'Danger', tags: ['Corrosive'] },
+      { name: 'Vinyl Electrical Tape', brand: '3M', use: 'Wire phasing and insulation', page: 378, signal: 'Warning', tags: ['Minimal Hazard'] },
+      { name: 'Wasp & Hornet Spray', brand: 'Raid', use: 'Outdoor panel pest control', page: 389, signal: 'Danger', tags: ['Flammable', 'Irritant', 'Environmental'] },
+      { name: 'Wire Pulling Lubricant', brand: '3M', use: 'Conduit and cable pulling', page: 404, signal: 'Warning', tags: ['Irritant'] }
+    ];
+
+    // Tag → CSS class map
+    var TAG_CLASSES = {
+      'Flammable': 'sds-tag--flame',
+      'Irritant': 'sds-tag--irritant',
+      'Health Hazard': 'sds-tag--health',
+      'Toxic': 'sds-tag--toxic',
+      'Corrosive': 'sds-tag--corrosive',
+      'Compressed Gas': 'sds-tag--gas',
+      'Environmental': 'sds-tag--env',
+      'Minimal Hazard': 'sds-tag--minimal'
+    };
+
+    // Tag → icon SVG
+    var TAG_ICONS = {
+      'Flammable': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 23c-4.97 0-9-3.58-9-8 0-3.07 2.31-6.64 4.5-9 .37-.4 1.01-.06.97.47-.14 1.89.95 3.73 2.53 4.53.3.15.66-.05.7-.38.2-1.56.94-3 2.3-4.12 0 0 1 3.5 3 5.5s3 4 3 6c0 4.42-4.03 8-8 8z"/></svg>',
+      'Irritant': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L1 21h22L12 2zm0 4l7.53 13H4.47L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z"/></svg>',
+      'Health Hazard': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 5h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>',
+      'Toxic': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 5h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>',
+      'Corrosive': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 5h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>',
+      'Compressed Gas': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 5h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>',
+      'Environmental': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 5h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>',
+      'Minimal Hazard': '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>'
+    };
+
+    var grid = document.getElementById('sds-grid');
+    var countEl = document.getElementById('sds-count');
+
+    function renderCards(filter) {
+      var q = (filter || '').toLowerCase().trim();
+      var html = '';
+      var count = 0;
+
+      SDS_DATA.forEach(function(c) {
+        var searchText = (c.name + ' ' + c.brand + ' ' + c.use + ' ' + c.tags.join(' ')).toLowerCase();
+        if (q && searchText.indexOf(q) === -1) return;
+        count++;
+
+        var tagsHtml = c.tags.map(function(t) {
+          var cls = TAG_CLASSES[t] || 'sds-tag--irritant';
+          var icon = TAG_ICONS[t] || '';
+          return '<span class="sds-tag ' + cls + '">' + icon + ' ' + t + '</span>';
+        }).join('');
+
+        var signalCls = c.signal === 'Danger' ? 'sds-signal--danger' : 'sds-signal--warning';
+
+        html += '<div class="sds-card">' +
+          '<div class="sds-card-header">' +
+            '<div class="sds-card-title">' + c.name + '</div>' +
+            '<span class="sds-signal ' + signalCls + '">' + c.signal + '</span>' +
+          '</div>' +
+          '<div class="sds-card-brand">' + c.brand + '</div>' +
+          '<div class="sds-card-use">' + c.use + '</div>' +
+          '<div class="sds-card-tags">' + tagsHtml + '</div>' +
+          '<a href="SDS_Booklet.pdf#page=' + c.page + '" target="_blank" class="sds-card-btn">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' +
+            ' View Full SDS' +
+          '</a>' +
+        '</div>';
+      });
+
+      grid.innerHTML = html;
+      countEl.textContent = count + (count === 1 ? ' chemical' : ' chemicals');
+    }
+
+    renderCards('');
+
+    document.getElementById('sds-search').addEventListener('input', function(e) {
+      renderCards(e.target.value);
+    });
+  </script>
+
+  <script src="shared-nav.js"></script>
+</body>
+</html>
