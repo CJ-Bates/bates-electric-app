@@ -218,6 +218,29 @@
   }
 
   /**
+   * Open/close drawer functions (defined early so hamburger can reference them)
+   */
+  function openDrawer() {
+    const overlay = document.getElementById('drawerOverlay');
+    const drawer = document.getElementById('sharedDrawer');
+    if (overlay && drawer) {
+      overlay.classList.add('open');
+      drawer.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  function closeDrawer() {
+    const overlay = document.getElementById('drawerOverlay');
+    const drawer = document.getElementById('sharedDrawer');
+    if (overlay && drawer) {
+      overlay.classList.remove('open');
+      drawer.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+  }
+
+  /**
    * Handle hamburger button click
    */
   function setupHamburgerListener() {
@@ -232,24 +255,9 @@
    */
   function setupDrawerListeners() {
     const overlay = document.getElementById('drawerOverlay');
-    const drawer = document.getElementById('sharedDrawer');
     const closeBtn = document.getElementById('drawerClose');
     const topbarSignOut = document.getElementById('topbarSignOut');
     const drawerSignOut = document.getElementById('drawerSignOut');
-
-    // Close drawer
-    function closeDrawer() {
-      overlay.classList.remove('open');
-      drawer.classList.remove('open');
-      document.body.style.overflow = '';
-    }
-
-    // Open drawer (globally available)
-    window.openDrawer = function() {
-      overlay.classList.add('open');
-      drawer.classList.add('open');
-      document.body.style.overflow = 'hidden';
-    };
 
     // Close on overlay click
     overlay.addEventListener('click', closeDrawer);
@@ -282,7 +290,8 @@
 
     // Keyboard: ESC to close
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && drawer.classList.contains('open')) {
+      const drawer = document.getElementById('sharedDrawer');
+      if (e.key === 'Escape' && drawer && drawer.classList.contains('open')) {
         closeDrawer();
       }
     });

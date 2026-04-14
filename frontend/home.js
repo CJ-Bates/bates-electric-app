@@ -70,9 +70,12 @@
     const subtitle = document.getElementById('hub-subtitle');
 
     const displayName = profile.full_name || profile.email.split('@')[0];
-    nameEl.textContent = displayName;
-    roleEl.textContent = profile.role === 'office' ? 'Office' : 'Tech';
-    subtitle.textContent = profile.role === 'office' ? 'Office Hub' : 'Field Hub';
+    if (nameEl) nameEl.textContent = displayName;
+    if (roleEl) roleEl.textContent = profile.role === 'office' ? 'Office' : 'Tech';
+    if (subtitle) subtitle.textContent = profile.role === 'office' ? 'Office Hub' : 'Field Hub';
+
+    // Store profile for shared-nav and other components
+    try { localStorage.setItem('bates.profile', JSON.stringify(profile)); } catch(e) {}
 
     renderFeaturedActions(profile.role);
     renderQuickLinks(profile.role);
