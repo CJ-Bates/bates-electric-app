@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#0B2545" />
+  <meta name="theme-color" content="#0a0a0a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bates Electric" />
@@ -381,7 +381,9 @@
 <body class="games-body">
   <div class="games-container">
     <div class="games-header">
-      <button class="games-back-btn" onclick="history.back()" title="Back">←</button>
+      <button class="games-back-btn" onclick="history.back()" title="Back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </button>
       <div class="games-header-title">
         <h1>Games & Training</h1>
         <p>Learn safety while you play</p>
@@ -392,7 +394,9 @@
       <!-- Game Cards -->
       <div class="games-grid">
         <div class="game-card" onclick="startGame('wirewizard')">
-          <div class="game-icon">⚡</div>
+          <div class="game-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
           <h2 class="game-title">Wire Wizard</h2>
           <p class="game-desc">Test your wire color knowledge! Route electrical circuits through a grid.</p>
           <div class="game-meta">
@@ -402,7 +406,9 @@
         </div>
 
         <div class="game-card" onclick="startGame('hazardquiz')">
-          <div class="game-icon">🎯</div>
+          <div class="game-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
           <h2 class="game-title">Hazard Quiz</h2>
           <p class="game-desc">Safety knowledge challenge! Answer questions about workplace hazards.</p>
           <div class="game-meta">
@@ -431,7 +437,9 @@
   <div id="gameOverlay" class="game-overlay">
     <div class="game-overlay-header">
       <div class="game-overlay-title" id="gameTitle">Game</div>
-      <button class="game-overlay-close" onclick="closeGame()">✕</button>
+      <button class="game-overlay-close" onclick="closeGame()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     </div>
     <div id="gameContainer" class="game-container"></div>
     <div id="gameScoreDisplay" class="game-score-display"></div>

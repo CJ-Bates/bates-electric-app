@@ -12,9 +12,9 @@ function allowedBatesEmail(email) {
   return e.endsWith('@bates-electric.com') || /\.bateselectric@gmail\.com$/.test(e);
 }
 
-// POST /auth/signup  { email, password, full_name? }
+// POST /auth/signup  { email, password, full_name?, phone? }
 router.post('/signup', async (req, res) => {
-  const { email, password, full_name } = req.body || {};
+  const { email, password, full_name, phone } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required.' });
@@ -33,7 +33,7 @@ router.post('/signup', async (req, res) => {
     email,
     password,
     options: {
-      data: full_name ? { full_name } : undefined,
+      data: { full_name: full_name || undefined, phone: phone || undefined },
     },
   });
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#0B2545" />
+  <meta name="theme-color" content="#0a0a0a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bates Electric" />
@@ -30,8 +30,6 @@
       padding: 0 16px;
       font-size: 16px;
       color: var(--ink-900);
-      background: #F5F5F5;
-      border: 1px solid #E0E0E0;
       border-radius: 12px;
       outline: none;
       transition: border-color 0.15s, box-shadow 0.15s;
@@ -62,8 +60,6 @@
       font-size: 14px;
       font-weight: 600;
       color: var(--ink-700);
-      background: #F5F5F5;
-      border: 1px solid #E0E0E0;
       border-radius: 20px;
       cursor: pointer;
       transition: all 0.15s;
@@ -443,17 +439,6 @@
 </head>
 <body class="hub-body">
 
-  <header class="hub-header">
-    <div class="hub-header-inner">
-      <div class="hub-brand">
-        <a href="home.html" class="back-link" aria-label="Back to hub">&larr;</a>
-        <div class="hub-brand-text">
-          <h1>Safety Data Sheets</h1>
-          <p class="hub-subtitle">Chemical & Product Info</p>
-        </div>
-      </div>
-    </div>
-  </header>
 
   <main class="sds-page">
     <div class="sds-header">
@@ -466,9 +451,9 @@
       />
       <div class="sds-filters">
         <button class="sds-filter active" onclick="setSDSFilter('all', this)">All</button>
-        <button class="sds-filter" onclick="setSDSFilter('DANGER', this)">🔴 DANGER</button>
-        <button class="sds-filter" onclick="setSDSFilter('WARNING', this)">🟠 WARNING</button>
-        <button class="sds-filter" onclick="setSDSFilter('flammable', this)">🔥 Flammable</button>
+        <button class="sds-filter" onclick="setSDSFilter('DANGER', this)">DANGER</button>
+        <button class="sds-filter" onclick="setSDSFilter('WARNING', this)">WARNING</button>
+        <button class="sds-filter" onclick="setSDSFilter('flammable', this)">Flammable</button>
       </div>
     </div>
 
@@ -482,7 +467,9 @@
   <div class="sds-modal" id="sdsModal">
     <div class="sds-modal-header">
       <h2 class="sds-modal-title" id="modalTitle"></h2>
-      <button class="sds-modal-close" onclick="closeSDS()">✕</button>
+      <button class="sds-modal-close" onclick="closeSDS()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     </div>
     <div class="sds-modal-body" id="modalBody"></div>
   </div>

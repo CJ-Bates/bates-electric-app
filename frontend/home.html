@@ -3,394 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#0B2545" />
+  <meta name="theme-color" content="#0a0a0a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bates Electric" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
-  <style>
-    /* Dashboard-specific styles */
-    .dashboard-search {
-      margin-bottom: 16px;
-    }
-
-    .search-wrap {
-      position: relative;
-    }
-
-    .search-input {
-      width: 100%;
-      padding: 12px 16px 12px 44px;
-      background: rgba(255,255,255,0.85);
-      border: 0.5px solid rgba(30,58,110,0.18);
-      border-radius: 12px;
-      font-size: 15px;
-      font-family: -apple-system, 'SF Pro Display', sans-serif;
-      color: var(--navy);
-      outline: none;
-    }
-
-    .search-input::placeholder {
-      color: rgba(15,31,61,0.35);
-    }
-
-    .search-input:focus {
-      border-color: rgba(30,58,110,0.40);
-      background: rgba(255,255,255,0.95);
-    }
-
-    .search-icon {
-      position: absolute;
-      left: 14px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: rgba(15,31,61,0.45);
-      display: flex;
-      align-items: center;
-    }
-
-    .emergency-banner {
-      background: linear-gradient(135deg, rgba(220,38,38,0.90) 0%, rgba(180,25,25,0.90) 100%);
-      border-radius: 14px;
-      padding: 14px 16px;
-      margin-bottom: 18px;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      cursor: pointer;
-      transition: transform 0.15s;
-    }
-
-    .emergency-banner:active {
-      transform: scale(0.97);
-    }
-
-    .emergency-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      color: #fff;
-      background: rgba(255,255,255,0.15);
-    }
-
-    .emergency-title {
-      font-size: 15px;
-      font-weight: 700;
-      color: #fff;
-      letter-spacing: -0.2px;
-    }
-
-    .emergency-sub {
-      font-size: 12px;
-      color: rgba(255,255,255,0.85);
-      margin-top: 2px;
-    }
-
-    .emergency-arrow {
-      color: #fff;
-      margin-left: auto;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-    }
-
-    .section-label {
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.8px;
-      text-transform: uppercase;
-      color: rgba(30,58,110,0.65);
-      margin-bottom: 10px;
-      margin-top: 14px;
-      padding-bottom: 6px;
-      border-bottom: 0.5px solid rgba(30,58,110,0.15);
-    }
-
-    .quick-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .quick-card {
-      background: rgba(255,255,255,0.70);
-      border: 0.5px solid rgba(30,58,110,0.15);
-      border-radius: 14px;
-      padding: 14px;
-      cursor: pointer;
-      transition: background 0.15s;
-      text-decoration: none;
-      color: var(--navy);
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .quick-card:active {
-      background: rgba(30,58,110,0.08);
-    }
-
-    .qc-icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--blue-accent);
-      margin-bottom: 10px;
-    }
-
-    .qc-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--navy);
-      letter-spacing: -0.2px;
-    }
-
-    .qc-sub {
-      font-size: 11px;
-      color: rgba(15,31,61,0.55);
-      margin-top: 3px;
-    }
-
-    .featured-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 4px;
-    }
-
-    .featured-action-card {
-      background: rgba(255,255,255,0.80);
-      border: 0.5px solid rgba(30,58,110,0.16);
-      border-radius: 14px;
-      padding: 16px;
-      cursor: pointer;
-      transition: background 0.15s;
-      text-decoration: none;
-      color: var(--navy);
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .featured-action-card:active {
-      background: rgba(30,58,110,0.08);
-    }
-
-    .fac-icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--blue-accent);
-      margin-bottom: 12px;
-      font-size: 28px;
-    }
-
-    .fac-title {
-      font-size: 15px;
-      font-weight: 700;
-      color: var(--navy);
-      letter-spacing: -0.2px;
-    }
-
-    .fac-sub {
-      font-size: 12px;
-      color: rgba(15,31,61,0.55);
-      margin-top: 4px;
-    }
-
-    .reference-card {
-      background: rgba(255,255,255,0.82);
-      border: 0.5px solid rgba(30,58,110,0.14);
-      border-radius: 14px;
-      padding: 16px 18px;
-      margin-bottom: 10px;
-      box-shadow: 0 2px 10px rgba(30,58,110,0.07);
-    }
-
-    .reference-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 12px;
-    }
-
-    .reference-icon {
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      border: 0.5px solid rgba(30,58,110,0.18);
-    }
-
-    .reference-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--navy);
-      letter-spacing: -0.2px;
-    }
-
-    .reference-sub {
-      font-size: 11px;
-      color: rgba(15,31,61,0.5);
-      margin-top: 1px;
-    }
-
-    .reference-detail-btn {
-      margin-left: auto;
-      font-size: 11px;
-      font-weight: 600;
-      color: #1D4ED8;
-      cursor: pointer;
-      padding: 4px 10px;
-      background: rgba(29,78,216,0.08);
-      border-radius: 8px;
-      border: 0.5px solid rgba(29,78,216,0.2);
-    }
-
-    .steps {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }
-
-    .step {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .step-number {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      color: #fff;
-      font-size: 11px;
-      font-weight: 800;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .step-text {
-      font-size: 13px;
-      color: rgba(15,31,61,0.78);
-    }
-
-    .ppe-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-
-    .ppe-cell {
-      background: rgba(15,31,61,0.04);
-      border-radius: 10px;
-      padding: 10px 12px;
-    }
-
-    .ppe-label {
-      font-size: 11px;
-      font-weight: 700;
-      color: rgba(15,31,61,0.5);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }
-
-    .ppe-items {
-      font-size: 12px;
-      color: rgba(15,31,61,0.75);
-      line-height: 1.6;
-    }
-
-    .emergency-call-button {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      border-radius: 14px;
-      padding: 14px 12px;
-      text-decoration: none;
-      cursor: pointer;
-      font-family: -apple-system, 'SF Pro Display', sans-serif;
-      transition: transform 0.15s;
-    }
-
-    .emergency-call-button:active {
-      transform: scale(0.97);
-    }
-
-    .emergency-call-911 {
-      background: rgba(220,38,38,0.10);
-      border: 1px solid rgba(220,38,38,0.25);
-    }
-
-    .emergency-call-office {
-      background: rgba(30,58,110,0.08);
-      border: 1px solid rgba(30,58,110,0.18);
-    }
-
-    .call-icon {
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-    }
-
-    .call-label {
-      display: flex;
-      flex-direction: column;
-      text-align: left;
-    }
-
-    .call-number {
-      font-size: 15px;
-      font-weight: 700;
-      line-height: 1.1;
-    }
-
-    .call-type {
-      font-size: 11px;
-      color: rgba(15,31,61,0.5);
-      margin-top: 1px;
-    }
-
-    .emergency-calls-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 4px;
-    }
-  </style>
 </head>
 <body class="hub-body">
-  <header class="hub-header">
-    <div class="hub-header-inner">
-      <div class="hub-brand">
-        <div class="brand-mark small" aria-hidden="true"><span class="bolt">&#9889;</span></div>
-        <div class="hub-brand-text">
-          <h1>Bates Electric</h1>
-          <p class="hub-subtitle" id="hub-subtitle">Field Hub</p>
-        </div>
-      </div>
-      <div class="hub-user">
-        <div class="hub-user-meta">
-          <span class="hub-user-name" id="user-name">&mdash;</span>
-          <span class="hub-user-role" id="user-role"></span>
-        </div>
-        <button type="button" class="btn-signout" id="signout-btn">Sign Out</button>
-      </div>
-    </div>
-  </header>
 
   <main class="hub-main">
     <!-- Search Bar -->
@@ -431,23 +52,23 @@
       <div class="emergency-calls-grid">
         <a href="tel:911" class="emergency-call-button emergency-call-911">
           <div class="call-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#991B1B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.77 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
             </svg>
           </div>
           <div class="call-label">
-            <div class="call-number" style="color: #991B1B;">911</div>
+            <div class="call-number">911</div>
             <div class="call-type">Emergency</div>
           </div>
         </a>
         <a href="tel:6364643939" class="emergency-call-button emergency-call-office">
           <div class="call-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1E3A6E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.77 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
             </svg>
           </div>
           <div class="call-label">
-            <div class="call-number" style="color: #1E3A6E;">Office</div>
+            <div class="call-number">Office</div>
             <div class="call-type">(636) 464-3939</div>
           </div>
         </a>
@@ -471,14 +92,14 @@
     </section>
 
     <!-- Field Reference Cards -->
-    <section id="field-reference-section" style="margin-bottom: 100px;">
+    <section id="field-reference-section">
       <div class="section-label">Field reference</div>
 
       <!-- LOTO Card -->
       <div class="reference-card" id="loto-card">
         <div class="reference-header">
           <div class="reference-icon" style="background: rgba(220,38,38,0.10); border-color: rgba(220,38,38,0.25);">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#991B1B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
@@ -491,27 +112,27 @@
         </div>
         <div class="steps">
           <div class="step">
-            <div class="step-number" style="background: #1E3A6E;">1</div>
+            <div class="step-number" style="background: var(--accent);">1</div>
             <div class="step-text">Notify all affected employees</div>
           </div>
           <div class="step">
-            <div class="step-number" style="background: #1E3A6E;">2</div>
+            <div class="step-number" style="background: var(--accent);">2</div>
             <div class="step-text">Shut down equipment normally</div>
           </div>
           <div class="step">
-            <div class="step-number" style="background: #1E3A6E;">3</div>
+            <div class="step-number" style="background: var(--accent);">3</div>
             <div class="step-text">Isolate all energy sources</div>
           </div>
           <div class="step">
-            <div class="step-number" style="background: #1E3A6E;">4</div>
+            <div class="step-number" style="background: var(--accent);">4</div>
             <div class="step-text">Apply lockout & tagout devices</div>
           </div>
           <div class="step">
-            <div class="step-number" style="background: #1E3A6E;">5</div>
+            <div class="step-number" style="background: var(--accent);">5</div>
             <div class="step-text">Release / restrain stored energy</div>
           </div>
           <div class="step">
-            <div class="step-number" style="background: #991B1B;">6</div>
+            <div class="step-number" style="background: #ef4444;">6</div>
             <div class="step-text"><strong>Verify zero energy</strong> — test before work</div>
           </div>
         </div>
@@ -521,7 +142,7 @@
       <div class="reference-card" id="ppe-card">
         <div class="reference-header">
           <div class="reference-icon" style="background: rgba(29,78,216,0.10); border-color: rgba(29,78,216,0.22);">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1D4ED8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
           </div>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#0B2545" />
+  <meta name="theme-color" content="#0a0a0a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Safety Docs" />
@@ -70,7 +70,6 @@
     }
 
     .docs-page-body {
-      background: #F1F5F9;
       color: var(--ink-900);
       min-height: 100vh;
       min-height: 100dvh;
@@ -272,7 +271,6 @@
     }
 
     .modal-close:hover {
-      background: #F1F5F9;
       border-color: var(--navy-700);
     }
 
@@ -323,7 +321,6 @@
     }
 
     .modal-body .policy-card {
-      background: #F1F5F9;
       padding: 16px;
       border-radius: 10px;
       margin-bottom: 16px;
@@ -466,7 +463,6 @@
   <!-- Header -->
   <header class="docs-page-header">
     <div class="docs-page-header-inner">
-      <button type="button" class="docs-back-btn" id="back-btn" onclick="goBack()">←</button>
       <div class="docs-header-content">
         <h1 class="docs-header-title">Safety Documents</h1>
       </div>
@@ -478,7 +474,7 @@
     <!-- Search -->
     <div class="docs-search-wrap">
       <div class="docs-search-box">
-        <span class="docs-search-icon">🔍</span>
+        <svg class="docs-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input
           type="text"
           class="docs-search-input"
@@ -506,7 +502,9 @@
       <div class="modal-handle"></div>
       <div class="modal-header">
         <h2 class="modal-title" id="modalTitle"></h2>
-        <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close document">✕</button>
+        <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close document">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <div class="modal-body" id="modalBody"></div>
     </div>

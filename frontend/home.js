@@ -20,7 +20,7 @@
   // Featured action cards
   const TECH_FEATURED = {
     id: 'new-inspection',
-    icon: '✓',
+    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>',
     title: 'Start Inspection',
     desc: 'Electrical safety form',
     href: 'inspection.html',
@@ -28,7 +28,7 @@
 
   const OFFICE_FEATURED = {
     id: 'inspection-dashboard',
-    icon: '☰',
+    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>',
     title: 'Inspection Dashboard',
     desc: 'View all reports',
     href: 'office.html',
@@ -36,12 +36,12 @@
 
   // Quick links for all users
   const QUICK_LINKS = [
-    { id: 'site-visit',    icon: '📋', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
-    { id: 'safety-docs',   icon: '§',  title: 'Safety Docs',      desc: 'Policies & procedures', href: 'safety-docs.html' },
-    { id: 'sds',           icon: '☣',  title: 'SDS Sheets',       desc: '37 chemicals',         href: 'sds.html' },
-    { id: 'contacts',      icon: '☎',  title: 'Contacts',         desc: 'Team directory',       href: 'contacts.html' },
-    { id: 'games',         icon: '🎮', title: 'Games',            desc: 'Safety training',      href: 'games.html' },
-    { id: 'manual',        icon: '📖', title: 'Safety Manual',    desc: '2026 edition',        href: '#', onclick: 'openSafetyManual()' },
+    { id: 'site-visit',    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
+    { id: 'safety-docs',   icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',  title: 'Safety Docs',      desc: 'Policies & procedures', href: 'safety-docs.html' },
+    { id: 'sds',           icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16.5h10"/></svg>',  title: 'SDS Sheets',       desc: '37 chemicals',         href: 'sds.html' },
+    { id: 'contacts',      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', title: 'Contacts',         desc: 'Team directory',       href: 'contacts.html' },
+    { id: 'games',         icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1.11 0 2.08-.402 2.592-1.382L9 15h6l1.408 2.618C16.92 18.598 17.89 19 19 19a3 3 0 0 0 3-3c0-1.544-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>', title: 'Games',            desc: 'Safety training',      href: 'games.html' },
+    { id: 'manual',        icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>', title: 'Safety Manual',    desc: '2026 edition',        href: '#', onclick: 'openSafetyManual()' },
   ];
 
   async function loadProfile() {
@@ -182,20 +182,6 @@
   window.openSafetyManual = function() {
     window.open('https://bateselectric-my.sharepoint.com/:b:/g/personal/cjbates_bates-electric_com/IQCHGrHJsPCFQp01ZxBJVggYAfFnVsI8LgpMWoDD-GQfMfU?e=2mFCHY', '_blank');
   };
-
-  document.getElementById('signout-btn').addEventListener('click', async () => {
-    const token = getToken();
-    if (token) {
-      try {
-        await fetch(`${API_BASE}/auth/logout`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch (_) { /* ignore */ }
-    }
-    clearToken();
-    redirectToLogin();
-  });
 
   const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
   if ('serviceWorker' in navigator && !isLocal) {
