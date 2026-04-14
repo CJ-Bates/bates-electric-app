@@ -151,6 +151,7 @@
       <div class="shared-drawer-overlay" id="drawerOverlay"></div>
       <aside class="shared-drawer" id="sharedDrawer" aria-label="Navigation menu">
         <div class="shared-drawer-header">
+          <img src="logo-icon.png" alt="Bates Electric" width="36" height="36" style="border-radius:8px;margin-bottom:4px;" />
           <h2 class="shared-drawer-title">Bates Electric</h2>
           <p class="shared-drawer-subtitle">Field Service</p>
           <button class="shared-drawer-close" id="drawerClose" aria-label="Close menu">
