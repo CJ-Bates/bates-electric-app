@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0B2545" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Office Dashboard</title>
+</head>
+<body class="hub-body dashboard-body">
+
+  <header class="hub-header">
+    <div class="hub-header-inner">
+      <div class="hub-brand">
+        <a href="home.html" class="back-link" aria-label="Back to hub">&larr;</a>
+        <div class="hub-brand-text">
+          <h1>Office Dashboard</h1>
+          <p class="hub-subtitle">Submitted Inspections</p>
+        </div>
+      </div>
+      <div class="hub-user">
+        <button type="button" class="btn-signout" id="refresh-btn">Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="dashboard-main">
+    <!-- Filters -->
+    <section class="dashboard-filters">
+      <div class="filter-group">
+        <label for="filter-customer">Customer Name</label>
+        <input type="text" id="filter-customer" placeholder="Search..." />
+      </div>
+      <div class="filter-group">
+        <label for="filter-job">Job #</label>
+        <input type="text" id="filter-job" placeholder="Job number..." />
+      </div>
+      <div class="filter-group">
+        <label for="filter-date-start">From Date</label>
+        <input type="date" id="filter-date-start" />
+      </div>
+      <div class="filter-group">
+        <label for="filter-date-end">To Date</label>
+        <input type="date" id="filter-date-end" />
+      </div>
+    </section>
+
+    <!-- Inspections Table/Cards -->
+    <section class="dashboard-content">
+      <div id="loading" class="loading-state" hidden>
+        <p>Loading inspections...</p>
+      </div>
+      <div id="empty" class="empty-state" hidden>
+        <p>No submitted inspections found.</p>
+      </div>
+      <div id="inspections-container" class="inspections-grid">
+        <!-- Inspections rendered here -->
+      </div>
+    </section>
+
+    <!-- Status message -->
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <!-- Modal for inspection details -->
+  <div id="detailsModal" class="modal" hidden>
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Inspection Details</h2>
+        <button type="button" class="modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div id="modal-body" class="modal-body">
+        <!-- Content loaded dynamically -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" id="modal-close-btn2">Close</button>
+        <button type="button" class="btn-danger" id="modal-delete-btn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="shared-nav.js"></script>
+  <script src="office.js"></script>
+</body>
+</html>

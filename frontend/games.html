@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0B2545" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .games-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: var(--navy-900);
+    }
+
+    .games-header {
+      flex-shrink: 0;
+      padding: 20px 24px;
+      background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-800) 100%);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .games-header-title {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .games-header-title h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+
+    .games-header-title p {
+      margin: 0;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    .games-back-btn {
+      width: 44px;
+      height: 44px;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+    }
+
+    .games-back-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .games-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .games-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+
+    .game-card {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.92) 100%);
+      border-radius: 20px;
+      padding: 28px 24px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: 2px solid transparent;
+      box-shadow: 0 8px 24px rgba(11, 37, 69, 0.12);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .game-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 16px 40px rgba(11, 37, 69, 0.18);
+      border-color: var(--amber);
+    }
+
+    .game-card:active {
+      transform: translateY(-2px);
+    }
+
+    .game-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(245, 183, 0, 0.2) 0%, rgba(245, 183, 0, 0.12) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      color: var(--amber-dark);
+    }
+
+    .game-card:hover .game-icon {
+      background: linear-gradient(135deg, rgba(245, 183, 0, 0.3) 0%, rgba(245, 183, 0, 0.18) 100%);
+      color: var(--amber);
+    }
+
+    .game-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--ink-900);
+      letter-spacing: -0.3px;
+    }
+
+    .game-desc {
+      margin: 0;
+      font-size: 14px;
+      color: var(--ink-700);
+      line-height: 1.4;
+    }
+
+    .game-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 12px;
+      border-top: 1px solid rgba(11, 37, 69, 0.08);
+      font-size: 12px;
+      color: var(--ink-500);
+    }
+
+    .game-best-score {
+      font-weight: 700;
+      color: var(--amber-dark);
+    }
+
+    .scores-section,
+    .leaderboard-section {
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      padding-top: 20px;
+    }
+
+    .section-title {
+      margin: 0 0 16px 0;
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    .score-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 0.5px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .score-item-name {
+      font-weight: 500;
+    }
+
+    .score-item-value {
+      font-weight: 700;
+      color: var(--amber);
+      font-size: 15px;
+    }
+
+    .leaderboard-list {
+      background: rgba(255, 255, 255, 0.06);
+      border: 0.5px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .leaderboard-game {
+      border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .leaderboard-game:last-child {
+      border-bottom: none;
+    }
+
+    .leaderboard-game-title {
+      padding: 12px 16px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: rgba(255, 255, 255, 0.35);
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    .leaderboard-entry {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 0.5px solid rgba(255, 255, 255, 0.06);
+      font-size: 13px;
+      color: #fff;
+    }
+
+    .leaderboard-entry:last-child {
+      border-bottom: none;
+    }
+
+    .leaderboard-rank {
+      min-width: 24px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--amber);
+    }
+
+    .leaderboard-name {
+      flex: 1;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    .leaderboard-entry.highlight {
+      background: rgba(245, 183, 0, 0.1);
+    }
+
+    .leaderboard-entry.highlight .leaderboard-name {
+      color: var(--amber);
+    }
+
+    .leaderboard-score {
+      font-weight: 700;
+      color: var(--amber);
+      min-width: 80px;
+      text-align: right;
+    }
+
+    .player-tag {
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 0.5px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.7);
+      margin-bottom: 16px;
+    }
+
+    .player-tag strong {
+      color: var(--amber);
+      font-weight: 700;
+    }
+
+    .player-tag a {
+      color: rgba(255, 255, 255, 0.4);
+      text-decoration: none;
+      font-size: 11px;
+      margin-left: 8px;
+      cursor: pointer;
+    }
+
+    .player-tag a:hover {
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* Game Overlay */
+    .game-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 12, 32, 0.95);
+      z-index: 9000;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+
+    .game-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .game-overlay-header {
+      flex-shrink: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .game-overlay-title {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .game-overlay-close {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+    }
+
+    .game-overlay-close:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .game-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .game-score-display {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      color: var(--amber);
+      font-size: 16px;
+      font-weight: 700;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+
+    @media (max-width: 600px) {
+      .games-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .games-header-title h1 {
+        font-size: 20px;
+      }
+
+      .game-card {
+        padding: 20px 18px;
+      }
+
+      .game-title {
+        font-size: 18px;
+      }
+    }
+  </style>
+</head>
+<body class="games-body">
+  <div class="games-container">
+    <div class="games-header">
+      <button class="games-back-btn" onclick="history.back()" title="Back">←</button>
+      <div class="games-header-title">
+        <h1>Games & Training</h1>
+        <p>Learn safety while you play</p>
+      </div>
+    </div>
+
+    <div class="games-content">
+      <!-- Game Cards -->
+      <div class="games-grid">
+        <div class="game-card" onclick="startGame('wirewizard')">
+          <div class="game-icon">⚡</div>
+          <h2 class="game-title">Wire Wizard</h2>
+          <p class="game-desc">Test your wire color knowledge! Route electrical circuits through a grid.</p>
+          <div class="game-meta">
+            <span>Puzzle game</span>
+            <span id="ww-best-score" class="game-best-score">—</span>
+          </div>
+        </div>
+
+        <div class="game-card" onclick="startGame('hazardquiz')">
+          <div class="game-icon">🎯</div>
+          <h2 class="game-title">Hazard Quiz</h2>
+          <p class="game-desc">Safety knowledge challenge! Answer questions about workplace hazards.</p>
+          <div class="game-meta">
+            <span>Quiz game</span>
+            <span id="hq-best-score" class="game-best-score">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Your Best Scores -->
+      <div class="scores-section">
+        <h2 class="section-title">Your Best Scores</h2>
+        <div id="lbPlayerTag" class="player-tag"></div>
+        <div id="gameHighScores"></div>
+      </div>
+
+      <!-- Global Leaderboard -->
+      <div class="leaderboard-section">
+        <h2 class="section-title">Global Leaderboard</h2>
+        <div id="globalLeaderboard" class="leaderboard-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Overlay -->
+  <div id="gameOverlay" class="game-overlay">
+    <div class="game-overlay-header">
+      <div class="game-overlay-title" id="gameTitle">Game</div>
+      <button class="game-overlay-close" onclick="closeGame()">✕</button>
+    </div>
+    <div id="gameContainer" class="game-container"></div>
+    <div id="gameScoreDisplay" class="game-score-display"></div>
+  </div>
+
+  <script src="games.js"></script>
+  <script src="shared-nav.js"></script>
+</body>
+</html>

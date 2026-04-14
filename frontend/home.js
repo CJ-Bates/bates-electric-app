@@ -17,34 +17,32 @@
     window.location.replace('index.html');
   };
 
-  // Tiles shared by everyone — placeholders wired up as we port Safety Hub sections.
-  const SHARED_TILES = [
-    { id: 'safety-docs',   icon: '§', title: 'Safety Documentation', desc: 'OSHA guides, policies, and procedures.', disabled: true },
-    { id: 'sds',           icon: '☣', title: 'SDS Chemical Sheets',  desc: 'Safety Data Sheets for on-site chemicals.', disabled: true },
-    { id: 'hazard-quiz',   icon: '?', title: 'Hazard Quiz',          desc: 'Test your electrical safety knowledge.', disabled: true },
-    { id: 'wire-wizard',   icon: '⚡', title: 'Wire Wizard',           desc: 'Practice circuits and wiring scenarios.', disabled: true },
-    { id: 'emergency',     icon: '!', title: 'Emergency Contacts',   desc: 'On-call numbers, hospitals, and site leads.', disabled: true },
-  ];
-
-  const TECH_TILE = {
+  // Featured action cards
+  const TECH_FEATURED = {
     id: 'new-inspection',
     icon: '✓',
-    title: 'New Inspection',
-    desc: 'Start an electrical safety inspection report.',
+    title: 'Start Inspection',
+    desc: 'Electrical safety form',
     href: 'inspection.html',
-    featured: true,
-    hint: 'Primary tool',
   };
 
-  const OFFICE_TILE = {
+  const OFFICE_FEATURED = {
     id: 'inspection-dashboard',
     icon: '☰',
     title: 'Inspection Dashboard',
-    desc: 'View and sort every submitted inspection report.',
+    desc: 'View all reports',
     href: 'office.html',
-    featured: true,
-    hint: 'Office staff',
   };
+
+  // Quick links for all users
+  const QUICK_LINKS = [
+    { id: 'site-visit',    icon: '📋', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
+    { id: 'safety-docs',   icon: '§',  title: 'Safety Docs',      desc: 'Policies & procedures', href: 'safety-docs.html' },
+    { id: 'sds',           icon: '☣',  title: 'SDS Sheets',       desc: '37 chemicals',         href: 'sds.html' },
+    { id: 'contacts',      icon: '☎',  title: 'Contacts',         desc: 'Team directory',       href: 'contacts.html' },
+    { id: 'games',         icon: '🎮', title: 'Games',            desc: 'Safety training',      href: 'games.html' },
+    { id: 'manual',        icon: '📖', title: 'Safety Manual',    desc: '2026 edition',        href: '#', onclick: 'openSafetyManual()' },
+  ];
 
   async function loadProfile() {
     const token = getToken();
@@ -69,8 +67,6 @@
   function render(profile) {
     const nameEl = document.getElementById('user-name');
     const roleEl = document.getElementById('user-role');
-    const welcomeTitle = document.getElementById('welcome-title');
-    const welcomeCopy = document.getElementById('welcome-copy');
     const subtitle = document.getElementById('hub-subtitle');
 
     const displayName = profile.full_name || profile.email.split('@')[0];
@@ -78,39 +74,66 @@
     roleEl.textContent = profile.role === 'office' ? 'Office' : 'Tech';
     subtitle.textContent = profile.role === 'office' ? 'Office Hub' : 'Field Hub';
 
-    welcomeTitle.textContent = `Welcome, ${displayName}`;
-    welcomeCopy.textContent = profile.role === 'office'
-      ? 'Review submitted inspections and manage field reports.'
-      : 'Start a new inspection or review your recent reports.';
+    renderFeaturedActions(profile.role);
+    renderQuickLinks(profile.role);
+  }
 
-    // Office sees the dashboard as their primary tile plus a New Inspection
-    // tile for when they need to create one themselves. Techs see New
-    // Inspection as primary and no dashboard.
-    const tiles = profile.role === 'office'
-      ? [OFFICE_TILE, { ...TECH_TILE, featured: false, hint: 'Create a report' }, ...SHARED_TILES]
-      : [TECH_TILE, ...SHARED_TILES];
-
-    const grid = document.getElementById('tile-grid');
+  function renderFeaturedActions(role) {
+    const grid = document.getElementById('featured-actions-grid');
     grid.innerHTML = '';
-    for (const t of tiles) {
-      grid.appendChild(makeTile(t));
+
+    if (role === 'office') {
+      // Office sees Dashboard first, then New Inspection as secondary
+      grid.appendChild(makeFeaturedCard(OFFICE_FEATURED));
+      grid.appendChild(makeFeaturedCard({
+        ...TECH_FEATURED,
+        title: 'New Inspection',
+        desc: 'Create report',
+      }));
+    } else {
+      // Tech sees New Inspection as primary
+      grid.appendChild(makeFeaturedCard(TECH_FEATURED));
     }
   }
 
-  function makeTile(t) {
-    const el = document.createElement(t.disabled ? 'div' : 'a');
-    el.className = 'tile' + (t.featured ? ' featured' : '') + (t.disabled ? ' disabled' : '');
-    if (!t.disabled) {
-      el.href = t.href;
-      el.setAttribute('role', 'link');
+  function renderQuickLinks(role) {
+    const grid = document.getElementById('quick-links-grid');
+    grid.innerHTML = '';
+
+    // All users get the same quick links
+    for (const link of QUICK_LINKS) {
+      grid.appendChild(makeQuickCard(link));
+    }
+  }
+
+  function makeFeaturedCard(card) {
+    const el = document.createElement('a');
+    el.className = 'featured-action-card';
+    el.href = card.href;
+    el.innerHTML = `
+      <div class="fac-icon">${card.icon}</div>
+      <h3 class="fac-title">${card.title}</h3>
+      <p class="fac-sub">${card.desc}</p>
+    `;
+    return el;
+  }
+
+  function makeQuickCard(card) {
+    const el = document.createElement('a');
+    el.className = 'quick-card';
+    if (card.onclick) {
+      el.href = '#';
+      el.onclick = (e) => {
+        e.preventDefault();
+        window[card.onclick]();
+      };
     } else {
-      el.setAttribute('aria-disabled', 'true');
+      el.href = card.href;
     }
     el.innerHTML = `
-      <div class="tile-icon" aria-hidden="true">${t.icon}</div>
-      <h3 class="tile-title">${t.title}</h3>
-      <p class="tile-desc">${t.desc}</p>
-      <div class="tile-hint">${t.disabled ? 'Coming soon' : (t.hint || 'Open')}</div>
+      <span class="qc-icon">${card.icon}</span>
+      <div class="qc-title">${card.title}</div>
+      <div class="qc-sub">${card.desc}</div>
     `;
     return el;
   }
@@ -122,6 +145,43 @@
     box.textContent = msg;
     main.prepend(box);
   }
+
+  // Search functionality
+  const searchInput = document.getElementById('dashboard-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      // Basic search across quick links
+      if (query.length > 0) {
+        const cards = document.querySelectorAll('.quick-card');
+        cards.forEach(card => {
+          const title = card.querySelector('.qc-title')?.textContent.toLowerCase() || '';
+          const desc = card.querySelector('.qc-sub')?.textContent.toLowerCase() || '';
+          const matches = title.includes(query) || desc.includes(query);
+          card.style.display = matches ? '' : 'none';
+        });
+      } else {
+        document.querySelectorAll('.quick-card').forEach(card => {
+          card.style.display = '';
+        });
+      }
+    });
+  }
+
+  // Emergency banner handler
+  const emergencyBanner = document.getElementById('emergency-banner');
+  if (emergencyBanner) {
+    emergencyBanner.addEventListener('click', () => {
+      // Could open a modal with incident response steps
+      // For now, just scroll to the field reference section
+      document.getElementById('field-reference-section')?.scrollIntoView({ behavior: 'smooth' });
+    });
+  }
+
+  // Safety Manual link
+  window.openSafetyManual = function() {
+    window.open('https://bateselectric-my.sharepoint.com/:b:/g/personal/cjbates_bates-electric_com/IQCHGrHJsPCFQp01ZxBJVggYAfFnVsI8LgpMWoDD-GQfMfU?e=2mFCHY', '_blank');
+  };
 
   document.getElementById('signout-btn').addEventListener('click', async () => {
     const token = getToken();

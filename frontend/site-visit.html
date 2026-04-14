@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0B2545" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Site Visit Form</title>
+</head>
+<body class="hub-body">
+  <header class="hub-header">
+    <div class="hub-header-inner">
+      <div class="hub-brand">
+        <div class="brand-mark small" aria-hidden="true"><span class="bolt">&#9889;</span></div>
+        <div class="hub-brand-text">
+          <h1>Bates Electric</h1>
+          <p class="hub-subtitle">Site Visit</p>
+        </div>
+      </div>
+      <div class="hub-user">
+        <button type="button" class="btn-signout" id="signout-btn">Sign Out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="hub-main">
+    <section class="hub-welcome">
+      <h2>Site Visit Form</h2>
+      <p>Complete all sections, then submit to the estimator.</p>
+    </section>
+
+    <!-- Tab Navigation -->
+    <div class="sv-tab-form">
+      <button class="sv-tab-btn active" id="tab-form-btn" onclick="svShowTab('form')">
+        New Visit
+      </button>
+      <button class="sv-tab-btn" id="tab-dash-btn" onclick="svShowTab('dash')">
+        Dashboard
+      </button>
+    </div>
+
+    <!-- FORM TAB -->
+    <div id="form-tab-content" style="display: block;">
+
+      <!-- Section 1: Job Information -->
+      <div class="sv-section">
+        <h3 class="sv-section-title">
+          <div class="sv-section-num">1</div>
+          Job Information
+        </h3>
+        <div class="sv-field-group">
+          <div class="sv-field">
+            <label class="sv-label">Technician Name *</label>
+            <input class="sv-input" type="text" id="sv-tech" placeholder="Your name">
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Date *</label>
+            <input class="sv-input" type="date" id="sv-date">
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Customer Name *</label>
+            <input class="sv-input" type="text" id="sv-customer" placeholder="Full name">
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Customer Phone</label>
+            <input class="sv-input" type="tel" id="sv-phone" placeholder="(xxx) xxx-xxxx">
+          </div>
+          <div class="sv-field" style="grid-column: 1 / -1;">
+            <label class="sv-label">Property Address *</label>
+            <input class="sv-input" type="text" id="sv-address" placeholder="123 Main St, City, MO">
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Property Type</label>
+            <select class="sv-input" id="sv-proptype">
+              <option value="">Select...</option>
+              <option>Residential</option>
+              <option>Commercial</option>
+              <option>Industrial</option>
+              <option>Multi-Family</option>
+            </select>
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Year Built (approx)</label>
+            <input class="sv-input" type="number" id="sv-year" placeholder="e.g. 1985" min="1900" max="2025">
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Scope of Work -->
+      <div class="sv-section">
+        <h3 class="sv-section-title">
+          <div class="sv-section-num">2</div>
+          Scope of Work
+        </h3>
+        <div class="sv-field-group">
+          <div class="sv-field" style="grid-column: 1 / -1;">
+            <label class="sv-label">Service Type(s) Requested *</label>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;" id="sv-scope-tags">
+              <label class="sv-chip"><input type="checkbox" value="Panel Upgrade"> Panel Upgrade</label>
+              <label class="sv-chip"><input type="checkbox" value="Service Upgrade"> Service Upgrade</label>
+              <label class="sv-chip"><input type="checkbox" value="New Circuits"> New Circuits</label>
+              <label class="sv-chip"><input type="checkbox" value="EV Charger"> EV Charger</label>
+              <label class="sv-chip"><input type="checkbox" value="Generator"> Generator</label>
+              <label class="sv-chip"><input type="checkbox" value="Outdoor/Landscape"> Outdoor / Landscape</label>
+              <label class="sv-chip"><input type="checkbox" value="Subpanel"> Subpanel</label>
+              <label class="sv-chip"><input type="checkbox" value="Whole-Home Rewire"> Whole-Home Rewire</label>
+              <label class="sv-chip"><input type="checkbox" value="GFCI/AFCI"> GFCI / AFCI Upgrade</label>
+              <label class="sv-chip"><input type="checkbox" value="Surge Protection"> Surge Protection</label>
+              <label class="sv-chip"><input type="checkbox" value="Inspection Followup"> Inspection Follow-up</label>
+              <label class="sv-chip"><input type="checkbox" value="Other"> Other</label>
+            </div>
+          </div>
+          <div class="sv-field" style="grid-column: 1 / -1;">
+            <label class="sv-label">Describe the Work Requested</label>
+            <textarea class="sv-textarea" id="sv-scope-desc" placeholder="What does the customer want done? Any specific requests or concerns?"></textarea>
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Main Panel Amperage</label>
+            <select class="sv-input" id="sv-amps">
+              <option value="">Unknown / not checked</option>
+              <option>60A</option>
+              <option>100A</option>
+              <option>150A</option>
+              <option>200A</option>
+              <option>400A</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Panel Brand / Condition</label>
+            <input class="sv-input" type="text" id="sv-panel-brand" placeholder="e.g. Square D, Fair condition">
+          </div>
+          <div class="sv-field" style="grid-column: 1 / -1;">
+            <label class="sv-label">Access / Site Notes</label>
+            <textarea class="sv-textarea" id="sv-access" placeholder="Gate codes, tight spaces, attic access, crawlspace issues, distance from panel to work area..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Required Photos -->
+      <div class="sv-section">
+        <h3 class="sv-section-title">
+          <div class="sv-section-num">3</div>
+          Required Photos
+          <span style="margin-left: auto; font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.7);" id="sv-photo-count">0 uploaded</span>
+        </h3>
+        <div style="background: rgba(30, 58, 110, 0.05); border-radius: 10px; padding: 10px 14px; margin: 14px; font-size: 12px; color: rgba(15, 31, 61, 0.6); line-height: 1.6;">
+          These photos are always required. Tap each prompt to add the photo. You can add multiple photos per prompt.
+        </div>
+        <div id="sv-photo-prompts" style="display: flex; flex-direction: column; gap: 10px; padding: 0 14px 14px;"></div>
+
+        <!-- Extra photos -->
+        <div style="margin: 14px; padding-top: 14px; border-top: 1px solid rgba(30, 58, 110, 0.1);">
+          <div style="font-size: 13px; font-weight: 600; color: rgba(15, 31, 61, 0.65); margin-bottom: 8px;">Additional Photos / Videos</div>
+          <div id="sv-extra-uploads" style="display: flex; flex-direction: column; gap: 8px;"></div>
+          <button onclick="svAddExtraUpload()" style="width: 100%; margin-top: 8px; padding: 12px; background: rgba(255, 255, 255, 0.7); border: 1px dashed rgba(30, 58, 110, 0.25); border-radius: 12px; font-size: 13px; font-weight: 600; color: rgba(15, 31, 61, 0.55); cursor: pointer; font-family: inherit;">
+            + Add Photo / Video
+          </button>
+        </div>
+      </div>
+
+      <!-- Section 4: Tech Notes -->
+      <div class="sv-section">
+        <h3 class="sv-section-title">
+          <div class="sv-section-num">4</div>
+          Tech Notes
+        </h3>
+        <div class="sv-field-group">
+          <div class="sv-field" style="grid-column: 1 / -1;">
+            <label class="sv-label">Observations &amp; Recommendations</label>
+            <textarea class="sv-textarea" id="sv-notes" style="min-height: 120px;" placeholder="Anything the estimator should know - existing issues, unusual conditions, what you think the job will involve..."></textarea>
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Estimated Complexity</label>
+            <select class="sv-input" id="sv-complexity">
+              <option value="">Not sure</option>
+              <option>Simple - straightforward job</option>
+              <option>Moderate - some challenges</option>
+              <option>Complex - significant challenges</option>
+            </select>
+          </div>
+          <div class="sv-field">
+            <label class="sv-label">Follow-up Needed?</label>
+            <select class="sv-input" id="sv-followup">
+              <option value="No">No - all info gathered</option>
+              <option value="Yes">Yes - need to return / call</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <div style="padding: 0 14px 60px; margin-top: 8px;">
+        <div id="sv-submit-status" style="display: none; padding: 12px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; margin-bottom: 12px;"></div>
+        <button id="sv-submit-btn" onclick="svSubmit()" style="width: 100%; padding: 16px; background: linear-gradient(135deg, rgba(30, 58, 110, 0.9), rgba(15, 31, 61, 0.95)); border: none; border-radius: 14px; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: -0.2px; display: flex; align-items: center; justify-content: center; gap: 10px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Submit to Estimator
+        </button>
+      </div>
+
+    </div><!-- /form tab -->
+
+    <!-- DASHBOARD TAB -->
+    <div id="dash-tab-content" style="display: none; padding-bottom: 60px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+        <div style="font-size: 13px; color: rgba(15, 31, 61, 0.55);" id="sv-dash-count">Loading submissions...</div>
+        <button onclick="svLoadDashboard()" style="background: rgba(30, 58, 110, 0.08); border: 0.5px solid rgba(30, 58, 110, 0.2); border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; color: rgba(15, 31, 61, 0.65); cursor: pointer; font-family: inherit;">Refresh</button>
+      </div>
+      <div id="sv-dash-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+    </div>
+
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3.2.0/dist/email.min.js"></script>
+  <script src="shared-nav.js"></script>
+  <script src="site-visit.js"></script>
+</body>
+</html>

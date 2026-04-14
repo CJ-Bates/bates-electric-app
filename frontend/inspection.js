@@ -270,6 +270,247 @@
     try { localStorage.removeItem(DRAFT_KEY); } catch (_) {}
   }
 
+  // ---------- submission ----------
+  async function submitInspection() {
+    const form = document.getElementById('inspection-form');
+
+    // Collect all form data
+    const formData = collectFields();
+    formData.sigTech = signatures.sigTech ? signatures.sigTech.toDataURL() : null;
+    formData.sigCust = signatures.sigCust ? signatures.sigCust.toDataURL() : null;
+
+    showStatus('Submitting inspection...', 'info');
+
+    const token = getToken();
+    const payload = {
+      data: formData,
+      status: 'submitted',
+    };
+
+    try {
+      // Try to submit via backend
+      const response = await fetch(`${API_BASE}/inspections`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        showStatus('Inspection submitted successfully!', 'success');
+        clearDraft();
+        setTimeout(() => {
+          window.location.replace('home.html');
+        }, 1500);
+        return;
+      } else {
+        const err = await response.json();
+        throw new Error(err.error || 'Backend submission failed');
+      }
+    } catch (backendErr) {
+      console.warn('Backend submission failed, trying EmailJS fallback:', backendErr);
+
+      // Fallback to EmailJS
+      try {
+        await submitViaEmailJS(formData);
+        showStatus('Inspection submitted via email (fallback). Server may be offline.', 'warning');
+        clearDraft();
+        setTimeout(() => {
+          window.location.replace('home.html');
+        }, 2000);
+      } catch (emailErr) {
+        showStatus(`Submission failed: ${emailErr.message}. Please try again.`, 'error');
+      }
+    }
+  }
+
+  async function submitViaEmailJS(formData) {
+    // Load EmailJS if not already loaded
+    if (!window.emailjs) {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@3.11.0/dist/browser.min.js';
+      script.onload = () => {
+        window.emailjs.init('DeDPpeJ2O4A0B17_E');
+      };
+      script.onerror = () => { throw new Error('Failed to load EmailJS'); };
+      document.head.appendChild(script);
+
+      // Wait for script to load
+      return new Promise((resolve, reject) => {
+        const checkLoaded = setInterval(() => {
+          if (window.emailjs) {
+            clearInterval(checkLoaded);
+            submitEmailJSTemplate(formData, resolve, reject);
+          }
+        }, 100);
+        setTimeout(() => {
+          clearInterval(checkLoaded);
+          reject(new Error('EmailJS failed to load'));
+        }, 5000);
+      });
+    } else {
+      return submitEmailJSTemplate(formData);
+    }
+  }
+
+  function submitEmailJSTemplate(formData, resolve, reject) {
+    const emailBody = buildEmailHTML(formData);
+    const custEmail = formData.job_email || '';
+    const custName = formData.job_cust || 'Customer';
+    const date = formData.job_date || new Date().toLocaleDateString();
+
+    const templateParams = {
+      to_email: 'cjbates@bates-electric.com',
+      cc_email: custEmail,
+      subject: `Bates Electric Safety Inspection — ${custName} — ${date}`,
+      html_body: emailBody,
+    };
+
+    window.emailjs.send('service_9o854p5', 'template_j94dma6', templateParams)
+      .then(() => {
+        if (resolve) resolve();
+      })
+      .catch((err) => {
+        if (reject) reject(new Error(`EmailJS error: ${err.message}`));
+      });
+  }
+
+  function buildEmailHTML(data) {
+    const d = data || {};
+    const date = d.job_date || new Date().toLocaleDateString();
+    const techName = d.job_tech || 'Tech';
+    const custName = d.job_cust || 'Customer';
+    const custEmail = d.job_email || '';
+
+    let html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<h2 style="color: #0B2545; border-bottom: 3px solid #F5B700; padding-bottom: 10px;">Bates Electric &mdash; Electrical Safety Inspection</h2>
+
+<h3 style="color: #0B2545; margin-top: 20px;">Job Information</h3>
+<table style="width: 100%; border-collapse: collapse;">
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Date:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${date}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Job #:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_num || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Invoice #:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_inv || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Technician:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${techName}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Customer:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${custName}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Address:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_addr || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Email:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${custEmail}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Year Built:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_yr || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Property Type:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_type || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong># Photos:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_photos || ''}</td></tr>
+</table>
+    `;
+
+    // Helper to add section
+    const addSection = (title, fields) => {
+      html += `<h3 style="color: #0B2545; margin-top: 20px;">${title}</h3>
+<table style="width: 100%; border-collapse: collapse;">`;
+      fields.forEach(([label, key]) => {
+        const val = d[key];
+        if (val) {
+          html += `<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>${label}:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${val}</td></tr>`;
+        }
+      });
+      html += `</table>`;
+    };
+
+    // Main panels
+    const mpFields = [
+      ['Manufacturer', 'mp_mfr'], ['Voltage', 'mp_volt'], ['Amps', 'mp_amps'],
+      ['Phase', 'mp_phase'], ['Age', 'mp_age'], ['Obsolete', 'mp_obs'],
+      ['UL Listed', 'mp_ul'], ['Breakers sized', 'mp_sized'], ['Main breaker protected', 'mp_main_breaker'],
+      ['Main breaker sized', 'mp_main_sized'], ['GFCI working', 'mp_gfci'], ['AFCI working', 'mp_afci'],
+      ['Burning/corrosion', 'mp_burn'], ['Connections tight', 'mp_tight'], ['Wire type', 'mp_wiretype'],
+      ['Grounding correct', 'mp_ground'], ['Surge device', 'mp_surge'], ['Clamps/bushings', 'mp_clamps'],
+      ['Panel labeled', 'mp_labeled'], ['Knockouts sealed', 'mp_knockouts'], ['Bonded', 'mp_bonded'],
+      ['Heat', 'mp_heat'], ['Corrosion', 'mp_corr'], ['Water/rust', 'mp_rust'],
+      ['Double taps', 'mp_dbl_tap'], ['Surge protector', 'mp_surge2'], ['Breakers for wire', 'mp_wire_size'],
+      ['Condition', 'mp_cond'], ['Exposed wires', 'mp_exposed'], ['Entries protected', 'mp_entries'],
+      ['Overall rating', 'mp_rating']
+    ];
+    addSection('Main Electrical Panel', mpFields);
+
+    const spFields = mpFields.map(([l, k]) => [l, k.replace('mp_', 'sp_')]);
+    addSection('Secondary / Sub Panel', spFields);
+
+    const svcFields = [
+      ['Ampere Rating', 'svc_amps'], ['Phase', 'svc_phase'], ['Age', 'svc_age'],
+      ['Riser Type', 'svc_riser'], ['POA Condition', 'svc_poa'],
+      ['Entry', 'svc_entry'], ['Location', 'svc_loc'],
+      ['Disconnect switch', 'svc_q01'], ['Eyebolt', 'svc_q02'], ['Weatherhead', 'svc_q03'],
+      ['Flashing', 'svc_q04'], ['Utility connections', 'svc_q05'], ['Trees on wires', 'svc_q06'],
+      ['Grounding', 'svc_q07'], ['Drip loop', 'svc_q08'], ['Components secured', 'svc_q09'],
+      ['Meter/Service', 'svc_q10'], ['Entrance cable', 'svc_q11'], ['Overall rating', 'svc_rating']
+    ];
+    addSection('Main Electrical Service', svcFields);
+
+    const gwFields = [
+      ['GFCI in required', 'gw_q01'], ['Outside GFCI', 'gw_q02'], ['Bubble covers', 'gw_q03'],
+      ['Outside wiring', 'gw_q04'], ['Open splices', 'gw_q05'], ['Stab wired', 'gw_q06'],
+      ['Extension cords', 'gw_q07'], ['Outlets', 'gw_q08'], ['GFCI coverage', 'gw_q09'],
+      ['AFCI coverage', 'gw_q10'], ['Fixtures', 'gw_q11'], ['Exhaust fans', 'gw_q12'],
+      ['Charging stations', 'gw_q13'], ['Colors noted', 'gw_colors'], ['Overall rating', 'gw_rating']
+    ];
+    addSection('General Wiring', gwFields);
+
+    const smFields = [
+      ['Tested/working', 'sm_q01'], ['In required areas', 'sm_q02'], ['Hardwired/interconnected', 'sm_q03'],
+      ['CO alarms', 'sm_q04'], ['Doorbell', 'sm_q05'], ['Detector age', 'sm_age'], ['Overall rating', 'sm_rating']
+    ];
+    addSection('Smoke & CO Alarms', smFields);
+
+    const acFields = [
+      ['Wiring correct', 'ac_q01'], ['Count', 'ac_count'], ['Improper methods', 'ac_q03'], ['Overall rating', 'ac_rating']
+    ];
+    addSection('Attic & Crawlspace', acFields);
+
+    const hvFields = [
+      ['AC Min', 'hv_min'], ['AC Max', 'hv_max'],
+      ['AC breaker correct', 'hv_q01'], ['AC disconnect', 'hv_q02'], ['Furnace wiring', 'hv_q03'],
+      ['Furnace disconnect', 'hv_q04'], ['Aluminum wiring', 'hv_q05'], ['Aluminum terminated', 'hv_q06'],
+      ['A/C condition', 'hv_q07'], ['Furnace condition', 'hv_q08'], ['Overall rating', 'hv_rating']
+    ];
+    addSection('Furnace & A/C Wiring', hvFields);
+
+    // Recommended services
+    const checked = [];
+    const upsellNames = [
+      'up_panel', 'up_surge', 'up_breaker', 'up_gfci', 'up_afci', 'up_ev',
+      'up_sub', 'up_circuit', 'up_smoke', 'up_co', 'up_alum', 'up_arc',
+      'up_svc', 'up_gen', 'up_outdoor', 'up_covers', 'up_label', 'up_ground'
+    ];
+    upsellNames.forEach(n => {
+      if (d[n]) checked.push(d[n]);
+    });
+    if (checked.length || d.up_other) {
+      html += `<h3 style="color: #0B2545; margin-top: 20px;">Recommended Services</h3>`;
+      if (checked.length) html += `<p>${checked.join(', ')}</p>`;
+      if (d.up_other) html += `<p><strong>Other:</strong> ${d.up_other}</p>`;
+    }
+
+    // Notes
+    if (d.insp_notes) {
+      html += `<h3 style="color: #0B2545; margin-top: 20px;">Notes</h3><p>${d.insp_notes.replace(/\n/g, '<br>')}</p>`;
+    }
+
+    // Signatures
+    html += `<h3 style="color: #0B2545; margin-top: 20px;">Signatures</h3>
+<table style="width: 100%; border-collapse: collapse;">
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Technician Name:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.sig_tech_name || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Date:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.sig_date || ''}</td></tr>
+<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Customer Name:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.sig_cust_name || ''}</td></tr>
+</table>`;
+
+    html += `</body></html>`;
+    return html;
+  }
+
   // ---------- actions ----------
   function wireActions() {
     document.getElementById('reset-btn').addEventListener('click', () => {
@@ -283,12 +524,12 @@
 
     document.getElementById('save-draft-btn').addEventListener('click', () => {
       saveDraft();
-      showStatus('Draft saved locally. Server-side draft saving comes in the next step.', 'info');
+      showStatus('Draft saved locally.', 'info');
     });
 
     document.getElementById('inspection-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      showStatus('Submission will be wired up in the next step.', 'info');
+      submitInspection();
     });
   }
 
