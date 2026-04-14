@@ -37,12 +37,69 @@
   // Quick links for all users
   const QUICK_LINKS = [
     { id: 'site-visit',    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
-    { id: 'safety-docs',   icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',  title: 'Safety Docs',      desc: 'Policies & procedures', href: 'safety-docs.html' },
-    { id: 'sds',           icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16.5h10"/></svg>',  title: 'SDS Sheets',       desc: '37 chemicals',         href: 'sds.html' },
+    { id: 'documents',     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M12 13V7"/><path d="m9 10 3-3 3 3"/></svg>', title: 'Documents',        desc: 'Safety manual & SDS',  href: 'documents.html' },
     { id: 'contacts',      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', title: 'Contacts',         desc: 'Team directory',       href: 'contacts.html' },
     { id: 'games',         icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1.11 0 2.08-.402 2.592-1.382L9 15h6l1.408 2.618C16.92 18.598 17.89 19 19 19a3 3 0 0 0 3-3c0-1.544-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>', title: 'Games',            desc: 'Safety training',      href: 'games.html' },
-    { id: 'manual',        icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>', title: 'Safety Manual',    desc: '2026 edition',        href: '#', onclick: 'openSafetyManual()' },
   ];
+
+  // WMO weather code → { label, svg }
+  const WEATHER_ICONS = {
+    sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
+    cloudSun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m19.07 4.93-1.41 1.41"/><path d="M15.947 12.65a4 4 0 0 0-5.925-4.128"/><path d="M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z"/></svg>',
+    cloud: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',
+    fog: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18"/><path d="M5 14h14"/><path d="M3 18h18"/><path d="M5 6h14"/></svg>',
+    rain: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 14v6"/><path d="M8 14v6"/><path d="M12 16v6"/></svg>',
+    snow: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M8 15h.01"/><path d="M8 19h.01"/><path d="M12 17h.01"/><path d="M12 21h.01"/><path d="M16 15h.01"/><path d="M16 19h.01"/></svg>',
+    storm: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"/><path d="m13 12-3 5h4l-3 5"/></svg>',
+  };
+
+  function weatherFromCode(code) {
+    if (code === 0) return { icon: 'sun', label: 'Clear' };
+    if (code <= 2) return { icon: 'cloudSun', label: 'Partly cloudy' };
+    if (code === 3) return { icon: 'cloud', label: 'Cloudy' };
+    if (code === 45 || code === 48) return { icon: 'fog', label: 'Foggy' };
+    if (code >= 51 && code <= 67) return { icon: 'rain', label: 'Rain' };
+    if (code >= 71 && code <= 77) return { icon: 'snow', label: 'Snow' };
+    if (code >= 80 && code <= 82) return { icon: 'rain', label: 'Showers' };
+    if (code >= 85 && code <= 86) return { icon: 'snow', label: 'Snow' };
+    if (code >= 95) return { icon: 'storm', label: 'Storms' };
+    return { icon: 'cloud', label: '' };
+  }
+
+  async function loadWeather() {
+    const wrap = document.getElementById('hero-weather');
+    const iconEl = document.getElementById('hero-weather-icon');
+    const tempEl = document.getElementById('hero-weather-temp');
+    if (!wrap || !iconEl || !tempEl) return;
+    try {
+      // O'Fallon, MO — Bates Electric service area
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=38.81&longitude=-90.70&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America%2FChicago';
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const json = await res.json();
+      const t = Math.round(json?.current?.temperature_2m);
+      const code = json?.current?.weather_code;
+      if (Number.isFinite(t) && Number.isFinite(code)) {
+        const w = weatherFromCode(code);
+        iconEl.innerHTML = WEATHER_ICONS[w.icon] || WEATHER_ICONS.cloud;
+        tempEl.textContent = `${t}°`;
+        wrap.title = w.label;
+        wrap.hidden = false;
+      }
+    } catch (e) { /* silent — weather is optional */ }
+  }
+
+  function greetingForHour(h) {
+    if (h < 5) return 'Working late';
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    if (h < 21) return 'Good evening';
+    return 'Good evening';
+  }
+
+  function formatHeroDate(d) {
+    return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  }
 
   async function loadProfile() {
     const token = getToken();
@@ -65,28 +122,35 @@
   }
 
   function render(profile) {
-    const nameEl = document.getElementById('user-name');
-    const roleEl = document.getElementById('user-role');
-    const subtitle = document.getElementById('hub-subtitle');
-
     const displayName = profile.full_name || profile.email.split('@')[0];
-    if (nameEl) nameEl.textContent = displayName;
-    if (roleEl) roleEl.textContent = profile.role === 'office' ? 'Office' : 'Tech';
-    if (subtitle) subtitle.textContent = profile.role === 'office' ? 'Office Hub' : 'Field Hub';
+    const firstName = displayName.split(' ')[0];
 
     // Store profile for shared-nav and other components
     try { localStorage.setItem('bates.profile', JSON.stringify(profile)); } catch(e) {}
 
+    // Hero section
+    const now = new Date();
+    const greetEl = document.getElementById('hero-greet');
+    const nameEl = document.getElementById('hero-name');
+    const subEl = document.getElementById('hero-sub');
+    const dateEl = document.getElementById('hero-date');
+
+    if (greetEl) greetEl.textContent = greetingForHour(now.getHours());
+    if (nameEl) nameEl.textContent = firstName;
+    if (subEl) subEl.textContent = profile.role === 'office' ? 'Office Hub' : 'Field Hub';
+    if (dateEl) dateEl.textContent = formatHeroDate(now);
+
     renderFeaturedActions(profile.role);
     renderQuickLinks(profile.role);
+    loadWeather();
   }
 
   function renderFeaturedActions(role) {
     const grid = document.getElementById('featured-actions-grid');
+    if (!grid) return;
     grid.innerHTML = '';
 
     if (role === 'office') {
-      // Office sees Dashboard first, then New Inspection as secondary
       grid.appendChild(makeFeaturedCard(OFFICE_FEATURED));
       grid.appendChild(makeFeaturedCard({
         ...TECH_FEATURED,
@@ -94,16 +158,14 @@
         desc: 'Create report',
       }));
     } else {
-      // Tech sees New Inspection as primary
       grid.appendChild(makeFeaturedCard(TECH_FEATURED));
     }
   }
 
-  function renderQuickLinks(role) {
+  function renderQuickLinks() {
     const grid = document.getElementById('quick-links-grid');
+    if (!grid) return;
     grid.innerHTML = '';
-
-    // All users get the same quick links
     for (const link of QUICK_LINKS) {
       grid.appendChild(makeQuickCard(link));
     }
@@ -115,8 +177,10 @@
     el.href = card.href;
     el.innerHTML = `
       <div class="fac-icon">${card.icon}</div>
-      <h3 class="fac-title">${card.title}</h3>
-      <p class="fac-sub">${card.desc}</p>
+      <div>
+        <h3 class="fac-title">${card.title}</h3>
+        <p class="fac-sub">${card.desc}</p>
+      </div>
     `;
     return el;
   }
@@ -124,15 +188,7 @@
   function makeQuickCard(card) {
     const el = document.createElement('a');
     el.className = 'quick-card';
-    if (card.onclick) {
-      el.href = '#';
-      el.onclick = (e) => {
-        e.preventDefault();
-        window[card.onclick]();
-      };
-    } else {
-      el.href = card.href;
-    }
+    el.href = card.href;
     el.innerHTML = `
       <span class="qc-icon">${card.icon}</span>
       <div class="qc-title">${card.title}</div>
@@ -143,6 +199,7 @@
 
   function showError(msg) {
     const main = document.querySelector('.hub-main');
+    if (!main) return;
     const box = document.createElement('div');
     box.className = 'hub-error';
     box.textContent = msg;
@@ -154,20 +211,16 @@
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       const query = e.target.value.toLowerCase();
-      // Basic search across quick links
-      if (query.length > 0) {
-        const cards = document.querySelectorAll('.quick-card');
-        cards.forEach(card => {
+      const cards = document.querySelectorAll('.quick-card');
+      cards.forEach(card => {
+        if (query.length > 0) {
           const title = card.querySelector('.qc-title')?.textContent.toLowerCase() || '';
           const desc = card.querySelector('.qc-sub')?.textContent.toLowerCase() || '';
-          const matches = title.includes(query) || desc.includes(query);
-          card.style.display = matches ? '' : 'none';
-        });
-      } else {
-        document.querySelectorAll('.quick-card').forEach(card => {
+          card.style.display = (title.includes(query) || desc.includes(query)) ? '' : 'none';
+        } else {
           card.style.display = '';
-        });
-      }
+        }
+      });
     });
   }
 
@@ -176,16 +229,11 @@
   if (emergencyBanner) {
     emergencyBanner.addEventListener('click', () => {
       // Could open a modal with incident response steps
-      // For now, just scroll to the field reference section
-      document.getElementById('field-reference-section')?.scrollIntoView({ behavior: 'smooth' });
+      alert('Emergency Steps:\\n1. Ensure scene is safe\\n2. Call 911 if needed\\n3. Call office (636) 464-3939\\n4. Administer first aid\\n5. Secure the area\\n6. Document the incident');
     });
   }
 
-  // Safety Manual link
-  window.openSafetyManual = function() {
-    window.open('https://bateselectric-my.sharepoint.com/:b:/g/personal/cjbates_bates-electric_com/IQCHGrHJsPCFQp01ZxBJVggYAfFnVsI8LgpMWoDD-GQfMfU?e=2mFCHY', '_blank');
-  };
-
+  // Service worker
   const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
   if ('serviceWorker' in navigator && !isLocal) {
     window.addEventListener('load', () => {

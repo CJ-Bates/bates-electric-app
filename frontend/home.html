@@ -16,7 +16,42 @@
 </head>
 <body class="hub-body">
 
+  <!-- Animated gradient mesh background -->
+  <div class="hub-aurora" aria-hidden="true">
+    <span class="hub-blob hub-blob-1"></span>
+    <span class="hub-blob hub-blob-2"></span>
+    <span class="hub-blob hub-blob-3"></span>
+  </div>
+
   <main class="hub-main">
+    <!-- Hero greeting -->
+    <section class="hub-hero" id="hub-hero">
+      <div class="hub-hero-text">
+        <div class="hub-hero-meta">
+          <span class="hub-hero-eyebrow" id="hero-date">&nbsp;</span>
+          <span class="hub-hero-weather" id="hero-weather" hidden>
+            <span class="hub-hero-weather-icon" id="hero-weather-icon"></span>
+            <span class="hub-hero-weather-temp" id="hero-weather-temp"></span>
+            <span class="hub-hero-weather-loc" id="hero-weather-loc">O'Fallon</span>
+          </span>
+        </div>
+        <h1 class="hub-hero-title">
+          <span id="hero-greet">Welcome</span><span class="hub-hero-comma">,</span>
+          <span class="hub-hero-name" id="hero-name">there</span>
+        </h1>
+        <p class="hub-hero-sub" id="hero-sub">Field Hub</p>
+      </div>
+      <div class="hub-hero-badge" id="hero-badge">
+        <div class="hub-hero-badge-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <div class="hub-hero-badge-text">
+          <strong>Stay safe</strong>
+          <span>Verify zero energy</span>
+        </div>
+      </div>
+    </section>
+
     <!-- Search Bar -->
     <section class="dashboard-search" id="search-section">
       <div class="search-wrap">
@@ -94,87 +129,6 @@
       </div>
     </section>
 
-    <!-- Field Reference Cards -->
-    <section id="field-reference-section">
-      <div class="section-label">Field reference</div>
-
-      <!-- LOTO Card -->
-      <div class="reference-card" id="loto-card">
-        <div class="reference-header">
-          <div class="reference-icon" style="background: rgba(220,38,38,0.10); border-color: rgba(220,38,38,0.25);">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-          </div>
-          <div>
-            <div class="reference-title">Lockout / Tagout</div>
-            <div class="reference-sub">6-step procedure</div>
-          </div>
-          <button class="reference-detail-btn" onclick="document.getElementById('loto-card').scrollIntoView({behavior:'smooth'})">Full detail</button>
-        </div>
-        <div class="steps">
-          <div class="step">
-            <div class="step-number" style="background: var(--accent);">1</div>
-            <div class="step-text">Notify all affected employees</div>
-          </div>
-          <div class="step">
-            <div class="step-number" style="background: var(--accent);">2</div>
-            <div class="step-text">Shut down equipment normally</div>
-          </div>
-          <div class="step">
-            <div class="step-number" style="background: var(--accent);">3</div>
-            <div class="step-text">Isolate all energy sources</div>
-          </div>
-          <div class="step">
-            <div class="step-number" style="background: var(--accent);">4</div>
-            <div class="step-text">Apply lockout & tagout devices</div>
-          </div>
-          <div class="step">
-            <div class="step-number" style="background: var(--accent);">5</div>
-            <div class="step-text">Release / restrain stored energy</div>
-          </div>
-          <div class="step">
-            <div class="step-number" style="background: #ef4444;">6</div>
-            <div class="step-text"><strong>Verify zero energy</strong> — test before work</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- PPE Card -->
-      <div class="reference-card" id="ppe-card">
-        <div class="reference-header">
-          <div class="reference-icon" style="background: rgba(29,78,216,0.10); border-color: rgba(29,78,216,0.22);">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
-          </div>
-          <div>
-            <div class="reference-title">PPE Quick Reference</div>
-            <div class="reference-sub">Required by task type</div>
-          </div>
-          <button class="reference-detail-btn" onclick="document.getElementById('ppe-card').scrollIntoView({behavior:'smooth'})">Full detail</button>
-        </div>
-        <div class="ppe-grid">
-          <div class="ppe-cell">
-            <div class="ppe-label">General Work</div>
-            <div class="ppe-items">Hard hat • Safety glasses • Steel-toe boots • Hi-vis vest</div>
-          </div>
-          <div class="ppe-cell">
-            <div class="ppe-label">Electrical Work</div>
-            <div class="ppe-items">Arc-rated FR clothing • Class B hard hat • Insulated gloves • Face shield</div>
-          </div>
-          <div class="ppe-cell">
-            <div class="ppe-label">Chemical Handling</div>
-            <div class="ppe-items">Chemical gloves • Safety glasses • Respirator if needed • Apron</div>
-          </div>
-          <div class="ppe-cell">
-            <div class="ppe-label">Heights / Fall</div>
-            <div class="ppe-items">Full-body harness • Lanyard • Hard hat • Required at 6 ft+</div>
-          </div>
-        </div>
-      </div>
-    </section>
   </main>
 
   <script src="home.js"></script>

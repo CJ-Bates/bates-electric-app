@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v3';
+const CACHE = 'bates-shell-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -26,22 +26,41 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+// Network-first for the app shell (HTML/CSS/JS) so updates propagate immediately.
+// Cache-first for everything else (images, fonts) for speed and offline support.
 self.addEventListener('fetch', (e) => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
 
-  e.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request)
+  const isShell =
+    request.mode === 'navigate' ||
+    /\.(html|css|js)$/i.test(url.pathname);
+
+  if (isShell) {
+    // Network-first: always try fresh, fall back to cache when offline.
+    e.respondWith(
+      fetch(request)
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
           return res;
         })
-        .catch(() => cached);
-      return cached || network;
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Cache-first for static assets.
+  e.respondWith(
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
+      return fetch(request).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
+        return res;
+      });
     })
   );
 });

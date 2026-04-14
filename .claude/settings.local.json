@@ -19,7 +19,8 @@
       "Bash(npx --yes serve -p 5173 -L)",
       "Bash(curl -sI http://localhost:5173/)",
       "Bash(curl -sI http://localhost:5173/inspection.html)",
-      "Bash(curl -sI http://localhost:5173/inspection)"
+      "Bash(curl -sI http://localhost:5173/inspection)",
+      "Bash(node -e \"const css=require\\('fs'\\).readFileSync\\('frontend/styles.css','utf8'\\); let depth=0,line=1,bad=null; for\\(const c of css\\){if\\(c==='\\\\n'\\)line++; if\\(c==='{'\\)depth++; if\\(c==='}'\\){depth--; if\\(depth<0\\){bad=line;break;}}} console.log\\('final depth:',depth,'bad line:',bad,'total lines:',line\\);\")"
     ]
   }
 }
