@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Documents</title>
+</head>
+<body class="hub-body">
+
+  <main class="hub-main">
+
+    <!-- Document Cards -->
+    <section class="docs-grid">
+
+      <!-- Safety Manual Card -->
+      <a href="safety-manual.html" class="doc-card">
+        <div class="doc-card-icon doc-card-icon--manual">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>
+            <path d="M12 13V7"/>
+            <path d="m9 10 3-3 3 3"/>
+          </svg>
+        </div>
+        <div class="doc-card-body">
+          <h2 class="doc-card-title">Safety Manual</h2>
+          <p class="doc-card-desc">2026 edition — company policies, procedures, and safety guidelines. Browse by section or open the full PDF.</p>
+        </div>
+        <div class="doc-card-meta">
+          <span class="doc-card-badge">64 pages</span>
+          <span class="doc-card-arrow">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </span>
+        </div>
+      </a>
+
+      <!-- SDS Sheets Card -->
+      <a href="sds-sheets.html" class="doc-card">
+        <div class="doc-card-icon doc-card-icon--sds">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/>
+            <path d="M8.5 2h7"/>
+            <path d="M7 16.5h10"/>
+          </svg>
+        </div>
+        <div class="doc-card-body">
+          <h2 class="doc-card-title">SDS Sheets</h2>
+          <p class="doc-card-desc">Safety Data Sheets for all 43 chemicals and materials used across Bates Electric job sites.</p>
+        </div>
+        <div class="doc-card-meta">
+          <span class="doc-card-badge">43 chemicals</span>
+          <span class="doc-card-arrow">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </span>
+        </div>
+      </a>
+
+    </section>
+
+    <!-- Info footer -->
+    <p class="docs-footer">
+      OSHA 29 CFR 1910.1200 — Hazard Communication Standard.<br>
+      Every technician must have access to these documents at all times.
+    </p>
+
+  </main>
+
+  <script src="shared-nav.js"></script>
+</body>
+</html>
