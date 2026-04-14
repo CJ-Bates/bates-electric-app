@@ -208,14 +208,11 @@ body {
 
 .field-icon {
   position: absolute;
-  left: 12px;
+  left: 14px;
   color: var(--text-tertiary);
   font-size: 18px;
   pointer-events: none;
-}
-
-.field-icon ~ input {
-  padding-left: 40px;
+  z-index: 1;
 }
 
 input[type="email"],
@@ -232,6 +229,14 @@ input[type="tel"] {
   border-radius: 12px;
   outline: none;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+/* When an input follows a field-icon, add left padding to clear the icon */
+.input-wrap > .field-icon ~ input[type="email"],
+.input-wrap > .field-icon ~ input[type="password"],
+.input-wrap > .field-icon ~ input[type="text"],
+.input-wrap > .field-icon ~ input[type="tel"] {
+  padding-left: 42px;
 }
 
 input::placeholder { color: var(--text-tertiary); }
@@ -1534,11 +1539,21 @@ input:focus-visible {
   border-radius: 12px;
   transition: background 0.15s;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 10;
+}
+
+/* Ensure SVGs inside buttons don't eat touch events */
+.topbar-hamburger svg,
+.topbar-signout svg,
+.shared-drawer-close svg {
+  pointer-events: none;
 }
 
 .hamburger-btn:active,
 .topbar-hamburger:active {
-  background: rgba(27,45,91,0.04);
+  background: rgba(27,45,91,0.08);
 }
 
 .topbar-signout {
@@ -1554,10 +1569,13 @@ input:focus-visible {
   border-radius: 10px;
   transition: background 0.15s, color 0.15s;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 10;
 }
 
 .topbar-signout:active {
-  background: rgba(27,45,91,0.04);
+  background: rgba(27,45,91,0.08);
   color: var(--text-primary);
 }
 
@@ -1660,6 +1678,7 @@ input:focus-visible {
   justify-content: center;
   transition: all 0.15s;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .shared-drawer-close:active {

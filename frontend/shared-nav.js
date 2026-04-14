@@ -241,12 +241,31 @@
   }
 
   /**
+   * Make SVG children of buttons non-interactive so the button gets the tap
+   */
+  function fixSvgPointerEvents() {
+    document.querySelectorAll('.topbar-hamburger svg, .topbar-signout svg, .shared-drawer-close svg').forEach(svg => {
+      svg.style.pointerEvents = 'none';
+    });
+  }
+
+  /**
    * Handle hamburger button click
    */
   function setupHamburgerListener() {
     const hamburgerBtn = document.getElementById('hamburgerBtn');
     if (hamburgerBtn) {
-      hamburgerBtn.addEventListener('click', openDrawer);
+      // Use both click and touchend for maximum mobile compatibility
+      hamburgerBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openDrawer();
+      });
+      hamburgerBtn.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openDrawer();
+      }, { passive: false });
     }
   }
 
@@ -259,23 +278,44 @@
     const topbarSignOut = document.getElementById('topbarSignOut');
     const drawerSignOut = document.getElementById('drawerSignOut');
 
-    // Close on overlay click
-    overlay.addEventListener('click', closeDrawer);
+    // Close on overlay click/touch
+    if (overlay) {
+      overlay.addEventListener('click', closeDrawer);
+      overlay.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        closeDrawer();
+      }, { passive: false });
+    }
 
-    // Close on close button click
-    closeBtn.addEventListener('click', closeDrawer);
+    // Close on close button click/touch
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        closeDrawer();
+      });
+      closeBtn.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        closeDrawer();
+      }, { passive: false });
+    }
 
     // Handle topbar sign out
     if (topbarSignOut) {
-      topbarSignOut.addEventListener('click', (e) => {
+      topbarSignOut.addEventListener('click', function(e) {
         e.preventDefault();
+        e.stopPropagation();
         handleSignOut();
       });
+      topbarSignOut.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSignOut();
+      }, { passive: false });
     }
 
     // Handle drawer sign out
     if (drawerSignOut) {
-      drawerSignOut.addEventListener('click', (e) => {
+      drawerSignOut.addEventListener('click', function(e) {
         e.preventDefault();
         handleSignOut();
       });
@@ -289,7 +329,7 @@
     });
 
     // Keyboard: ESC to close
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', function(e) {
       const drawer = document.getElementById('sharedDrawer');
       if (e.key === 'Escape' && drawer && drawer.classList.contains('open')) {
         closeDrawer();
@@ -310,6 +350,7 @@
 
   function initialize() {
     injectNavigation();
+    fixSvgPointerEvents();
     updateActiveState();
     setupHamburgerListener();
     setupDrawerListeners();
