@@ -1,7 +1,7 @@
 (() => {
   const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
     ? 'http://localhost:4000'
-    : '';
+    : 'https://bates-electric-app.onrender.com';
   const TOKEN_KEY = 'bates.auth.token';
   const DRAFT_KEY = 'bates.inspection.draft';
 
