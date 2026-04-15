@@ -2594,3 +2594,28 @@ input:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Compact back link for in-page sub-navigation */
+.compact-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(27, 45, 91, 0.08);
+  color: #1B2D5B;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-family: 'Exo 2', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  margin-bottom: 10px;
+}
+.compact-back:active {
+  background: rgba(27, 45, 91, 0.16);
+}
+.compact-back svg {
+  pointer-events: none;
+}
