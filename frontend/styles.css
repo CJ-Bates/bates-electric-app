@@ -2285,3 +2285,269 @@ input:focus-visible {
   line-height: 1.6;
   color: var(--text-tertiary);
 }
+
+/* ── Safety Manual TOC ──────────────────────── */
+
+.manual-open-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--accent);
+  color: #FFFFFF;
+  border-radius: 14px;
+  text-decoration: none;
+  margin-bottom: 20px;
+  transition: all 0.15s;
+  box-shadow: 0 2px 8px rgba(27,45,91,0.25);
+  touch-action: manipulation;
+}
+.manual-open-btn:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 4px rgba(27,45,91,0.20);
+}
+.manual-open-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.manual-open-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.manual-open-text strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+.manual-open-text span {
+  font-size: 13px;
+  opacity: 0.8;
+}
+.manual-open-arrow {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* TOC search */
+.toc-search-wrap {
+  position: relative;
+  margin-bottom: 20px;
+}
+.toc-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+.toc-search-input {
+  width: 100%;
+  padding: 12px 14px 12px 40px;
+  border: 1px solid rgba(27,45,91,0.10);
+  border-radius: 10px;
+  font-family: 'Exo 2', sans-serif;
+  font-size: 15px;
+  background: #FFFFFF;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.toc-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(27,45,91,0.08);
+}
+.toc-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* TOC sections */
+.toc-section {
+  margin-bottom: 20px;
+}
+.toc-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  margin: 0 0 8px 4px;
+}
+.toc-list {
+  background: #FFFFFF;
+  border: 0.5px solid rgba(27,45,91,0.10);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.toc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  text-decoration: none;
+  color: var(--text-primary);
+  border-bottom: 0.5px solid rgba(27,45,91,0.06);
+  transition: background 0.1s;
+  touch-action: manipulation;
+}
+.toc-row:last-child {
+  border-bottom: none;
+}
+.toc-row:active {
+  background: rgba(27,45,91,0.04);
+}
+.toc-row-title {
+  font-size: 15px;
+  font-weight: 500;
+  flex: 1;
+  padding-right: 12px;
+}
+.toc-row-page {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* ── SDS Sheets ─────────────────────────────── */
+
+.sds-count {
+  margin: 0 0 14px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+.sds-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sds-card {
+  background: #FFFFFF;
+  border: 0.5px solid rgba(27,45,91,0.10);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.sds-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.sds-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+.sds-signal {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.sds-signal--danger {
+  background: rgba(220,38,38,0.10);
+  color: #DC2626;
+}
+.sds-signal--warning {
+  background: rgba(234,179,8,0.12);
+  color: #A16207;
+}
+.sds-card-brand {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+.sds-card-use {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-bottom: 10px;
+}
+.sds-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.sds-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.sds-tag svg {
+  flex-shrink: 0;
+}
+.sds-tag--flame {
+  background: rgba(239,68,68,0.10);
+  color: #DC2626;
+}
+.sds-tag--irritant {
+  background: rgba(234,179,8,0.10);
+  color: #A16207;
+}
+.sds-tag--health {
+  background: rgba(168,85,247,0.10);
+  color: #7C3AED;
+}
+.sds-tag--toxic {
+  background: rgba(220,38,38,0.12);
+  color: #B91C1C;
+}
+.sds-tag--corrosive {
+  background: rgba(234,88,12,0.10);
+  color: #C2410C;
+}
+.sds-tag--gas {
+  background: rgba(37,99,235,0.10);
+  color: #2563EB;
+}
+.sds-tag--env {
+  background: rgba(22,163,74,0.10);
+  color: #16A34A;
+}
+.sds-tag--minimal {
+  background: rgba(22,163,74,0.08);
+  color: #16A34A;
+}
+.sds-card-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  background: rgba(27,45,91,0.05);
+  color: var(--accent);
+  font-family: 'Exo 2', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  text-decoration: none;
+  transition: background 0.15s;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.sds-card-btn:active {
+  background: rgba(27,45,91,0.10);
+}
