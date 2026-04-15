@@ -18,6 +18,13 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.get('/config', (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+  });
+});
+
 app.use('/auth', authRoutes);
 // GET /me lives on the auth router but is commonly called without the prefix;
 // mount it there as well for convenience.

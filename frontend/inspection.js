@@ -19,6 +19,9 @@
   // Holds { clear, isEmpty, toDataURL, restoreFromDataURL } per canvas id.
   const signatures = {};
 
+  // Selected photo File objects, parallel to DOM thumbnails in #photo-grid.
+  const selectedPhotos = [];
+
   // ---------- build repetitive rows from data ----------
   function radioChip(name, value, cls) {
     return `<label class="radio-opt ${cls}"><input type="radio" name="${name}" value="${value}"><span class="radio-chip">${value}</span></label>`;
@@ -154,25 +157,100 @@
   }
 
   // ---------- photos ----------
-  // Piece 3 only shows local previews. Uploading to Supabase Storage comes
-  // in Piece 6, and photos are intentionally NOT written to localStorage.
+  // Thumbnails are local previews only; File objects are kept in
+  // `selectedPhotos` and uploaded to Supabase Storage on submit.
   function initPhotos() {
     const grid = document.getElementById('photo-grid');
     const input = document.getElementById('photo-input');
     input.addEventListener('change', (e) => {
       for (const file of e.target.files) {
         const url = URL.createObjectURL(file);
+        const entry = { file, url };
+        selectedPhotos.push(entry);
         const div = document.createElement('div');
         div.className = 'photo-thumb';
         div.innerHTML = `<img src="${url}" alt="photo"><button type="button" class="photo-remove" aria-label="Remove photo">&times;</button>`;
         div.querySelector('.photo-remove').addEventListener('click', () => {
           URL.revokeObjectURL(url);
+          const idx = selectedPhotos.indexOf(entry);
+          if (idx !== -1) selectedPhotos.splice(idx, 1);
           div.remove();
         });
         grid.appendChild(div);
       }
       input.value = '';
     });
+  }
+
+  // ---------- photo upload ----------
+  let cachedConfig = null;
+  async function getConfig() {
+    if (cachedConfig) return cachedConfig;
+    const res = await fetch(`${API_BASE}/config`);
+    if (!res.ok) throw new Error('Failed to load config');
+    cachedConfig = await res.json();
+    return cachedConfig;
+  }
+
+  function safeFileName(name) {
+    return (name || 'photo.jpg').replace(/[^A-Za-z0-9._-]/g, '_');
+  }
+
+  async function uploadOnePhoto(cfg, token, inspectionId, entry, idx) {
+    const path = `${inspectionId}/${Date.now()}-${idx}-${safeFileName(entry.file.name)}`;
+    const storageUrl = `${cfg.supabaseUrl}/storage/v1/object/inspection-photos/${path}`;
+    const storageRes = await fetch(storageUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'apikey': cfg.supabaseAnonKey,
+        'Content-Type': entry.file.type || 'application/octet-stream',
+        'x-upsert': 'false',
+      },
+      body: entry.file,
+    });
+    if (!storageRes.ok) {
+      const body = await storageRes.text().catch(() => '');
+      throw new Error(`Storage upload failed (${storageRes.status}): ${body}`);
+    }
+
+    const rowRes = await fetch(`${cfg.supabaseUrl}/rest/v1/inspection_photos`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'apikey': cfg.supabaseAnonKey,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({ inspection_id: inspectionId, storage_path: path }),
+    });
+    if (!rowRes.ok) {
+      const body = await rowRes.text().catch(() => '');
+      throw new Error(`DB insert failed (${rowRes.status}): ${body}`);
+    }
+  }
+
+  async function uploadPhotos(inspectionId, token, onProgress) {
+    let cfg;
+    try {
+      cfg = await getConfig();
+    } catch (e) {
+      console.error(e);
+      return { uploaded: 0, failed: selectedPhotos.length };
+    }
+    let uploaded = 0;
+    let failed = 0;
+    for (let i = 0; i < selectedPhotos.length; i++) {
+      try {
+        await uploadOnePhoto(cfg, token, inspectionId, selectedPhotos[i], i);
+        uploaded++;
+      } catch (e) {
+        console.error('Photo upload failed', e);
+        failed++;
+      }
+      if (onProgress) onProgress(uploaded + failed);
+    }
+    return { uploaded, failed };
   }
 
   // ---------- autosave / restore ----------
@@ -300,8 +378,25 @@
 
       if (response.ok) {
         const result = await response.json();
-        showStatus('Inspection submitted successfully!', 'success');
+        const inspectionId = result?.inspection?.id;
+
+        if (inspectionId && selectedPhotos.length > 0) {
+          showStatus(`Uploading 0/${selectedPhotos.length} photos...`, 'info');
+          const { uploaded, failed } = await uploadPhotos(inspectionId, token, (done) => {
+            showStatus(`Uploading ${done}/${selectedPhotos.length} photos...`, 'info');
+          });
+          if (failed > 0) {
+            showStatus(`Submitted. Uploaded ${uploaded}/${selectedPhotos.length} photos (${failed} failed).`, 'warning');
+          } else {
+            showStatus(`Inspection submitted with ${uploaded} photo(s)!`, 'success');
+          }
+        } else {
+          showStatus('Inspection submitted successfully!', 'success');
+        }
+
         clearDraft();
+        for (const p of selectedPhotos) URL.revokeObjectURL(p.url);
+        selectedPhotos.length = 0;
         setTimeout(() => {
           window.location.replace('home.html');
         }, 1500);
@@ -518,6 +613,8 @@
       document.getElementById('inspection-form').reset();
       clearDraft();
       Object.values(signatures).forEach((s) => s.clear());
+      for (const p of selectedPhotos) URL.revokeObjectURL(p.url);
+      selectedPhotos.length = 0;
       document.getElementById('photo-grid').innerHTML = '';
       showStatus('Inspection reset.', 'info');
     });
