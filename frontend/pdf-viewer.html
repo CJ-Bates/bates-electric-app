@@ -198,35 +198,11 @@
       goBack();
     }, { passive: false });
 
-    // Detect mobile
-    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    // Both mobile and desktop: load PDF in iframe so back bar stays visible
     var frame = document.getElementById('pdf-frame');
     var mobilePrompt = document.getElementById('mobile-prompt');
-
-    if (isMobile) {
-      // Hide iframe, show mobile prompt
-      frame.style.display = 'none';
-      mobilePrompt.style.display = 'flex';
-
-      // Set mobile content
-      document.getElementById('mobile-heading').textContent = title;
-      document.getElementById('mobile-page').textContent = page ? 'Page ' + page : '';
-
-      // Open button navigates to PDF in same context so back gesture works
-      var openBtn = document.getElementById('open-btn');
-      function openPdf() {
-        location.href = pdfUrl;
-      }
-      openBtn.addEventListener('click', openPdf);
-      openBtn.addEventListener('touchend', function(e) {
-        e.preventDefault();
-        openPdf();
-      }, { passive: false });
-
-    } else {
-      // Desktop: load PDF in iframe
-      frame.src = pdfUrl;
-    }
+    mobilePrompt.style.display = 'none';
+    frame.src = pdfUrl;
   </script>
 
 </body>
