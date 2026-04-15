@@ -12,7 +12,7 @@ if (!url || !anonKey || !serviceKey) {
 
 // Anon client: used for sign-up / sign-in on behalf of the end user.
 const supabaseAnon = createClient(url, anonKey, {
-  auth: { persistSession: false },
+  auth: { persistSession: false, flowType: 'implicit' },
 });
 
 // Admin client: bypasses RLS. Use only for trusted server-side operations

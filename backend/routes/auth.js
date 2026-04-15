@@ -300,7 +300,7 @@ router.get('/reset-password-page', (req, res) => {
     <p class="sub">Choose a new password for your Bates Electric account.</p>
 
     <form id="f" novalidate autocomplete="on">
-      <label for="email">Account</label>
+      <label for="email">Email</label>
       <input id="email" type="email" name="username" autocomplete="username" readonly />
 
       <label for="pw">New password</label>
@@ -316,10 +316,15 @@ router.get('/reset-password-page', (req, res) => {
 
 <script>
 (() => {
+  // Try hash first (implicit flow), then query string (PKCE fallback)
   const hash = (location.hash || '').replace(/^#/, '');
-  const params = new URLSearchParams(hash);
-  const accessToken = params.get('access_token') || '';
-  const type = params.get('type') || '';
+  const hashParams = new URLSearchParams(hash);
+  const qsParams = new URLSearchParams(location.search);
+
+  var accessToken = hashParams.get('access_token') || qsParams.get('access_token') || '';
+  var type = hashParams.get('type') || qsParams.get('type') || '';
+  var hashError = hashParams.get('error_description') || hashParams.get('error') || '';
+  var code = qsParams.get('code') || '';
 
   const statusEl = document.getElementById('status');
   const emailEl = document.getElementById('email');
@@ -339,16 +344,47 @@ router.get('/reset-password-page', (req, res) => {
     } catch { return null; }
   }
 
-  if (!accessToken || type !== 'recovery') {
+  function ready(token) {
+    accessToken = token;
+    const payload = decode(token);
+    if (payload && payload.email) emailEl.value = payload.email;
+  }
+
+  // If we got a PKCE code instead of an access_token, exchange it server-side
+  if (!accessToken && code) {
+    btn.disabled = true;
+    setStatus('Verifying reset link…', '');
+    fetch('/auth/exchange-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(body) {
+      if (body.access_token) {
+        ready(body.access_token);
+        setStatus('', '');
+        btn.disabled = false;
+      } else {
+        setStatus(body.error || 'This reset link is invalid or expired. Request a new one from the sign-in page.', 'error');
+      }
+    })
+    .catch(function() {
+      setStatus('Network error verifying link. Please try again.', 'error');
+    });
+  } else if (hashError) {
+    setStatus(hashError.replace(/\\+/g, ' '), 'error');
+    btn.disabled = true;
+  } else if (!accessToken || type !== 'recovery') {
     setStatus('This reset link is invalid or expired. Request a new one from the sign-in page.', 'error');
     btn.disabled = true;
   } else {
-    const payload = decode(accessToken);
-    if (payload && payload.email) emailEl.value = payload.email;
+    ready(accessToken);
   }
 
   document.getElementById('f').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!accessToken) { setStatus('No valid reset token. Request a new link.', 'error'); return; }
     setStatus('', '');
     if (pwEl.value.length < 8) { setStatus('Password must be at least 8 characters.', 'error'); return; }
     if (pwEl.value !== pw2El.value) { setStatus('Passwords do not match.', 'error'); return; }
@@ -368,7 +404,7 @@ router.get('/reset-password-page', (req, res) => {
         btn.textContent = 'Update Password';
         return;
       }
-      setStatus('Password updated. You can close this tab and sign in to the app.', 'success');
+      setStatus('Password updated! You can close this tab and sign in to the app.', 'success');
     } catch (err) {
       setStatus('Network error. Please try again.', 'error');
       btn.disabled = false;
@@ -379,6 +415,58 @@ router.get('/reset-password-page', (req, res) => {
 </script>
 </body>
 </html>`);
+});
+
+// POST /auth/exchange-code  { code }
+// PKCE fallback: if Supabase redirected with ?code= instead of #access_token=,
+// exchange the code server-side using the Supabase auth REST API.
+router.post('/exchange-code', async (req, res) => {
+  const { code } = req.body || {};
+  if (!code) {
+    return res.status(400).json({ error: 'Missing code.' });
+  }
+
+  try {
+    const url = process.env.SUPABASE_URL;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
+
+    // Try exchanging the PKCE code via Supabase's token endpoint.
+    // For email-initiated flows the code_verifier may be empty/absent.
+    const tokenRes = await fetch(`${url}/auth/v1/token?grant_type=pkce`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+      },
+      body: JSON.stringify({ auth_code: code, code_verifier: '' }),
+    });
+
+    if (tokenRes.ok) {
+      const data = await tokenRes.json();
+      return res.json({ access_token: data.access_token });
+    }
+
+    // If PKCE exchange failed, try as authorization_code grant
+    const tokenRes2 = await fetch(`${url}/auth/v1/token?grant_type=authorization_code`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+      },
+      body: JSON.stringify({ auth_code: code }),
+    });
+
+    if (tokenRes2.ok) {
+      const data2 = await tokenRes2.json();
+      return res.json({ access_token: data2.access_token });
+    }
+
+    const errBody = await tokenRes2.json().catch(() => ({}));
+    return res.status(400).json({ error: errBody.error_description || errBody.msg || 'Code exchange failed.' });
+  } catch (err) {
+    console.error('exchange-code failed:', err);
+    return res.status(500).json({ error: 'Internal error exchanging code.' });
+  }
 });
 
 // POST /auth/reset-password  { access_token, new_password }
