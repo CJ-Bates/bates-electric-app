@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#1B2D5B" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <title>Bates Electric — Document Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Exo 2', sans-serif;
+      background: #F5F7FA;
+    }
+    .viewer-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      background: #1B2D5B;
+      color: #FFFFFF;
+    }
+    .viewer-back {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,255,255,0.15);
+      color: #FFFFFF;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-family: 'Exo 2', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .viewer-back:active {
+      background: rgba(255,255,255,0.25);
+    }
+    .viewer-back svg {
+      pointer-events: none;
+    }
+    .viewer-title {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .viewer-frame {
+      width: 100%;
+      height: calc(100% - 52px - max(0px, env(safe-area-inset-top)));
+      border: none;
+      background: #FFFFFF;
+    }
+    .viewer-fallback {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      height: calc(100% - 52px);
+      padding: 32px;
+      text-align: center;
+      color: #5A6577;
+    }
+    .viewer-fallback p {
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .viewer-fallback a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 24px;
+      background: #1B2D5B;
+      color: #FFFFFF;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="viewer-bar">
+    <button class="viewer-back" id="back-btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back
+    </button>
+    <span class="viewer-title" id="viewer-title">Document</span>
+  </div>
+
+  <iframe class="viewer-frame" id="pdf-frame"></iframe>
+
+  <div class="viewer-fallback" id="fallback">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#8C939A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+    </svg>
+    <p>Your browser can't display this PDF inline.</p>
+    <a id="fallback-link" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <polyline points="15 3 21 3 21 9"/>
+        <line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+      Open PDF Directly
+    </a>
+  </div>
+
+  <script>
+    var params = new URLSearchParams(location.search);
+    var file = params.get('file') || '';
+    var page = params.get('page') || '';
+    var title = params.get('title') || 'Document';
+    var back = params.get('back') || '';
+
+    // Set title
+    document.getElementById('viewer-title').textContent = title;
+
+    // Build PDF URL
+    var pdfUrl = file + (page ? '#page=' + page : '');
+
+    // Back button
+    var backBtn = document.getElementById('back-btn');
+    backBtn.addEventListener('click', function() {
+      if (back) {
+        location.href = back;
+      } else if (history.length > 1) {
+        history.back();
+      } else {
+        location.href = 'documents.html';
+      }
+    });
+    backBtn.addEventListener('touchend', function(e) {
+      e.preventDefault();
+      backBtn.click();
+    }, { passive: false });
+
+    // Try to load PDF in iframe
+    var frame = document.getElementById('pdf-frame');
+    var fallback = document.getElementById('fallback');
+    var fallbackLink = document.getElementById('fallback-link');
+
+    fallbackLink.href = pdfUrl;
+
+    // Some mobile browsers can't render PDFs in iframes — detect and show fallback
+    frame.src = pdfUrl;
+    frame.addEventListener('load', function() {
+      // If the frame loaded, check if it's actually showing content
+      try {
+        // On mobile, if PDF can't display, the iframe might be blank
+        // We'll give it a moment then check
+      } catch(e) {}
+    });
+
+    // On iOS/Android, PDFs in iframes often don't work.
+    // Detect mobile and use Google Docs viewer or show download link.
+    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      // Use Google Docs viewer for the PDF (works on mobile)
+      var fullUrl = location.origin + '/' + pdfUrl.split('#')[0];
+      var googleUrl = 'https://docs.google.com/viewer?url=' + encodeURIComponent(fullUrl) + '&embedded=true';
+      frame.src = googleUrl;
+    }
+  </script>
+
+</body>
+</html>

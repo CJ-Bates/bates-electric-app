@@ -20,7 +20,7 @@
   <main class="hub-main">
 
     <!-- Open Full PDF button -->
-    <a href="SafetyManual2026.pdf" target="_blank" class="manual-open-btn">
+    <a href="pdf-viewer.html?file=SafetyManual2026.pdf&title=Safety+Manual&back=safety-manual.html" class="manual-open-btn">
       <span class="manual-open-icon">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -246,12 +246,29 @@
     </section>
 
     <p class="docs-footer">
-      Tap a section to view it — use your back button to return here.
+      Tap any section to view it. Use the Back button to return.
     </p>
 
   </main>
 
   <script>
+    // Route TOC row clicks through the PDF viewer
+    document.querySelectorAll('.toc-row').forEach(function(row) {
+      row.addEventListener('click', function(e) {
+        e.preventDefault();
+        var href = row.getAttribute('href');
+        var parts = href.split('#page=');
+        var file = parts[0];
+        var page = parts[1] || '';
+        var title = row.querySelector('.toc-row-title').textContent;
+        var url = 'pdf-viewer.html?file=' + encodeURIComponent(file) +
+                  '&page=' + page +
+                  '&title=' + encodeURIComponent(title) +
+                  '&back=safety-manual.html';
+        location.href = url;
+      });
+    });
+
     // TOC search/filter
     const searchInput = document.getElementById('toc-search');
     if (searchInput) {
