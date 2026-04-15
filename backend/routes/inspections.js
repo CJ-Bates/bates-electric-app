@@ -1,4 +1,5 @@
 const express = require('express');
+const archiver = require('archiver');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { Resend } = require('resend');
@@ -209,6 +210,142 @@ router.get('/', requireAuth, async (req, res) => {
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json({ inspections: data });
+});
+
+// GET /inspections/:id/files
+// Returns signed URLs for the report PDF and every photo in the bucket.
+// Regenerates the PDF on the fly if it's missing (covers older inspections).
+router.get('/:id/files', requireAuth, async (req, res) => {
+  const inspectionId = req.params.id;
+
+  // Verify caller can read this inspection (RLS does the work).
+  const userClient = supabaseForUser(req.token);
+  const { data: inspection, error: readErr } = await userClient
+    .from('inspections')
+    .select('id, data')
+    .eq('id', inspectionId)
+    .single();
+  if (readErr || !inspection) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  try {
+    // List everything in the inspection's folder.
+    const { data: objects, error: listErr } = await supabaseAdmin
+      .storage
+      .from(PHOTOS_BUCKET)
+      .list(inspectionId, { limit: 1000 });
+    if (listErr) throw listErr;
+
+    const allNames = (objects || []).map((o) => o.name);
+    const pdfExists = allNames.includes('report.pdf');
+
+    // Fall back to regenerating the PDF if it's missing.
+    if (!pdfExists) {
+      const buffer = await buildInspectionPdf(inspection.data || {});
+      const { error: uploadErr } = await supabaseAdmin
+        .storage
+        .from(PHOTOS_BUCKET)
+        .upload(`${inspectionId}/report.pdf`, buffer, {
+          contentType: 'application/pdf',
+          upsert: true,
+        });
+      if (uploadErr) throw uploadErr;
+    }
+
+    const photoNames = allNames.filter((n) => n !== 'report.pdf');
+
+    const pdfPath = `${inspectionId}/report.pdf`;
+    const { data: pdfSigned, error: pdfSignErr } = await supabaseAdmin
+      .storage
+      .from(PHOTOS_BUCKET)
+      .createSignedUrl(pdfPath, PDF_SIGNED_URL_TTL_SECONDS);
+    if (pdfSignErr) throw pdfSignErr;
+
+    const photos = [];
+    for (const name of photoNames) {
+      const path = `${inspectionId}/${name}`;
+      const { data: signed, error: signErr } = await supabaseAdmin
+        .storage
+        .from(PHOTOS_BUCKET)
+        .createSignedUrl(path, PDF_SIGNED_URL_TTL_SECONDS);
+      if (signErr) continue;
+      photos.push({ name, url: signed.signedUrl });
+    }
+
+    res.json({ pdfUrl: pdfSigned.signedUrl, photos });
+  } catch (err) {
+    console.error('files endpoint failed', err);
+    res.status(500).json({ error: err.message || 'Failed to gather files' });
+  }
+});
+
+// GET /inspections/:id/photos.zip  — streams a zip of all photos.
+router.get('/:id/photos.zip', requireAuth, async (req, res) => {
+  const inspectionId = req.params.id;
+
+  const userClient = supabaseForUser(req.token);
+  const { data: inspection, error: readErr } = await userClient
+    .from('inspections')
+    .select('id, customer_name, job_number')
+    .eq('id', inspectionId)
+    .single();
+  if (readErr || !inspection) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  try {
+    const { data: objects, error: listErr } = await supabaseAdmin
+      .storage
+      .from(PHOTOS_BUCKET)
+      .list(inspectionId, { limit: 1000 });
+    if (listErr) throw listErr;
+
+    const photoNames = (objects || [])
+      .map((o) => o.name)
+      .filter((n) => n !== 'report.pdf');
+
+    if (photoNames.length === 0) {
+      return res.status(404).json({ error: 'No photos for this inspection' });
+    }
+
+    const safeName = (s) => String(s || 'photos').replace(/[^A-Za-z0-9._-]+/g, '_');
+    const zipName = `${safeName(inspection.job_number || inspection.customer_name || inspectionId)}-photos.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('warning', (e) => console.warn('zip warning', e));
+    archive.on('error', (e) => {
+      console.error('zip error', e);
+      try { res.status(500).end(); } catch (_) {}
+    });
+    archive.pipe(res);
+
+    for (const name of photoNames) {
+      const path = `${inspectionId}/${name}`;
+      const { data: blob, error: dlErr } = await supabaseAdmin
+        .storage
+        .from(PHOTOS_BUCKET)
+        .download(path);
+      if (dlErr || !blob) {
+        console.warn('skip photo, download failed', path, dlErr);
+        continue;
+      }
+      const arrayBuf = await blob.arrayBuffer();
+      archive.append(Buffer.from(arrayBuf), { name });
+    }
+
+    await archive.finalize();
+  } catch (err) {
+    console.error('zip endpoint failed', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Failed to build zip' });
+    } else {
+      try { res.end(); } catch (_) {}
+    }
+  }
 });
 
 // GET /inspections/:id  — full row including the JSONB data blob

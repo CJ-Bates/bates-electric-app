@@ -284,13 +284,102 @@
         html += `</div>`;
       }
 
+      // Files section (PDF + photos) — populated asynchronously below.
+      html += `
+        <h3 class="details-section-title">Report &amp; Photos</h3>
+        <div id="details-files" class="details-files">
+          <div class="files-loading">Loading files…</div>
+        </div>
+      `;
+
       html += `</div>`;
 
       body.innerHTML = html;
       modal.hidden = false;
+
+      loadFiles(id);
     } catch (err) {
       console.error('Details load failed:', err);
       showStatus(`Failed to load details: ${err.message}`, 'error');
+    }
+  }
+
+  async function loadFiles(inspectionId) {
+    const container = document.getElementById('details-files');
+    if (!container) return;
+    try {
+      const res = await fetch(`${API_BASE}/inspections/${inspectionId}/files`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      const { pdfUrl, photos } = await res.json();
+
+      let html = '';
+      html += `<div class="files-actions">`;
+      if (pdfUrl) {
+        html += `<a class="btn-primary btn-sm" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open PDF Report</a>`;
+      }
+      if (photos && photos.length) {
+        html += `<button type="button" class="btn-secondary btn-sm" id="download-zip-btn">Download All Photos (.zip)</button>`;
+      }
+      html += `</div>`;
+
+      if (photos && photos.length) {
+        html += `<div class="files-photo-grid">`;
+        for (const p of photos) {
+          html += `
+            <a class="files-photo" href="${escapeHtml(p.url)}" target="_blank" rel="noopener" title="${escapeHtml(p.name)}">
+              <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.name)}" loading="lazy">
+            </a>
+          `;
+        }
+        html += `</div>`;
+      } else {
+        html += `<p class="files-empty">No photos uploaded for this inspection.</p>`;
+      }
+
+      container.innerHTML = html;
+
+      const zipBtn = document.getElementById('download-zip-btn');
+      if (zipBtn) {
+        zipBtn.addEventListener('click', () => downloadPhotosZip(inspectionId, zipBtn));
+      }
+    } catch (err) {
+      console.error('Files load failed:', err);
+      container.innerHTML = `<p class="files-error">Could not load files: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  async function downloadPhotosZip(inspectionId, btn) {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Building zip…';
+    try {
+      const res = await fetch(`${API_BASE}/inspections/${inspectionId}/photos.zip`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(t || `Failed (${res.status})`);
+      }
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const m = /filename="([^"]+)"/.exec(disposition);
+      const filename = m ? m[1] : `inspection-${inspectionId}-photos.zip`;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Zip download failed', err);
+      showStatus(`Zip download failed: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
     }
   }
 
@@ -367,8 +456,9 @@
   setupFilters();
   loadInspections();
 
-  // Refresh button
-  document.getElementById('refresh-btn').addEventListener('click', loadInspections);
+  // Refresh button (optional — only present on some layouts)
+  const refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadInspections);
 
   // Modal close buttons
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);

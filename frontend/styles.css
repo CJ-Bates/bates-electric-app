@@ -2671,3 +2671,40 @@ html.dark .shared-drawer {
 html.dark .shared-drawer-overlay {
   background: rgba(0,0,0,0.6);
 }
+
+/* ---------- Office dashboard: report & photos ---------- */
+.details-files { margin-top: 8px; }
+.files-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.files-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.files-photo {
+  display: block;
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f1f1f1;
+  border: 1px solid #ddd;
+  text-decoration: none;
+}
+.files-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.files-loading,
+.files-empty,
+.files-error {
+  font-size: 13px;
+  color: #666;
+  padding: 8px 0;
+}
+.files-error { color: #b91c1c; }
