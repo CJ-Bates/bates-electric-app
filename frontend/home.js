@@ -66,27 +66,147 @@
     return { icon: 'cloud', label: '' };
   }
 
+  const LOC_CACHE_KEY = 'bates.weather.loc';
+  const LOC_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+  function readCachedLocation() {
+    try {
+      const raw = localStorage.getItem(LOC_CACHE_KEY);
+      if (!raw) return null;
+      const j = JSON.parse(raw);
+      if (!j || !Number.isFinite(j.lat) || !Number.isFinite(j.lon)) return null;
+      if (Date.now() - (j.ts || 0) > LOC_CACHE_TTL_MS) return null;
+      return j;
+    } catch (e) { return null; }
+  }
+
+  function writeCachedLocation(loc) {
+    try {
+      localStorage.setItem(LOC_CACHE_KEY, JSON.stringify({ ...loc, ts: Date.now() }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function getBrowserPosition() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve({ ok: false, reason: 'unsupported' });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ ok: true, lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        (err) => resolve({ ok: false, reason: err && err.code === 1 ? 'denied' : 'error' }),
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 5 * 60 * 1000 }
+      );
+    });
+  }
+
+  async function reverseGeocode(lat, lon) {
+    try {
+      const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const j = await res.json();
+      return j.city || j.locality || j.principalSubdivision || null;
+    } catch (e) { return null; }
+  }
+
+  async function fetchWeatherFor(loc) {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=auto`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const t = Math.round(json?.current?.temperature_2m);
+    const code = json?.current?.weather_code;
+    if (!Number.isFinite(t) || !Number.isFinite(code)) return null;
+    return { t, code };
+  }
+
+  function renderWeather(els, loc, weather) {
+    const w = weatherFromCode(weather.code);
+    els.iconEl.innerHTML = WEATHER_ICONS[w.icon] || WEATHER_ICONS.cloud;
+    els.tempEl.textContent = `${weather.t}°`;
+    els.locEl.textContent = loc.city || '';
+    els.wrap.title = w.label;
+    els.wrap.hidden = false;
+  }
+
+  function renderEnablePrompt(els, message) {
+    els.iconEl.innerHTML = '';
+    els.tempEl.textContent = '';
+    els.locEl.textContent = message;
+    els.wrap.title = 'Tap to enable location';
+    els.wrap.hidden = false;
+  }
+
+  async function tryRenderWith(els, loc) {
+    const weather = await fetchWeatherFor(loc);
+    if (!weather) return false;
+    if (!loc.city) loc.city = await reverseGeocode(loc.lat, loc.lon);
+    renderWeather(els, loc, weather);
+    writeCachedLocation(loc);
+    return true;
+  }
+
   async function loadWeather() {
     const wrap = document.getElementById('hero-weather');
     const iconEl = document.getElementById('hero-weather-icon');
     const tempEl = document.getElementById('hero-weather-temp');
-    if (!wrap || !iconEl || !tempEl) return;
-    try {
-      // O'Fallon, MO — Bates Electric service area
-      const url = 'https://api.open-meteo.com/v1/forecast?latitude=38.81&longitude=-90.70&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America%2FChicago';
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const json = await res.json();
-      const t = Math.round(json?.current?.temperature_2m);
-      const code = json?.current?.weather_code;
-      if (Number.isFinite(t) && Number.isFinite(code)) {
-        const w = weatherFromCode(code);
-        iconEl.innerHTML = WEATHER_ICONS[w.icon] || WEATHER_ICONS.cloud;
-        tempEl.textContent = `${t}°`;
-        wrap.title = w.label;
-        wrap.hidden = false;
+    const locEl = document.getElementById('hero-weather-loc');
+    if (!wrap || !iconEl || !tempEl || !locEl) return;
+    const els = { wrap, iconEl, tempEl, locEl };
+
+    const cached = readCachedLocation();
+    if (cached) {
+      const ok = await tryRenderWith(els, { lat: cached.lat, lon: cached.lon, city: cached.city });
+      if (ok) {
+        requestFreshLocation(els, { silent: true });
+        return;
       }
-    } catch (e) { /* silent — weather is optional */ }
+    }
+
+    let permState = null;
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const p = await navigator.permissions.query({ name: 'geolocation' });
+        permState = p.state;
+      }
+    } catch (e) { /* not all browsers support this */ }
+
+    if (permState === 'granted' || permState === 'prompt' || permState === null) {
+      const ok = await requestFreshLocation(els, { silent: false });
+      if (ok) return;
+    }
+
+    renderEnablePrompt(els, 'Tap to enable location');
+  }
+
+  async function requestFreshLocation(els, { silent }) {
+    const pos = await getBrowserPosition();
+    if (!pos.ok) {
+      if (!silent) {
+        renderEnablePrompt(els, pos.reason === 'denied' ? 'Location off' : 'Tap to enable location');
+      }
+      return false;
+    }
+    const loc = { lat: pos.lat, lon: pos.lon, city: null };
+    return tryRenderWith(els, loc);
+  }
+
+  function wireWeatherTileRetry() {
+    const wrap = document.getElementById('hero-weather');
+    if (!wrap) return;
+    const handler = async (ev) => {
+      ev.preventDefault();
+      const els = {
+        wrap,
+        iconEl: document.getElementById('hero-weather-icon'),
+        tempEl: document.getElementById('hero-weather-temp'),
+        locEl: document.getElementById('hero-weather-loc'),
+      };
+      els.locEl.textContent = 'Locating…';
+      await requestFreshLocation(els, { silent: false });
+    };
+    wrap.addEventListener('click', handler);
+    wrap.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') handler(ev);
+    });
   }
 
   function greetingForHour(h) {
@@ -142,6 +262,7 @@
 
     renderFeaturedActions(profile.role);
     renderQuickLinks(profile.role);
+    wireWeatherTileRetry();
     loadWeather();
   }
 

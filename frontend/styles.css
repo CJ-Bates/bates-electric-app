@@ -707,6 +707,8 @@ input:focus-visible {
 }
 
 .hub-hero-weather[hidden] { display: none; }
+.hub-hero-weather[role="button"] { cursor: pointer; }
+.hub-hero-weather[role="button"]:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 2px; }
 
 .hub-hero-weather-icon {
   display: inline-flex;
