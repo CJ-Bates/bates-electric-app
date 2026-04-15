@@ -165,7 +165,7 @@
       </svg>
       Open Document
     </button>
-    <div class="viewer-mobile-hint">Opens in your browser. Use the Back button above when done.</div>
+    <div class="viewer-mobile-hint">Opens in your browser for full reading.<br>Switch back to the app and tap <strong>Back</strong> when done.</div>
   </div>
 
   <script>
@@ -198,11 +198,35 @@
       goBack();
     }, { passive: false });
 
-    // Both mobile and desktop: load PDF in iframe so back bar stays visible
+    // Detect mobile
+    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     var frame = document.getElementById('pdf-frame');
     var mobilePrompt = document.getElementById('mobile-prompt');
-    mobilePrompt.style.display = 'none';
-    frame.src = pdfUrl;
+
+    if (isMobile) {
+      // Mobile: iframes can't render PDFs properly, so show an "Open" button.
+      // The PDF opens in the system browser; the PWA stays here with the Back button.
+      frame.style.display = 'none';
+      mobilePrompt.style.display = 'flex';
+
+      document.getElementById('mobile-heading').textContent = title;
+      document.getElementById('mobile-page').textContent = page ? 'Page ' + page : '';
+
+      var openBtn = document.getElementById('open-btn');
+      function openPdf() {
+        window.open(pdfUrl, '_blank');
+      }
+      openBtn.addEventListener('click', openPdf);
+      openBtn.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        openPdf();
+      }, { passive: false });
+
+    } else {
+      // Desktop: PDF renders fine in an iframe
+      mobilePrompt.style.display = 'none';
+      frame.src = pdfUrl;
+    }
   </script>
 
 </body>
