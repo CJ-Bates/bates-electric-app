@@ -1,7 +1,12 @@
 const express = require('express');
-const { supabaseForUser } = require('../lib/supabase');
+const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { Resend } = require('resend');
+const { buildInspectionPdf } = require('../lib/buildPdf');
+const { SECTIONS, UPSELL_NAMES, JOB_FIELDS } = require('../lib/inspectionFields');
+
+const PHOTOS_BUCKET = 'inspection-photos';
+const PDF_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 const router = express.Router();
 
@@ -47,10 +52,18 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
-  // Send email if submitted and Resend is configured
-  if (status === 'submitted' && resend) {
+  // Generate the PDF, upload it to storage, and email it (best-effort).
+  let pdfSignedUrl = null;
+  if (row.status === 'submitted') {
+    pdfSignedUrl = await generateAndStorePdf(inserted.id, data).catch((err) => {
+      console.error('PDF generation/upload failed:', err);
+      return null;
+    });
+  }
+
+  if (row.status === 'submitted' && resend) {
     try {
-      const emailBody = buildEmailHTML(data);
+      const emailBody = buildEmailHTML(data, pdfSignedUrl);
       const custEmail = data.job_email || '';
       const custName = data.job_cust || 'Customer';
       const date = data.job_date || new Date().toLocaleDateString();
@@ -76,136 +89,100 @@ router.post('/', requireAuth, async (req, res) => {
     }
   }
 
-  res.status(201).json({ inspection: inserted });
+  res.status(201).json({ inspection: inserted, pdfUrl: pdfSignedUrl });
 });
 
-function buildEmailHTML(data) {
+async function generateAndStorePdf(inspectionId, data) {
+  const buffer = await buildInspectionPdf(data);
+  const path = `${inspectionId}/report.pdf`;
+
+  const { error: uploadErr } = await supabaseAdmin
+    .storage
+    .from(PHOTOS_BUCKET)
+    .upload(path, buffer, {
+      contentType: 'application/pdf',
+      upsert: true,
+    });
+  if (uploadErr) throw uploadErr;
+
+  const { data: signed, error: signErr } = await supabaseAdmin
+    .storage
+    .from(PHOTOS_BUCKET)
+    .createSignedUrl(path, PDF_SIGNED_URL_TTL_SECONDS);
+  if (signErr) throw signErr;
+
+  return signed.signedUrl;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function rowHtml(label, value) {
+  return `<tr>
+    <td style="padding: 6px; border: 1px solid #ddd;"><strong>${escapeHtml(label)}:</strong></td>
+    <td style="padding: 6px; border: 1px solid #ddd;">${escapeHtml(value || '')}</td>
+  </tr>`;
+}
+
+function buildEmailHTML(data, pdfUrl) {
   const d = data || {};
-  const date = d.job_date || new Date().toLocaleDateString();
-  const techName = d.job_tech || 'Tech';
-  const custName = d.job_cust || 'Customer';
-  const custEmail = d.job_email || '';
 
   let html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-<h2 style="color: #0B2545; border-bottom: 3px solid #F5B700; padding-bottom: 10px;">Bates Electric &mdash; Electrical Safety Inspection</h2>
+<h2 style="color: #0B2545; border-bottom: 3px solid #F5B700; padding-bottom: 10px;">Bates Electric &mdash; Electrical Safety Inspection</h2>`;
 
-<h3 style="color: #0B2545; margin-top: 20px;">Job Information</h3>
-<table style="width: 100%; border-collapse: collapse;">
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Date:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${date}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Job #:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_num || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Invoice #:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_inv || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Technician:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${techName}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Customer:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${custName}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Address:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_addr || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Email:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${custEmail}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Year Built:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_yr || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Property Type:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_type || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong># Photos:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_photos || ''}</td></tr>
-</table>
-    `;
+  if (pdfUrl) {
+    html += `
+<p style="margin: 16px 0;">
+  <a href="${escapeHtml(pdfUrl)}"
+     style="background:#0B2545;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">
+    Download PDF Report
+  </a>
+  <span style="color:#666;font-size:12px;margin-left:8px;">(link valid 30 days)</span>
+</p>`;
+  }
 
-  // Helper to add section
-  const addSection = (title, fields) => {
-    html += `<h3 style="color: #0B2545; margin-top: 20px;">${title}</h3>
+  html += `<h3 style="color: #0B2545; margin-top: 20px;">Job Information</h3>
 <table style="width: 100%; border-collapse: collapse;">`;
-    fields.forEach(([label, key]) => {
-      const val = d[key];
-      if (val) {
-        html += `<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>${label}:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${val}</td></tr>`;
-      }
-    });
+  for (const [label, key] of JOB_FIELDS) {
+    html += rowHtml(label, d[key]);
+  }
+  html += `</table>`;
+
+  for (const [title, fields] of SECTIONS) {
+    const present = fields.filter(([, k]) => d[k]);
+    if (present.length === 0) continue;
+    html += `<h3 style="color: #0B2545; margin-top: 20px;">${escapeHtml(title)}</h3>
+<table style="width: 100%; border-collapse: collapse;">`;
+    for (const [label, k] of present) {
+      html += rowHtml(label, d[k]);
+    }
     html += `</table>`;
-  };
+  }
 
-  // Main panels
-  const mpFields = [
-    ['Manufacturer', 'mp_mfr'], ['Voltage', 'mp_volt'], ['Amps', 'mp_amps'],
-    ['Phase', 'mp_phase'], ['Age', 'mp_age'], ['Obsolete', 'mp_obs'],
-    ['UL Listed', 'mp_ul'], ['Breakers sized', 'mp_sized'], ['Main breaker protected', 'mp_main_breaker'],
-    ['Main breaker sized', 'mp_main_sized'], ['GFCI working', 'mp_gfci'], ['AFCI working', 'mp_afci'],
-    ['Burning/corrosion', 'mp_burn'], ['Connections tight', 'mp_tight'], ['Wire type', 'mp_wiretype'],
-    ['Grounding correct', 'mp_ground'], ['Surge device', 'mp_surge'], ['Clamps/bushings', 'mp_clamps'],
-    ['Panel labeled', 'mp_labeled'], ['Knockouts sealed', 'mp_knockouts'], ['Bonded', 'mp_bonded'],
-    ['Heat', 'mp_heat'], ['Corrosion', 'mp_corr'], ['Water/rust', 'mp_rust'],
-    ['Double taps', 'mp_dbl_tap'], ['Surge protector', 'mp_surge2'], ['Breakers for wire', 'mp_wire_size'],
-    ['Condition', 'mp_cond'], ['Exposed wires', 'mp_exposed'], ['Entries protected', 'mp_entries'],
-    ['Overall rating', 'mp_rating']
-  ];
-  addSection('Main Electrical Panel', mpFields);
-
-  const spFields = mpFields.map(([l, k]) => [l, k.replace('mp_', 'sp_')]);
-  addSection('Secondary / Sub Panel', spFields);
-
-  const svcFields = [
-    ['Ampere Rating', 'svc_amps'], ['Phase', 'svc_phase'], ['Age', 'svc_age'],
-    ['Riser Type', 'svc_riser'], ['POA Condition', 'svc_poa'],
-    ['Entry', 'svc_entry'], ['Location', 'svc_loc'],
-    ['Disconnect switch', 'svc_q01'], ['Eyebolt', 'svc_q02'], ['Weatherhead', 'svc_q03'],
-    ['Flashing', 'svc_q04'], ['Utility connections', 'svc_q05'], ['Trees on wires', 'svc_q06'],
-    ['Grounding', 'svc_q07'], ['Drip loop', 'svc_q08'], ['Components secured', 'svc_q09'],
-    ['Meter/Service', 'svc_q10'], ['Entrance cable', 'svc_q11'], ['Overall rating', 'svc_rating']
-  ];
-  addSection('Main Electrical Service', svcFields);
-
-  const gwFields = [
-    ['GFCI in required', 'gw_q01'], ['Outside GFCI', 'gw_q02'], ['Bubble covers', 'gw_q03'],
-    ['Outside wiring', 'gw_q04'], ['Open splices', 'gw_q05'], ['Stab wired', 'gw_q06'],
-    ['Extension cords', 'gw_q07'], ['Outlets', 'gw_q08'], ['GFCI coverage', 'gw_q09'],
-    ['AFCI coverage', 'gw_q10'], ['Fixtures', 'gw_q11'], ['Exhaust fans', 'gw_q12'],
-    ['Charging stations', 'gw_q13'], ['Colors noted', 'gw_colors'], ['Overall rating', 'gw_rating']
-  ];
-  addSection('General Wiring', gwFields);
-
-  const smFields = [
-    ['Tested/working', 'sm_q01'], ['In required areas', 'sm_q02'], ['Hardwired/interconnected', 'sm_q03'],
-    ['CO alarms', 'sm_q04'], ['Doorbell', 'sm_q05'], ['Detector age', 'sm_age'], ['Overall rating', 'sm_rating']
-  ];
-  addSection('Smoke & CO Alarms', smFields);
-
-  const acFields = [
-    ['Wiring correct', 'ac_q01'], ['Count', 'ac_count'], ['Improper methods', 'ac_q03'], ['Overall rating', 'ac_rating']
-  ];
-  addSection('Attic & Crawlspace', acFields);
-
-  const hvFields = [
-    ['AC Min', 'hv_min'], ['AC Max', 'hv_max'],
-    ['AC breaker correct', 'hv_q01'], ['AC disconnect', 'hv_q02'], ['Furnace wiring', 'hv_q03'],
-    ['Furnace disconnect', 'hv_q04'], ['Aluminum wiring', 'hv_q05'], ['Aluminum terminated', 'hv_q06'],
-    ['A/C condition', 'hv_q07'], ['Furnace condition', 'hv_q08'], ['Overall rating', 'hv_rating']
-  ];
-  addSection('Furnace & A/C Wiring', hvFields);
-
-  // Recommended services
-  const checked = [];
-  const upsellNames = [
-    'up_panel', 'up_surge', 'up_breaker', 'up_gfci', 'up_afci', 'up_ev',
-    'up_sub', 'up_circuit', 'up_smoke', 'up_co', 'up_alum', 'up_arc',
-    'up_svc', 'up_gen', 'up_outdoor', 'up_covers', 'up_label', 'up_ground'
-  ];
-  upsellNames.forEach(n => {
-    if (d[n]) checked.push(d[n]);
-  });
+  const checked = UPSELL_NAMES.map((n) => d[n]).filter(Boolean);
   if (checked.length || d.up_other) {
     html += `<h3 style="color: #0B2545; margin-top: 20px;">Recommended Services</h3>`;
-    if (checked.length) html += `<p>${checked.join(', ')}</p>`;
-    if (d.up_other) html += `<p><strong>Other:</strong> ${d.up_other}</p>`;
+    if (checked.length) html += `<p>${escapeHtml(checked.join(', '))}</p>`;
+    if (d.up_other) html += `<p><strong>Other:</strong> ${escapeHtml(d.up_other)}</p>`;
   }
 
-  // Notes
   if (d.insp_notes) {
-    html += `<h3 style="color: #0B2545; margin-top: 20px;">Notes</h3><p>${d.insp_notes.replace(/\n/g, '<br>')}</p>`;
+    html += `<h3 style="color: #0B2545; margin-top: 20px;">Notes</h3>
+<p>${escapeHtml(d.insp_notes).replace(/\n/g, '<br>')}</p>`;
   }
 
-  // Signatures
   html += `<h3 style="color: #0B2545; margin-top: 20px;">Signatures</h3>
 <table style="width: 100%; border-collapse: collapse;">
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Technician Name:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.sig_tech_name || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Date:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.sig_date || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Customer Name:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.sig_cust_name || ''}</td></tr>
+${rowHtml('Technician Name', d.sig_tech_name)}
+${rowHtml('Date', d.sig_date)}
+${rowHtml('Customer Name', d.sig_cust_name)}
 </table>`;
 
   html += `</body></html>`;
