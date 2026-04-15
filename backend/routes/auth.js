@@ -282,6 +282,177 @@ router.post('/forgot-password', async (req, res) => {
   return res.json({ ok: true });
 });
 
+// GET /auth/reset-password-page — self-contained HTML page served directly
+// by the backend so the recovery link works regardless of where the
+// frontend is hosted. Reads the access_token from the URL hash and POSTs
+// to /auth/reset-password.
+router.get('/reset-password-page', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Reset Password — Bates Electric</title>
+<style>
+  :root {
+    --navy: #1B2D5B;
+    --text: #1B2D5B;
+    --muted: #5A6577;
+    --bg: #F5F7FA;
+    --border: rgba(27,45,91,0.12);
+    --danger: #DC2626;
+    --success: #16A34A;
+  }
+  *, *:before, *:after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; min-height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  .card {
+    background: #fff;
+    width: 100%;
+    max-width: 420px;
+    padding: 28px 24px 24px;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(27,45,91,0.08);
+  }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+  .sub { margin: 0 0 20px; font-size: 14px; color: var(--muted); }
+  label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin: 12px 0 6px; }
+  input {
+    width: 100%;
+    padding: 13px 14px;
+    font: inherit;
+    font-size: 15px;
+    color: var(--text);
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input:read-only { background: #F5F7FA; color: var(--muted); }
+  input:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 3px rgba(27,45,91,0.12); }
+  button {
+    width: 100%;
+    margin-top: 18px;
+    padding: 14px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--navy);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .status {
+    margin-top: 14px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    display: none;
+  }
+  .status.error { display: block; background: rgba(220,38,38,0.08); color: var(--danger); }
+  .status.success { display: block; background: rgba(22,163,74,0.08); color: var(--success); }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>Reset password</h1>
+    <p class="sub">Choose a new password for your Bates Electric account.</p>
+
+    <form id="f" novalidate autocomplete="on">
+      <label for="email">Account</label>
+      <input id="email" type="email" name="username" autocomplete="username" readonly />
+
+      <label for="pw">New password</label>
+      <input id="pw" type="password" name="new-password" autocomplete="new-password" minlength="8" required placeholder="Min. 8 characters" />
+
+      <label for="pw2">Confirm new password</label>
+      <input id="pw2" type="password" name="new-password-confirm" autocomplete="new-password" minlength="8" required />
+
+      <button type="submit" id="go">Update Password</button>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </form>
+  </main>
+
+<script>
+(() => {
+  const hash = (location.hash || '').replace(/^#/, '');
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get('access_token') || '';
+  const type = params.get('type') || '';
+
+  const statusEl = document.getElementById('status');
+  const emailEl = document.getElementById('email');
+  const pwEl = document.getElementById('pw');
+  const pw2El = document.getElementById('pw2');
+  const btn = document.getElementById('go');
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = 'status ' + (kind || '');
+  }
+
+  function decode(jwt) {
+    try {
+      const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(atob(p + '==='.slice((p.length + 3) % 4)));
+    } catch { return null; }
+  }
+
+  if (!accessToken || type !== 'recovery') {
+    setStatus('This reset link is invalid or expired. Request a new one from the sign-in page.', 'error');
+    btn.disabled = true;
+  } else {
+    const payload = decode(accessToken);
+    if (payload && payload.email) emailEl.value = payload.email;
+  }
+
+  document.getElementById('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setStatus('', '');
+    if (pwEl.value.length < 8) { setStatus('Password must be at least 8 characters.', 'error'); return; }
+    if (pwEl.value !== pw2El.value) { setStatus('Passwords do not match.', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Updating…';
+    try {
+      const res = await fetch('/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_token: accessToken, new_password: pwEl.value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(body.error || 'Could not update password.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Update Password';
+        return;
+      }
+      setStatus('Password updated. You can close this tab and sign in to the app.', 'success');
+    } catch (err) {
+      setStatus('Network error. Please try again.', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Update Password';
+    }
+  });
+})();
+</script>
+</body>
+</html>`);
+});
+
 // POST /auth/reset-password  { access_token, new_password }
 // Consumes a Supabase recovery access_token (delivered via the email link)
 // and sets the new password via the admin client.
