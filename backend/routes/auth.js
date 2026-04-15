@@ -186,29 +186,16 @@ router.post('/forgot-password', async (req, res) => {
   }
 
   const normalized = email.toLowerCase().trim();
-  const debug = req.query.debug === '1';
 
-  const result = {
-    allowed: false,
-    linkGenerated: false,
-    hasResend: !!resend,
-    fromEmail: null,
-    redirectTo: null,
-    sendAttempted: false,
-    sendError: null,
-    linkError: null,
-  };
-
+  // Always resolve to {ok:true} at the API layer so a caller can't probe
+  // for valid Bates addresses. Errors are logged server-side only.
   try {
-    if (!allowedBatesEmail(normalized)) {
-      if (debug) return res.json({ ok: true, _debug: result, reason: 'not-bates-email' });
-      return res.json({ ok: true });
-    }
-    result.allowed = true;
+    if (!allowedBatesEmail(normalized)) return res.json({ ok: true });
 
     const origin = resolveOrigin(req);
-    const redirectTo = `${origin}/reset-password.html`;
-    result.redirectTo = redirectTo;
+    // Point recovery at the backend-served reset page so it works regardless
+    // of where the PWA frontend is hosted.
+    const redirectTo = `${origin}/auth/reset-password-page`;
 
     const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
       type: 'recovery',
@@ -216,30 +203,21 @@ router.post('/forgot-password', async (req, res) => {
       options: { redirectTo },
     });
     if (linkErr) {
-      result.linkError = linkErr.message || String(linkErr);
-      console.error('generateLink failed:', result.linkError);
-      if (debug) return res.json({ ok: true, _debug: result });
+      console.error('generateLink failed:', linkErr.message || linkErr);
       return res.json({ ok: true });
     }
     const actionLink = linkData?.properties?.action_link;
     if (!actionLink) {
-      result.linkError = 'no action_link in response';
-      console.error(result.linkError);
-      if (debug) return res.json({ ok: true, _debug: result });
+      console.error('generateLink returned no action_link');
       return res.json({ ok: true });
     }
-    result.linkGenerated = true;
-    if (debug) result.actionLink = actionLink;
 
     if (!resend) {
       console.warn('Resend not configured — skipping password reset email');
-      if (debug) return res.json({ ok: true, _debug: result });
       return res.json({ ok: true });
     }
 
     const fromEmail = process.env.EMAIL_FROM || 'noreply@bates-electric.com';
-    result.fromEmail = fromEmail;
-
     const html = `
       <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1B2D5B;">
         <h2 style="margin:0 0 12px;font-size:20px;">Reset your Bates Electric password</h2>
@@ -260,25 +238,19 @@ router.post('/forgot-password', async (req, res) => {
       </div>
     `;
 
-    result.sendAttempted = true;
-    const { data: sendData, error: sendErr } = await resend.emails.send({
+    const { error: sendErr } = await resend.emails.send({
       from: fromEmail,
       to: [normalized],
       subject: 'Reset your Bates Electric password',
       html,
     });
     if (sendErr) {
-      result.sendError = sendErr.message || JSON.stringify(sendErr);
-      console.error('Resend send failed:', result.sendError);
-    } else {
-      result.sendResult = sendData;
+      console.error('Resend send failed:', sendErr.message || sendErr);
     }
   } catch (err) {
-    result.sendError = err && err.message ? err.message : String(err);
     console.error('forgot-password failed:', err);
   }
 
-  if (debug) return res.json({ ok: true, _debug: result });
   return res.json({ ok: true });
 });
 
