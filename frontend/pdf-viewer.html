@@ -123,6 +123,17 @@
     .viewer-mobile-btn svg {
       pointer-events: none;
     }
+    .viewer-mobile-btn--secondary {
+      background: #FFFFFF;
+      color: #1B2D5B;
+      border: 2px solid #1B2D5B;
+      box-shadow: none;
+      margin-top: -12px;
+    }
+    .viewer-mobile-btn--secondary:active {
+      background: #EEF1F7;
+      box-shadow: none;
+    }
     .viewer-mobile-hint {
       font-size: 13px;
       color: #8C939A;
@@ -164,6 +175,12 @@
         <line x1="10" y1="14" x2="21" y2="3"/>
       </svg>
       Open Document
+    </button>
+    <button class="viewer-mobile-btn viewer-mobile-btn--secondary" id="mobile-back-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back to Sections
     </button>
     <div class="viewer-mobile-hint">Opens in your browser for full reading.<br>Switch back to the app and tap <strong>Back</strong> when done.</div>
   </div>
@@ -220,6 +237,13 @@
       openBtn.addEventListener('touchend', function(e) {
         e.preventDefault();
         openPdf();
+      }, { passive: false });
+
+      var mobileBackBtn = document.getElementById('mobile-back-btn');
+      mobileBackBtn.addEventListener('click', goBack);
+      mobileBackBtn.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        goBack();
       }, { passive: false });
 
     } else {
