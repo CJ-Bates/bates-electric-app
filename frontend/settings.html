@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Settings</title>
+  <script>
+    // Apply stored theme ASAP to avoid flash-of-unthemed-content
+    try {
+      if (localStorage.getItem('bates.theme') === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+    } catch (e) {}
+  </script>
+  <style>
+    .settings-section { margin-bottom: 24px; }
+    .settings-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-tertiary);
+      margin: 0 0 10px 4px;
+    }
+    .settings-card {
+      background: #FFFFFF;
+      border: 0.5px solid var(--glass-border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    html.dark .settings-card { background: var(--bg-secondary); }
+
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      border-bottom: 0.5px solid var(--glass-border);
+      min-height: 56px;
+    }
+    .settings-row:last-child { border-bottom: none; }
+
+    .settings-row-icon {
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--glass);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .settings-row-body { flex: 1; min-width: 0; }
+    .settings-row-label {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+    .settings-row-meta {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .settings-row-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    /* Toggle switch */
+    .settings-toggle {
+      position: relative;
+      width: 44px;
+      height: 26px;
+      flex-shrink: 0;
+    }
+    .settings-toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .settings-toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--bg-tertiary);
+      border: 0.5px solid var(--glass-border);
+      border-radius: 26px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .settings-toggle-slider::before {
+      content: "";
+      position: absolute;
+      left: 2px;
+      top: 2px;
+      width: 20px;
+      height: 20px;
+      background: #FFFFFF;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      transition: transform 0.2s ease;
+    }
+    .settings-toggle input:checked + .settings-toggle-slider {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .settings-toggle input:checked + .settings-toggle-slider::before {
+      transform: translateX(18px);
+    }
+
+    /* Button rows (clickable) */
+    button.settings-row,
+    a.settings-row {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 0.5px solid var(--glass-border);
+      text-align: left;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    button.settings-row:last-child,
+    a.settings-row:last-child { border-bottom: none; }
+    button.settings-row:active,
+    a.settings-row:active { background: var(--glass-hover); }
+
+    .settings-row-chevron {
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    .settings-row.danger .settings-row-label { color: var(--danger); }
+    .settings-row.danger .settings-row-icon {
+      background: rgba(220,38,38,0.08);
+      color: var(--danger);
+    }
+
+    .settings-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 32px;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--text-primary);
+      color: #FFFFFF;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 9999;
+    }
+    .settings-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .role-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--glass);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body class="hub-body">
+
+  <main class="hub-main">
+    <section class="hub-welcome">
+      <h2>Settings</h2>
+      <p>Manage your profile and app preferences</p>
+    </section>
+
+    <!-- Profile -->
+    <section class="settings-section">
+      <h3 class="settings-section-title">Profile</h3>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label" id="profile-name">&nbsp;</div>
+            <div class="settings-row-meta" id="profile-email">&nbsp;</div>
+            <span class="role-pill" id="profile-role" hidden></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Appearance -->
+    <section class="settings-section">
+      <h3 class="settings-section-title">Appearance</h3>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label">Dark mode</div>
+            <div class="settings-row-meta">Use a darker color theme</div>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" id="theme-toggle" />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- App -->
+    <section class="settings-section">
+      <h3 class="settings-section-title">App</h3>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label">Version</div>
+            <div class="settings-row-meta" id="app-version">—</div>
+          </div>
+        </div>
+        <button type="button" class="settings-row" id="check-updates-btn">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label">Check for updates</div>
+            <div class="settings-row-meta">Reload with the latest version</div>
+          </div>
+          <span class="settings-row-chevron">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
+        </button>
+        <button type="button" class="settings-row" id="clear-cache-btn">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label">Clear cache</div>
+            <div class="settings-row-meta">Remove offline data and reload</div>
+          </div>
+          <span class="settings-row-chevron">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Account -->
+    <section class="settings-section">
+      <h3 class="settings-section-title">Account</h3>
+      <div class="settings-card">
+        <button type="button" class="settings-row danger" id="signout-btn">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label">Sign out</div>
+            <div class="settings-row-meta">End this session on this device</div>
+          </div>
+          <span class="settings-row-chevron">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <div class="settings-toast" id="settings-toast" role="status" aria-live="polite"></div>
+
+  <script src="shared-nav.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

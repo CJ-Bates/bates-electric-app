@@ -1,14 +1,17 @@
-const CACHE = 'bates-shell-v11';
+const CACHE = 'bates-shell-v12';
 const ASSETS = [
   './',
   './index.html',
   './home.html',
   './inspection.html',
+  './settings.html',
   './styles.css',
   './app.js',
   './home.js',
   './inspection.js',
   './inspection-fields.js',
+  './settings.js',
+  './shared-nav.js',
   './manifest.json'
 ];
 

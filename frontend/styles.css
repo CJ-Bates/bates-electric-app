@@ -2621,3 +2621,53 @@ input:focus-visible {
 .compact-back svg {
   pointer-events: none;
 }
+
+/* ============================================================
+   DARK MODE (applied via `html.dark`)
+   Overrides the core CSS variables so the rest of the app
+   (which draws from these vars) flips automatically.
+   ============================================================ */
+html.dark {
+  --bg-primary: #0F1420;
+  --bg-secondary: #151B2C;
+  --bg-tertiary: #1C2338;
+
+  --glass: rgba(255,255,255,0.05);
+  --glass-border: rgba(255,255,255,0.10);
+  --glass-hover: rgba(255,255,255,0.08);
+
+  --text-primary: #E6EAF2;
+  --text-secondary: #A7B0C2;
+  --text-tertiary: #6C7489;
+
+  --accent: #7FA3FF;
+  --accent-glow: rgba(127,163,255,0.18);
+
+  --navy-900: #0F1420;
+  --navy-800: #151B2C;
+  --navy-700: #1C2338;
+  --surface: rgba(21,27,44,0.95);
+  --ink-900: #E6EAF2;
+  --ink-700: #A7B0C2;
+  --ink-500: #6C7489;
+  --line: rgba(255,255,255,0.10);
+  --shadow: 0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.4);
+}
+
+html.dark body {
+  background:
+    radial-gradient(1200px 800px at 20% 0%, rgba(127,163,255,0.06) 0%, transparent 60%),
+    radial-gradient(1000px 700px at 100% 100%, rgba(127,163,255,0.04) 0%, transparent 55%),
+    var(--bg-primary);
+}
+
+html.dark .glass-card,
+html.dark .app-topbar,
+html.dark .shared-drawer {
+  background: var(--bg-secondary);
+  border-color: var(--glass-border);
+}
+
+html.dark .shared-drawer-overlay {
+  background: rgba(0,0,0,0.6);
+}
