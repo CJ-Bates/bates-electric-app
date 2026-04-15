@@ -2551,3 +2551,46 @@ input:focus-visible {
 .sds-card-btn:active {
   background: rgba(27,45,91,0.10);
 }
+
+/* ============================================================
+   VIEWER TOP BAR (shared by pdf-viewer, safety-manual, sds-sheets)
+   ============================================================ */
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  background: #1B2D5B;
+  color: #FFFFFF;
+}
+.viewer-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255,255,255,0.15);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-family: 'Exo 2', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.viewer-back:active {
+  background: rgba(255,255,255,0.25);
+}
+.viewer-back svg {
+  pointer-events: none;
+}
+.viewer-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
