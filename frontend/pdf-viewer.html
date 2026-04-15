@@ -139,6 +139,35 @@
       color: #8C939A;
       line-height: 1.5;
     }
+
+    /* Inline PDF.js viewer (mobile) */
+    .viewer-pdfjs {
+      display: none;
+      width: 100%;
+      height: calc(100% - 52px - max(0px, env(safe-area-inset-top)));
+      overflow-y: auto;
+      overflow-x: hidden;
+      background: #525659;
+      -webkit-overflow-scrolling: touch;
+    }
+    .viewer-pdfjs-status {
+      color: #FFFFFF;
+      text-align: center;
+      padding: 32px 20px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .viewer-pdfjs-pages {
+      padding: 8px 0 24px;
+    }
+    .viewer-pdfjs-pages canvas {
+      display: block;
+      margin: 8px auto;
+      max-width: 100%;
+      height: auto;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.45);
+      background: #FFFFFF;
+    }
   </style>
 </head>
 <body>
@@ -182,7 +211,13 @@
       </svg>
       Back to Sections
     </button>
-    <div class="viewer-mobile-hint">Opens in your browser for full reading.<br>Switch back to the app and tap <strong>Back</strong> when done.</div>
+    <div class="viewer-mobile-hint">Opens inside the app so you can tap <strong>Back</strong> to return to the sections list.</div>
+  </div>
+
+  <!-- Mobile: inline PDF.js viewer -->
+  <div class="viewer-pdfjs" id="pdfjs-container">
+    <div class="viewer-pdfjs-status" id="pdfjs-status">Loading document…</div>
+    <div class="viewer-pdfjs-pages" id="pdfjs-pages"></div>
   </div>
 
   <script>
@@ -231,13 +266,83 @@
 
       var openBtn = document.getElementById('open-btn');
       function openPdf() {
-        window.open(pdfUrl, '_blank');
+        mobilePrompt.style.display = 'none';
+        var pdfjsContainer = document.getElementById('pdfjs-container');
+        pdfjsContainer.style.display = 'block';
+        renderPdfInline();
       }
       openBtn.addEventListener('click', openPdf);
       openBtn.addEventListener('touchend', function(e) {
         e.preventDefault();
         openPdf();
       }, { passive: false });
+
+      function loadScript(src) {
+        return new Promise(function(resolve, reject) {
+          var s = document.createElement('script');
+          s.src = src;
+          s.onload = resolve;
+          s.onerror = function() { reject(new Error('Failed to load ' + src)); };
+          document.head.appendChild(s);
+        });
+      }
+
+      function renderPdfInline() {
+        var statusEl = document.getElementById('pdfjs-status');
+        var pagesEl = document.getElementById('pdfjs-pages');
+        var containerEl = document.getElementById('pdfjs-container');
+        var pdfJsBase = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+
+        loadScript(pdfJsBase + 'pdf.min.js').then(function() {
+          window['pdfjs-dist/build/pdf'].GlobalWorkerOptions.workerSrc =
+            pdfJsBase + 'pdf.worker.min.js';
+          var pdfjsLib = window['pdfjs-dist/build/pdf'];
+          return pdfjsLib.getDocument(file).promise;
+        }).then(function(pdf) {
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          var targetPage = parseInt(page, 10) || 0;
+          var targetCanvas = null;
+
+          function renderPage(pageNum) {
+            return pdf.getPage(pageNum).then(function(pdfPage) {
+              var unscaled = pdfPage.getViewport({ scale: 1 });
+              var containerWidth = containerEl.clientWidth - 16;
+              var cssScale = containerWidth / unscaled.width;
+              var viewport = pdfPage.getViewport({ scale: cssScale * dpr });
+              var canvas = document.createElement('canvas');
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              canvas.style.width = (viewport.width / dpr) + 'px';
+              canvas.style.height = (viewport.height / dpr) + 'px';
+              pagesEl.appendChild(canvas);
+              if (pageNum === targetPage) targetCanvas = canvas;
+              return pdfPage.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport: viewport
+              }).promise;
+            });
+          }
+
+          var chain = Promise.resolve();
+          for (var i = 1; i <= pdf.numPages; i++) {
+            (function(pageNum) {
+              chain = chain.then(function() {
+                return renderPage(pageNum);
+              }).then(function() {
+                if (pageNum === 1) {
+                  statusEl.style.display = 'none';
+                }
+                if (pageNum === targetPage && targetCanvas) {
+                  targetCanvas.scrollIntoView({ block: 'start' });
+                }
+              });
+            })(i);
+          }
+          return chain;
+        }).catch(function(err) {
+          statusEl.textContent = 'Failed to load document: ' + (err && err.message ? err.message : err);
+        });
+      }
 
       var mobileBackBtn = document.getElementById('mobile-back-btn');
       mobileBackBtn.addEventListener('click', goBack);
