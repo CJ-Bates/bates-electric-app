@@ -212,10 +212,10 @@
       document.getElementById('mobile-heading').textContent = title;
       document.getElementById('mobile-page').textContent = page ? 'Page ' + page : '';
 
-      // Open button launches PDF in system browser
+      // Open button navigates to PDF in same context so back gesture works
       var openBtn = document.getElementById('open-btn');
       function openPdf() {
-        window.open(pdfUrl, '_blank');
+        location.href = pdfUrl;
       }
       openBtn.addEventListener('click', openPdf);
       openBtn.addEventListener('touchend', function(e) {
