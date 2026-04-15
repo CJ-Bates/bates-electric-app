@@ -155,10 +155,7 @@
     const cached = readCachedLocation();
     if (cached) {
       const ok = await tryRenderWith(els, { lat: cached.lat, lon: cached.lon, city: cached.city });
-      if (ok) {
-        requestFreshLocation(els, { silent: true });
-        return;
-      }
+      if (ok) return;
     }
 
     let permState = null;
