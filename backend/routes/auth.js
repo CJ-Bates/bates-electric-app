@@ -177,8 +177,8 @@ router.post('/change-password', requireAuth, async (req, res) => {
 
 // POST /auth/forgot-password  { email }
 // Always returns { ok: true } regardless of whether the account exists,
-// so a caller can't probe for valid emails. On the backend we try to
-// generate a Supabase recovery link and email it via Resend.
+// so a caller can't probe for valid emails.
+// Uses Supabase's built-in email service so no domain verification is needed.
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string') {
@@ -193,59 +193,15 @@ router.post('/forgot-password', async (req, res) => {
     if (!allowedBatesEmail(normalized)) return res.json({ ok: true });
 
     const origin = resolveOrigin(req);
-    // Point recovery at the backend-served reset page so it works regardless
-    // of where the PWA frontend is hosted.
     const redirectTo = `${origin}/auth/reset-password-page`;
 
-    const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'recovery',
-      email: normalized,
-      options: { redirectTo },
+    // Use Supabase's built-in auth email — works out of the box without
+    // needing Resend domain verification or custom DNS records.
+    const { error: resetErr } = await supabaseAnon.auth.resetPasswordForEmail(normalized, {
+      redirectTo,
     });
-    if (linkErr) {
-      console.error('generateLink failed:', linkErr.message || linkErr);
-      return res.json({ ok: true });
-    }
-    const actionLink = linkData?.properties?.action_link;
-    if (!actionLink) {
-      console.error('generateLink returned no action_link');
-      return res.json({ ok: true });
-    }
-
-    if (!resend) {
-      console.warn('Resend not configured — skipping password reset email');
-      return res.json({ ok: true });
-    }
-
-    const fromEmail = process.env.EMAIL_FROM || 'noreply@bates-electric.com';
-    const html = `
-      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1B2D5B;">
-        <h2 style="margin:0 0 12px;font-size:20px;">Reset your Bates Electric password</h2>
-        <p style="font-size:15px;line-height:1.5;color:#5A6577;">
-          Someone (hopefully you) asked to reset the password for this account.
-          Click the button below to choose a new one. The link is good for one use
-          and expires shortly.
-        </p>
-        <p style="margin:24px 0;">
-          <a href="${actionLink}" style="display:inline-block;padding:12px 22px;background:#1B2D5B;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;">
-            Reset password
-          </a>
-        </p>
-        <p style="font-size:13px;color:#8C939A;">
-          If you didn't request this, you can safely ignore this email — your
-          current password will keep working.
-        </p>
-      </div>
-    `;
-
-    const { error: sendErr } = await resend.emails.send({
-      from: fromEmail,
-      to: [normalized],
-      subject: 'Reset your Bates Electric password',
-      html,
-    });
-    if (sendErr) {
-      console.error('Resend send failed:', sendErr.message || sendErr);
+    if (resetErr) {
+      console.error('resetPasswordForEmail failed:', resetErr.message || resetErr);
     }
   } catch (err) {
     console.error('forgot-password failed:', err);
