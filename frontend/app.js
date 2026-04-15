@@ -45,9 +45,36 @@
   });
 
   // --- Forgot password ---
-  document.getElementById('forgot-link').addEventListener('click', (e) => {
+  document.getElementById('forgot-link').addEventListener('click', async (e) => {
     e.preventDefault();
-    showStatus('status', 'Contact your supervisor to reset your password.', 'info');
+    const emailEl = document.getElementById('email');
+    const email = (emailEl.value || '').trim();
+
+    if (!email) {
+      showStatus('status', 'Type your email in the field above, then tap "Forgot password?" again.', 'info');
+      emailEl.focus();
+      return;
+    }
+
+    showStatus('status', 'Sending reset link…', 'info');
+    try {
+      const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        showStatus('status', 'Could not send reset link. Try again in a moment.', 'error');
+        return;
+      }
+      showStatus(
+        'status',
+        `If an account exists for ${email}, a reset link is on its way. Check your inbox (and spam folder).`,
+        'success'
+      );
+    } catch (err) {
+      showStatus('status', 'Network error. Please try again.', 'error');
+    }
   });
 
   // --- Phone formatting ---

@@ -479,6 +479,10 @@
       <form class="settings-modal-body" id="change-password-form" novalidate>
         <div class="settings-modal-error" id="change-password-error" hidden></div>
         <div class="settings-field">
+          <label for="cp-email">Account</label>
+          <input type="email" id="cp-email" name="username" autocomplete="username" readonly />
+        </div>
+        <div class="settings-field">
           <label for="cp-current">Current password</label>
           <input type="password" id="cp-current" name="current_password" autocomplete="current-password" required />
         </div>

@@ -224,6 +224,13 @@
   function openChangePassword() {
     const err = document.getElementById('change-password-error');
     if (err) { err.hidden = true; err.textContent = ''; }
+    // Populate readonly email so iOS Keychain can associate the new password
+    // with this account. Without this hint, the password change isn't offered
+    // for save in iCloud Keychain.
+    const emailInput = document.getElementById('cp-email');
+    if (emailInput && currentProfile && currentProfile.email) {
+      emailInput.value = currentProfile.email;
+    }
     openModal('change-password-modal');
     setTimeout(() => {
       const cur = document.getElementById('cp-current');
