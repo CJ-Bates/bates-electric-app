@@ -14,7 +14,6 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
-      overflow: hidden;
       font-family: 'Exo 2', sans-serif;
       background: #F5F7FA;
     }
@@ -57,38 +56,77 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
+    /* Desktop: show PDF in iframe */
     .viewer-frame {
       width: 100%;
       height: calc(100% - 52px - max(0px, env(safe-area-inset-top)));
       border: none;
       background: #FFFFFF;
     }
-    .viewer-fallback {
+
+    /* Mobile: show open-in-browser prompt */
+    .viewer-mobile {
       display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 16px;
-      height: calc(100% - 52px);
-      padding: 32px;
+      gap: 24px;
+      padding: 40px 24px;
       text-align: center;
-      color: #5A6577;
+      height: calc(100% - 52px);
     }
-    .viewer-fallback p {
-      font-size: 15px;
-      line-height: 1.5;
-    }
-    .viewer-fallback a {
-      display: inline-flex;
+    .viewer-mobile-icon {
+      width: 80px;
+      height: 80px;
+      border-radius: 20px;
+      background: rgba(27,45,91,0.06);
+      display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 12px 24px;
+      justify-content: center;
+      color: #1B2D5B;
+    }
+    .viewer-mobile-heading {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1B2D5B;
+    }
+    .viewer-mobile-page {
+      font-size: 15px;
+      color: #5A6577;
+      margin-top: -12px;
+    }
+    .viewer-mobile-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      max-width: 320px;
+      padding: 16px 24px;
       background: #1B2D5B;
       color: #FFFFFF;
-      border-radius: 10px;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 15px;
+      border: none;
+      border-radius: 14px;
+      font-family: 'Exo 2', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 2px 8px rgba(27,45,91,0.25);
+    }
+    .viewer-mobile-btn:active {
+      transform: scale(0.98);
+      box-shadow: 0 1px 4px rgba(27,45,91,0.20);
+    }
+    .viewer-mobile-btn svg {
+      pointer-events: none;
+    }
+    .viewer-mobile-hint {
+      font-size: 13px;
+      color: #8C939A;
+      line-height: 1.5;
     }
   </style>
 </head>
@@ -104,22 +142,30 @@
     <span class="viewer-title" id="viewer-title">Document</span>
   </div>
 
+  <!-- Desktop: iframe -->
   <iframe class="viewer-frame" id="pdf-frame"></iframe>
 
-  <div class="viewer-fallback" id="fallback">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#8C939A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/>
-    </svg>
-    <p>Your browser can't display this PDF inline.</p>
-    <a id="fallback-link" href="#">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Mobile: open-in-browser prompt -->
+  <div class="viewer-mobile" id="mobile-prompt">
+    <div class="viewer-mobile-icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+    </div>
+    <div class="viewer-mobile-heading" id="mobile-heading"></div>
+    <div class="viewer-mobile-page" id="mobile-page"></div>
+    <button class="viewer-mobile-btn" id="open-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
         <polyline points="15 3 21 3 21 9"/>
         <line x1="10" y1="14" x2="21" y2="3"/>
       </svg>
-      Open PDF Directly
-    </a>
+      Open Document
+    </button>
+    <div class="viewer-mobile-hint">Opens in your browser. Use the Back button above when done.</div>
   </div>
 
   <script>
@@ -129,15 +175,15 @@
     var title = params.get('title') || 'Document';
     var back = params.get('back') || '';
 
-    // Set title
+    // Set header title
     document.getElementById('viewer-title').textContent = title;
 
-    // Build PDF URL
+    // Build PDF URL with page anchor
     var pdfUrl = file + (page ? '#page=' + page : '');
 
     // Back button
     var backBtn = document.getElementById('back-btn');
-    backBtn.addEventListener('click', function() {
+    function goBack() {
       if (back) {
         location.href = back;
       } else if (history.length > 1) {
@@ -145,37 +191,41 @@
       } else {
         location.href = 'documents.html';
       }
-    });
+    }
+    backBtn.addEventListener('click', goBack);
     backBtn.addEventListener('touchend', function(e) {
       e.preventDefault();
-      backBtn.click();
+      goBack();
     }, { passive: false });
 
-    // Try to load PDF in iframe
-    var frame = document.getElementById('pdf-frame');
-    var fallback = document.getElementById('fallback');
-    var fallbackLink = document.getElementById('fallback-link');
-
-    fallbackLink.href = pdfUrl;
-
-    // Some mobile browsers can't render PDFs in iframes — detect and show fallback
-    frame.src = pdfUrl;
-    frame.addEventListener('load', function() {
-      // If the frame loaded, check if it's actually showing content
-      try {
-        // On mobile, if PDF can't display, the iframe might be blank
-        // We'll give it a moment then check
-      } catch(e) {}
-    });
-
-    // On iOS/Android, PDFs in iframes often don't work.
-    // Detect mobile and use Google Docs viewer or show download link.
+    // Detect mobile
     var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    var frame = document.getElementById('pdf-frame');
+    var mobilePrompt = document.getElementById('mobile-prompt');
+
     if (isMobile) {
-      // Use Google Docs viewer for the PDF (works on mobile)
-      var fullUrl = location.origin + '/' + pdfUrl.split('#')[0];
-      var googleUrl = 'https://docs.google.com/viewer?url=' + encodeURIComponent(fullUrl) + '&embedded=true';
-      frame.src = googleUrl;
+      // Hide iframe, show mobile prompt
+      frame.style.display = 'none';
+      mobilePrompt.style.display = 'flex';
+
+      // Set mobile content
+      document.getElementById('mobile-heading').textContent = title;
+      document.getElementById('mobile-page').textContent = page ? 'Page ' + page : '';
+
+      // Open button launches PDF in system browser
+      var openBtn = document.getElementById('open-btn');
+      function openPdf() {
+        window.open(pdfUrl, '_blank');
+      }
+      openBtn.addEventListener('click', openPdf);
+      openBtn.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        openPdf();
+      }, { passive: false });
+
+    } else {
+      // Desktop: load PDF in iframe
+      frame.src = pdfUrl;
     }
   </script>
 
