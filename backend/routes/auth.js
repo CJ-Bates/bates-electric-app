@@ -193,15 +193,66 @@ router.post('/forgot-password', async (req, res) => {
     if (!allowedBatesEmail(normalized)) return res.json({ ok: true });
 
     const origin = resolveOrigin(req);
-    const redirectTo = `${origin}/auth/reset-password-page`;
 
-    // Use Supabase's built-in auth email — works out of the box without
-    // needing Resend domain verification or custom DNS records.
-    const { error: resetErr } = await supabaseAnon.auth.resetPasswordForEmail(normalized, {
-      redirectTo,
+    // Strategy: use the admin API to generate a recovery link (no email
+    // rate limit), immediately verify the OTP to obtain a normal JWT
+    // access_token (valid ~1 hr), then send our own email via Resend with
+    // a direct link to the reset page carrying the token in the hash.
+    // This completely bypasses Supabase's 2-email/hr free-tier cap.
+
+    const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'recovery',
+      email: normalized,
     });
-    if (resetErr) {
-      console.error('resetPasswordForEmail failed:', resetErr.message || resetErr);
+
+    if (linkErr) {
+      console.error('generateLink failed:', linkErr.message || linkErr);
+      return res.json({ ok: true });
+    }
+
+    const hashedToken = linkData?.properties?.hashed_token;
+    if (!hashedToken) {
+      console.error('generateLink returned no hashed_token');
+      return res.json({ ok: true });
+    }
+
+    // Verify the OTP server-side to convert it into a session JWT.
+    const { data: verifyData, error: verifyErr } = await supabaseAdmin.auth.verifyOtp({
+      token_hash: hashedToken,
+      type: 'recovery',
+    });
+
+    if (verifyErr || !verifyData?.session?.access_token) {
+      console.error('verifyOtp failed:', verifyErr?.message || 'no session returned');
+      return res.json({ ok: true });
+    }
+
+    const accessToken = verifyData.session.access_token;
+    const resetUrl = `${origin}/auth/reset-password-page#access_token=${encodeURIComponent(accessToken)}&type=recovery`;
+
+    // Send the email via Resend (uses onboarding@resend.dev sandbox —
+    // no domain verification required).
+    if (resend) {
+      const { error: emailErr } = await resend.emails.send({
+        from: 'Bates Electric <onboarding@resend.dev>',
+        to: normalized,
+        subject: 'Reset your Bates Electric password',
+        html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px">
+          <h2 style="color:#1B2D5B;margin:0 0 12px">Reset your password</h2>
+          <p style="color:#333;line-height:1.5">We received a request to reset the password for your Bates Electric account. Click below to choose a new password:</p>
+          <p style="text-align:center;margin:24px 0">
+            <a href="${resetUrl}" style="background:#1B2D5B;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">Reset Password</a>
+          </p>
+          <p style="color:#666;font-size:13px;line-height:1.4">If you didn't request this, you can safely ignore this email. This link expires in 1 hour.</p>
+          <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+          <p style="color:#999;font-size:12px">Bates Electric, Inc.</p>
+        </div>`,
+      });
+      if (emailErr) {
+        console.error('Resend email failed:', emailErr);
+      }
+    } else {
+      console.error('Resend not configured — RESEND_API_KEY missing');
     }
   } catch (err) {
     console.error('forgot-password failed:', err);
