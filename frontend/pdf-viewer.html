@@ -65,81 +65,6 @@
       background: #FFFFFF;
     }
 
-    /* Mobile: show open-in-browser prompt */
-    .viewer-mobile {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
-      padding: 40px 24px;
-      text-align: center;
-      height: calc(100% - 52px);
-    }
-    .viewer-mobile-icon {
-      width: 80px;
-      height: 80px;
-      border-radius: 20px;
-      background: rgba(27,45,91,0.06);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #1B2D5B;
-    }
-    .viewer-mobile-heading {
-      font-size: 20px;
-      font-weight: 700;
-      color: #1B2D5B;
-    }
-    .viewer-mobile-page {
-      font-size: 15px;
-      color: #5A6577;
-      margin-top: -12px;
-    }
-    .viewer-mobile-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      max-width: 320px;
-      padding: 16px 24px;
-      background: #1B2D5B;
-      color: #FFFFFF;
-      border: none;
-      border-radius: 14px;
-      font-family: 'Exo 2', sans-serif;
-      font-size: 16px;
-      font-weight: 700;
-      cursor: pointer;
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-      box-shadow: 0 2px 8px rgba(27,45,91,0.25);
-    }
-    .viewer-mobile-btn:active {
-      transform: scale(0.98);
-      box-shadow: 0 1px 4px rgba(27,45,91,0.20);
-    }
-    .viewer-mobile-btn svg {
-      pointer-events: none;
-    }
-    .viewer-mobile-btn--secondary {
-      background: #FFFFFF;
-      color: #1B2D5B;
-      border: 2px solid #1B2D5B;
-      box-shadow: none;
-      margin-top: -12px;
-    }
-    .viewer-mobile-btn--secondary:active {
-      background: #EEF1F7;
-      box-shadow: none;
-    }
-    .viewer-mobile-hint {
-      font-size: 13px;
-      color: #8C939A;
-      line-height: 1.5;
-    }
-
     /* Inline PDF.js viewer (mobile) */
     .viewer-pdfjs {
       display: none;
@@ -185,35 +110,6 @@
   <!-- Desktop: iframe -->
   <iframe class="viewer-frame" id="pdf-frame"></iframe>
 
-  <!-- Mobile: open-in-browser prompt -->
-  <div class="viewer-mobile" id="mobile-prompt">
-    <div class="viewer-mobile-icon">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/>
-      </svg>
-    </div>
-    <div class="viewer-mobile-heading" id="mobile-heading"></div>
-    <div class="viewer-mobile-page" id="mobile-page"></div>
-    <button class="viewer-mobile-btn" id="open-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-        <polyline points="15 3 21 3 21 9"/>
-        <line x1="10" y1="14" x2="21" y2="3"/>
-      </svg>
-      Open Document
-    </button>
-    <button class="viewer-mobile-btn viewer-mobile-btn--secondary" id="mobile-back-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="15 18 9 12 15 6"/>
-      </svg>
-      Back to Sections
-    </button>
-    <div class="viewer-mobile-hint">Opens inside the app so you can tap <strong>Back</strong> to return to the sections list.</div>
-  </div>
-
   <!-- Mobile: inline PDF.js viewer -->
   <div class="viewer-pdfjs" id="pdfjs-container">
     <div class="viewer-pdfjs-status" id="pdfjs-status">Loading document…</div>
@@ -253,29 +149,12 @@
     // Detect mobile
     var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     var frame = document.getElementById('pdf-frame');
-    var mobilePrompt = document.getElementById('mobile-prompt');
 
     if (isMobile) {
-      // Mobile: iframes can't render PDFs properly, so show an "Open" button.
-      // The PDF opens in the system browser; the PWA stays here with the Back button.
+      // Mobile: render PDF inline via PDF.js so the in-app Back button stays visible.
       frame.style.display = 'none';
-      mobilePrompt.style.display = 'flex';
-
-      document.getElementById('mobile-heading').textContent = title;
-      document.getElementById('mobile-page').textContent = page ? 'Page ' + page : '';
-
-      var openBtn = document.getElementById('open-btn');
-      function openPdf() {
-        mobilePrompt.style.display = 'none';
-        var pdfjsContainer = document.getElementById('pdfjs-container');
-        pdfjsContainer.style.display = 'block';
-        renderPdfInline();
-      }
-      openBtn.addEventListener('click', openPdf);
-      openBtn.addEventListener('touchend', function(e) {
-        e.preventDefault();
-        openPdf();
-      }, { passive: false });
+      document.getElementById('pdfjs-container').style.display = 'block';
+      renderPdfInline();
 
       function loadScript(src) {
         return new Promise(function(resolve, reject) {
@@ -344,16 +223,8 @@
         });
       }
 
-      var mobileBackBtn = document.getElementById('mobile-back-btn');
-      mobileBackBtn.addEventListener('click', goBack);
-      mobileBackBtn.addEventListener('touchend', function(e) {
-        e.preventDefault();
-        goBack();
-      }, { passive: false });
-
     } else {
       // Desktop: PDF renders fine in an iframe
-      mobilePrompt.style.display = 'none';
       frame.src = pdfUrl;
     }
   </script>
