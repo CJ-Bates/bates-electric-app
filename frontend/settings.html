@@ -186,6 +186,137 @@
       letter-spacing: 0.5px;
       margin-top: 4px;
     }
+
+    /* ----- Modal ----- */
+    .settings-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 20, 32, 0.55);
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 9998;
+      padding: 16px;
+    }
+    .settings-modal-backdrop.open {
+      display: flex;
+    }
+    .settings-modal {
+      background: #FFFFFF;
+      border-radius: 20px 20px 0 0;
+      width: 100%;
+      max-width: 520px;
+      max-height: 92vh;
+      overflow-y: auto;
+      box-shadow: 0 -12px 40px rgba(0,0,0,0.25);
+      animation: modalSlideUp 0.22s cubic-bezier(.2,.8,.2,1);
+    }
+    html.dark .settings-modal { background: var(--bg-secondary); }
+    @media (min-width: 560px) {
+      .settings-modal-backdrop { align-items: center; }
+      .settings-modal { border-radius: 20px; }
+    }
+    @keyframes modalSlideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .settings-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px 10px;
+    }
+    .settings-modal-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .settings-modal-close {
+      background: transparent;
+      border: none;
+      color: var(--text-tertiary);
+      padding: 6px;
+      cursor: pointer;
+      border-radius: 8px;
+    }
+    .settings-modal-close:active { background: var(--glass-hover); }
+
+    .settings-modal-body {
+      padding: 4px 20px 20px;
+    }
+
+    .settings-field {
+      margin-bottom: 14px;
+    }
+    .settings-field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .settings-field input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 15px;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .settings-field input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .settings-modal-error {
+      background: rgba(220,38,38,0.08);
+      color: var(--danger);
+      border: 0.5px solid rgba(220,38,38,0.2);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .settings-modal-error[hidden] { display: none; }
+
+    .settings-modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .settings-btn {
+      flex: 1;
+      padding: 13px 16px;
+      border-radius: 12px;
+      border: none;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .settings-btn-primary {
+      background: var(--accent);
+      color: #FFFFFF;
+    }
+    .settings-btn-primary:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .settings-btn-secondary {
+      background: var(--glass);
+      color: var(--text-primary);
+      border: 1px solid var(--glass-border);
+    }
   </style>
 </head>
 <body class="hub-body">
@@ -200,7 +331,7 @@
     <section class="settings-section">
       <h3 class="settings-section-title">Profile</h3>
       <div class="settings-card">
-        <div class="settings-row">
+        <button type="button" class="settings-row" id="edit-profile-btn">
           <div class="settings-row-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           </div>
@@ -209,7 +340,10 @@
             <div class="settings-row-meta" id="profile-email">&nbsp;</div>
             <span class="role-pill" id="profile-role" hidden></span>
           </div>
-        </div>
+          <span class="settings-row-chevron">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
+        </button>
       </div>
     </section>
 
@@ -277,6 +411,18 @@
     <section class="settings-section">
       <h3 class="settings-section-title">Account</h3>
       <div class="settings-card">
+        <button type="button" class="settings-row" id="change-password-btn">
+          <div class="settings-row-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <div class="settings-row-body">
+            <div class="settings-row-label">Change password</div>
+            <div class="settings-row-meta">Update your login password</div>
+          </div>
+          <span class="settings-row-chevron">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
+        </button>
         <button type="button" class="settings-row danger" id="signout-btn">
           <div class="settings-row-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
@@ -292,6 +438,65 @@
       </div>
     </section>
   </main>
+
+  <!-- Edit Profile Modal -->
+  <div class="settings-modal-backdrop" id="edit-profile-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
+    <div class="settings-modal">
+      <div class="settings-modal-header">
+        <h3 class="settings-modal-title" id="edit-profile-title">Edit profile</h3>
+        <button type="button" class="settings-modal-close" data-modal-close="edit-profile-modal" aria-label="Close">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <form class="settings-modal-body" id="edit-profile-form" novalidate>
+        <div class="settings-modal-error" id="edit-profile-error" hidden></div>
+        <div class="settings-field">
+          <label for="edit-profile-name">Full name</label>
+          <input type="text" id="edit-profile-name" name="full_name" autocomplete="name" maxlength="120" required />
+        </div>
+        <div class="settings-field">
+          <label for="edit-profile-email-input">Email</label>
+          <input type="email" id="edit-profile-email-input" disabled />
+          <div class="settings-row-meta" style="margin-top:6px;">Email and role are set by your Bates address and can't be changed here.</div>
+        </div>
+        <div class="settings-modal-actions">
+          <button type="button" class="settings-btn settings-btn-secondary" data-modal-close="edit-profile-modal">Cancel</button>
+          <button type="submit" class="settings-btn settings-btn-primary" id="edit-profile-save">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Change Password Modal -->
+  <div class="settings-modal-backdrop" id="change-password-modal" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+    <div class="settings-modal">
+      <div class="settings-modal-header">
+        <h3 class="settings-modal-title" id="change-password-title">Change password</h3>
+        <button type="button" class="settings-modal-close" data-modal-close="change-password-modal" aria-label="Close">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <form class="settings-modal-body" id="change-password-form" novalidate>
+        <div class="settings-modal-error" id="change-password-error" hidden></div>
+        <div class="settings-field">
+          <label for="cp-current">Current password</label>
+          <input type="password" id="cp-current" name="current_password" autocomplete="current-password" required />
+        </div>
+        <div class="settings-field">
+          <label for="cp-new">New password</label>
+          <input type="password" id="cp-new" name="new_password" autocomplete="new-password" minlength="8" required />
+        </div>
+        <div class="settings-field">
+          <label for="cp-confirm">Confirm new password</label>
+          <input type="password" id="cp-confirm" name="confirm_password" autocomplete="new-password" minlength="8" required />
+        </div>
+        <div class="settings-modal-actions">
+          <button type="button" class="settings-btn settings-btn-secondary" data-modal-close="change-password-modal">Cancel</button>
+          <button type="submit" class="settings-btn settings-btn-primary" id="change-password-save">Update</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <div class="settings-toast" id="settings-toast" role="status" aria-live="polite"></div>
 

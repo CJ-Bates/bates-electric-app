@@ -1,5 +1,5 @@
 const express = require('express');
-const { supabaseAnon, supabaseAdmin } = require('../lib/supabase');
+const { supabaseAnon, supabaseAdmin, supabaseForUser } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
@@ -87,6 +87,69 @@ router.post('/logout', requireAuth, async (req, res) => {
 // GET /me  — current user's profile
 router.get('/me', requireAuth, (req, res) => {
   res.json({ profile: req.profile });
+});
+
+// PATCH /me  { full_name }  — update the caller's own profile.
+// RLS enforces self-update via the "profiles self update" policy.
+router.patch('/me', requireAuth, async (req, res) => {
+  const { full_name } = req.body || {};
+
+  if (typeof full_name !== 'string') {
+    return res.status(400).json({ error: 'full_name is required.' });
+  }
+  const trimmed = full_name.trim();
+  if (trimmed.length < 1 || trimmed.length > 120) {
+    return res.status(400).json({ error: 'Name must be 1–120 characters.' });
+  }
+
+  const supa = supabaseForUser(req.token);
+  const { data, error } = await supa
+    .from('profiles')
+    .update({ full_name: trimmed })
+    .eq('id', req.user.id)
+    .select('*')
+    .single();
+
+  if (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  return res.json({ profile: data });
+});
+
+// POST /auth/change-password  { current_password, new_password }
+// Re-verifies the current password by attempting a fresh sign-in, then
+// updates via the admin client. We use the admin updateUserById path
+// because it works server-side without needing the user's refreshed session.
+router.post('/change-password', requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body || {};
+
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Current and new password are required.' });
+  }
+  if (new_password.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  if (new_password === current_password) {
+    return res.status(400).json({ error: 'New password must differ from the current one.' });
+  }
+
+  const { error: verifyErr } = await supabaseAnon.auth.signInWithPassword({
+    email: req.user.email,
+    password: current_password,
+  });
+  if (verifyErr) {
+    return res.status(401).json({ error: 'Current password is incorrect.' });
+  }
+
+  const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(
+    req.user.id,
+    { password: new_password }
+  );
+  if (updateErr) {
+    return res.status(400).json({ error: updateErr.message });
+  }
+
+  return res.json({ ok: true });
 });
 
 module.exports = router;
