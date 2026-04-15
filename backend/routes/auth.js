@@ -229,6 +229,7 @@ router.post('/forgot-password', async (req, res) => {
       return res.json({ ok: true });
     }
     result.linkGenerated = true;
+    if (debug) result.actionLink = actionLink;
 
     if (!resend) {
       console.warn('Resend not configured — skipping password reset email');
