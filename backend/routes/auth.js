@@ -186,68 +186,98 @@ router.post('/forgot-password', async (req, res) => {
   }
 
   const normalized = email.toLowerCase().trim();
+  const debug = req.query.debug === '1';
 
-  // Fire-and-forget the actual send so the response time doesn't leak
-  // whether the account exists.
-  (async () => {
-    try {
-      if (!allowedBatesEmail(normalized)) return;
+  const result = {
+    allowed: false,
+    linkGenerated: false,
+    hasResend: !!resend,
+    fromEmail: null,
+    redirectTo: null,
+    sendAttempted: false,
+    sendError: null,
+    linkError: null,
+  };
 
-      const origin = resolveOrigin(req);
-      const redirectTo = `${origin}/reset-password.html`;
-
-      const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'recovery',
-        email: normalized,
-        options: { redirectTo },
-      });
-      if (linkErr) {
-        console.error('generateLink failed:', linkErr.message);
-        return;
-      }
-      const actionLink = linkData?.properties?.action_link;
-      if (!actionLink) {
-        console.error('generateLink returned no action_link');
-        return;
-      }
-
-      if (!resend) {
-        console.warn('Resend not configured — skipping password reset email');
-        return;
-      }
-
-      const fromEmail = process.env.EMAIL_FROM || 'noreply@bates-electric.com';
-      const html = `
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1B2D5B;">
-          <h2 style="margin:0 0 12px;font-size:20px;">Reset your Bates Electric password</h2>
-          <p style="font-size:15px;line-height:1.5;color:#5A6577;">
-            Someone (hopefully you) asked to reset the password for this account.
-            Click the button below to choose a new one. The link is good for one use
-            and expires shortly.
-          </p>
-          <p style="margin:24px 0;">
-            <a href="${actionLink}" style="display:inline-block;padding:12px 22px;background:#1B2D5B;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;">
-              Reset password
-            </a>
-          </p>
-          <p style="font-size:13px;color:#8C939A;">
-            If you didn't request this, you can safely ignore this email — your
-            current password will keep working.
-          </p>
-        </div>
-      `;
-
-      await resend.emails.send({
-        from: fromEmail,
-        to: [normalized],
-        subject: 'Reset your Bates Electric password',
-        html,
-      });
-    } catch (err) {
-      console.error('forgot-password background task failed:', err);
+  try {
+    if (!allowedBatesEmail(normalized)) {
+      if (debug) return res.json({ ok: true, _debug: result, reason: 'not-bates-email' });
+      return res.json({ ok: true });
     }
-  })();
+    result.allowed = true;
 
+    const origin = resolveOrigin(req);
+    const redirectTo = `${origin}/reset-password.html`;
+    result.redirectTo = redirectTo;
+
+    const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'recovery',
+      email: normalized,
+      options: { redirectTo },
+    });
+    if (linkErr) {
+      result.linkError = linkErr.message || String(linkErr);
+      console.error('generateLink failed:', result.linkError);
+      if (debug) return res.json({ ok: true, _debug: result });
+      return res.json({ ok: true });
+    }
+    const actionLink = linkData?.properties?.action_link;
+    if (!actionLink) {
+      result.linkError = 'no action_link in response';
+      console.error(result.linkError);
+      if (debug) return res.json({ ok: true, _debug: result });
+      return res.json({ ok: true });
+    }
+    result.linkGenerated = true;
+
+    if (!resend) {
+      console.warn('Resend not configured — skipping password reset email');
+      if (debug) return res.json({ ok: true, _debug: result });
+      return res.json({ ok: true });
+    }
+
+    const fromEmail = process.env.EMAIL_FROM || 'noreply@bates-electric.com';
+    result.fromEmail = fromEmail;
+
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1B2D5B;">
+        <h2 style="margin:0 0 12px;font-size:20px;">Reset your Bates Electric password</h2>
+        <p style="font-size:15px;line-height:1.5;color:#5A6577;">
+          Someone (hopefully you) asked to reset the password for this account.
+          Click the button below to choose a new one. The link is good for one use
+          and expires shortly.
+        </p>
+        <p style="margin:24px 0;">
+          <a href="${actionLink}" style="display:inline-block;padding:12px 22px;background:#1B2D5B;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;">
+            Reset password
+          </a>
+        </p>
+        <p style="font-size:13px;color:#8C939A;">
+          If you didn't request this, you can safely ignore this email — your
+          current password will keep working.
+        </p>
+      </div>
+    `;
+
+    result.sendAttempted = true;
+    const { data: sendData, error: sendErr } = await resend.emails.send({
+      from: fromEmail,
+      to: [normalized],
+      subject: 'Reset your Bates Electric password',
+      html,
+    });
+    if (sendErr) {
+      result.sendError = sendErr.message || JSON.stringify(sendErr);
+      console.error('Resend send failed:', result.sendError);
+    } else {
+      result.sendResult = sendData;
+    }
+  } catch (err) {
+    result.sendError = err && err.message ? err.message : String(err);
+    console.error('forgot-password failed:', err);
+  }
+
+  if (debug) return res.json({ ok: true, _debug: result });
   return res.json({ ok: true });
 });
 
