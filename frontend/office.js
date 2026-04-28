@@ -45,19 +45,40 @@
   // Load inspections
   async function loadInspections() {
     showLoading(true);
+    setError(null);
     try {
       const response = await fetch(`${API_BASE}/inspections?status=submitted&limit=200`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (!response.ok) throw new Error('Failed to load inspections');
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${body ? ' — ' + body.slice(0, 200) : ''}`);
+      }
       const { inspections } = await response.json();
       allInspections = inspections || [];
       renderInspections();
       showLoading(false);
     } catch (err) {
       console.error('Load failed:', err);
-      showStatus(`Failed to load inspections: ${err.message}`, 'error');
+      setError(`Failed to load inspections: ${err.message}`);
       showLoading(false);
+    }
+  }
+
+  function setError(msg) {
+    let el = document.getElementById('error-state');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'error-state';
+      el.className = 'error-state';
+      document.querySelector('.dashboard-content').prepend(el);
+    }
+    if (msg) {
+      el.textContent = msg;
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+      el.textContent = '';
     }
   }
 
@@ -90,6 +111,12 @@
     const filtered = getFilteredInspections();
     const container = document.getElementById('inspections-container');
     const empty = document.getElementById('empty');
+    const countEl = document.getElementById('result-count');
+    if (countEl) {
+      const total = allInspections.length;
+      const shown = filtered.length;
+      countEl.textContent = total === shown ? `${total} submitted` : `${shown} of ${total} submitted`;
+    }
 
     if (filtered.length === 0) {
       container.innerHTML = '';
