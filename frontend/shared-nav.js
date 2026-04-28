@@ -56,7 +56,6 @@
       section: 'Account',
       items: [
         { label: 'Settings', icon: 'settings', href: 'settings.html', id: 'drawer-settings' },
-        { label: 'Help', icon: 'helpCircle', href: 'help.html', id: 'drawer-help' },
         { label: 'Sign Out', icon: 'logOut', href: '#', id: 'drawer-signout', isSignOut: true }
       ]
     }
