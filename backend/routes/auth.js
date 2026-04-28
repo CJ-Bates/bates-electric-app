@@ -318,55 +318,39 @@ router.get('/reset-password-page', (req, res) => {
 
 <script>
 (() => {
-  // Try hash first (implicit flow), then query string (PKCE fallback)
-  const hash = (location.hash || '').replace(/^#/, '');
-  const hashParams = new URLSearchParams(hash);
-  const qsParams = new URLSearchParams(location.search);
-
-  var accessToken = hashParams.get('access_token') || qsParams.get('access_token') || '';
-  var type = hashParams.get('type') || qsParams.get('type') || '';
-  var hashError = hashParams.get('error_description') || hashParams.get('error') || '';
-  var code = qsParams.get('code') || '';
+  const params = new URLSearchParams(location.search);
+  const tokenHash = params.get('token_hash') || '';
+  const type = params.get('type') || '';
 
   const statusEl = document.getElementById('status');
   const emailEl = document.getElementById('email');
   const pwEl = document.getElementById('pw');
   const pw2El = document.getElementById('pw2');
   const btn = document.getElementById('go');
+  var accessToken = '';
 
   function setStatus(msg, kind) {
     statusEl.textContent = msg;
     statusEl.className = 'status ' + (kind || '');
   }
 
-  function decode(jwt) {
-    try {
-      const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      return JSON.parse(atob(p + '==='.slice((p.length + 3) % 4)));
-    } catch { return null; }
-  }
-
-  function ready(token) {
-    accessToken = token;
-    const payload = decode(token);
-    if (payload && payload.email) emailEl.value = payload.email;
-  }
-
-  // If we got a PKCE code instead of an access_token, exchange it server-side
-  if (!accessToken && code) {
+  // Verify the token_hash from the email link
+  if (tokenHash && type === 'recovery') {
     btn.disabled = true;
     setStatus('Verifying reset link…', '');
-    fetch('/auth/exchange-code', {
+    fetch('/auth/verify-recovery', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code }),
+      body: JSON.stringify({ token_hash: tokenHash }),
     })
     .then(function(r) { return r.json(); })
     .then(function(body) {
       if (body.access_token) {
-        ready(body.access_token);
+        accessToken = body.access_token;
+        if (body.email) emailEl.value = body.email;
         setStatus('', '');
         btn.disabled = false;
+        pwEl.focus();
       } else {
         setStatus(body.error || 'This reset link is invalid or expired. Request a new one from the sign-in page.', 'error');
       }
@@ -374,14 +358,9 @@ router.get('/reset-password-page', (req, res) => {
     .catch(function() {
       setStatus('Network error verifying link. Please try again.', 'error');
     });
-  } else if (hashError) {
-    setStatus(hashError.replace(/\\+/g, ' '), 'error');
-    btn.disabled = true;
-  } else if (!accessToken || type !== 'recovery') {
+  } else {
     setStatus('This reset link is invalid or expired. Request a new one from the sign-in page.', 'error');
     btn.disabled = true;
-  } else {
-    ready(accessToken);
   }
 
   document.getElementById('f').addEventListener('submit', async (e) => {
@@ -419,55 +398,38 @@ router.get('/reset-password-page', (req, res) => {
 </html>`);
 });
 
-// POST /auth/exchange-code  { code }
-// PKCE fallback: if Supabase redirected with ?code= instead of #access_token=,
-// exchange the code server-side using the Supabase auth REST API.
-router.post('/exchange-code', async (req, res) => {
-  const { code } = req.body || {};
-  if (!code) {
-    return res.status(400).json({ error: 'Missing code.' });
+// POST /auth/verify-recovery  { token_hash }
+// Direct token-hash verification — bypasses Supabase's redirect flow entirely.
+// The email template links straight to our page with ?token_hash=...&type=recovery,
+// and the page POSTs the hash here so we can exchange it for a session.
+router.post('/verify-recovery', async (req, res) => {
+  const { token_hash } = req.body || {};
+  if (!token_hash) {
+    return res.status(400).json({ error: 'Missing token.' });
   }
 
   try {
-    const url = process.env.SUPABASE_URL;
-    const anonKey = process.env.SUPABASE_ANON_KEY;
-
-    // Try exchanging the PKCE code via Supabase's token endpoint.
-    // For email-initiated flows the code_verifier may be empty/absent.
-    const tokenRes = await fetch(`${url}/auth/v1/token?grant_type=pkce`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': anonKey,
-      },
-      body: JSON.stringify({ auth_code: code, code_verifier: '' }),
+    const { data, error } = await supabaseAnon.auth.verifyOtp({
+      token_hash,
+      type: 'recovery',
     });
 
-    if (tokenRes.ok) {
-      const data = await tokenRes.json();
-      return res.json({ access_token: data.access_token });
+    if (error) {
+      console.error('verifyOtp failed:', error.message);
+      return res.status(400).json({ error: 'This reset link is invalid or expired. Request a new one.' });
     }
 
-    // If PKCE exchange failed, try as authorization_code grant
-    const tokenRes2 = await fetch(`${url}/auth/v1/token?grant_type=authorization_code`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': anonKey,
-      },
-      body: JSON.stringify({ auth_code: code }),
+    if (!data.session?.access_token) {
+      return res.status(400).json({ error: 'Could not create session. Request a new reset link.' });
+    }
+
+    return res.json({
+      access_token: data.session.access_token,
+      email: data.user?.email || '',
     });
-
-    if (tokenRes2.ok) {
-      const data2 = await tokenRes2.json();
-      return res.json({ access_token: data2.access_token });
-    }
-
-    const errBody = await tokenRes2.json().catch(() => ({}));
-    return res.status(400).json({ error: errBody.error_description || errBody.msg || 'Code exchange failed.' });
   } catch (err) {
-    console.error('exchange-code failed:', err);
-    return res.status(500).json({ error: 'Internal error exchanging code.' });
+    console.error('verify-recovery failed:', err);
+    return res.status(500).json({ error: 'Internal error verifying token.' });
   }
 });
 
