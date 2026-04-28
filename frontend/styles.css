@@ -2669,16 +2669,432 @@ html.dark body {
     var(--bg-primary);
 }
 
+/* ---- Hub body: replace bright blue gradient with a deep dark mesh ---- */
+html.dark .hub-body {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(127,163,255,0.10), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 100% 30%, rgba(96,165,250,0.07), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 30% 100%, rgba(127,163,255,0.10), transparent 60%),
+    linear-gradient(180deg, #0B0F1A 0%, #0F1420 50%, #0B0F1A 100%);
+  color: var(--text-primary);
+}
+html.dark .hub-blob { opacity: 0.45; filter: blur(85px); }
+
+/* ---- Surfaces (cards, drawers, topbar) ---- */
 html.dark .glass-card,
 html.dark .app-topbar,
-html.dark .shared-drawer {
+html.dark .shared-drawer,
+html.dark .auth-shell,
+html.dark .login-card,
+html.dark .hub-header,
+html.dark .tile,
+html.dark .tile:hover,
+html.dark .tile.disabled:hover,
+html.dark .insp-section,
+html.dark .doc-card,
+html.dark .toc-list,
+html.dark .sds-card {
   background: var(--bg-secondary);
   border-color: var(--glass-border);
 }
-
-html.dark .shared-drawer-overlay {
-  background: rgba(0,0,0,0.6);
+html.dark .app-topbar {
+  background: rgba(15,20,32,0.7);
+  border-bottom-color: rgba(127,163,255,0.18);
 }
+html.dark .shared-drawer-overlay { background: rgba(0,0,0,0.6); }
+html.dark .shared-drawer-header { border-bottom-color: var(--glass-border); }
+
+/* ---- Auth ---- */
+html.dark .auth-tabs { background: rgba(255,255,255,0.04); }
+html.dark .auth-tab.active { background: rgba(255,255,255,0.08); }
+html.dark .brand-mark {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.10);
+}
+html.dark .legal { border-top-color: var(--glass-border); }
+
+/* ---- Inputs (universal) ---- */
+html.dark input[type="email"],
+html.dark input[type="password"],
+html.dark input[type="text"],
+html.dark input[type="tel"],
+html.dark input[type="number"],
+html.dark input[type="date"],
+html.dark input[type="search"],
+html.dark textarea,
+html.dark select,
+html.dark .toc-search-input,
+html.dark .insp-field input,
+html.dark .insp-field select,
+html.dark .insp-row-input,
+html.dark .insp-section textarea {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+}
+html.dark input:focus,
+html.dark input:focus-visible,
+html.dark textarea:focus,
+html.dark select:focus,
+html.dark .toc-search-input:focus,
+html.dark .insp-field input:focus,
+html.dark .insp-field select:focus,
+html.dark .insp-row-input:focus,
+html.dark .insp-section textarea:focus {
+  background: var(--bg-secondary);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder,
+html.dark .search-input::placeholder,
+html.dark .toc-search-input::placeholder { color: var(--text-tertiary); }
+html.dark input:read-only,
+html.dark input[readonly] { color: var(--text-secondary); }
+
+/* Search bar (translucent glass) */
+html.dark .search-input {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(127,163,255,0.22);
+  color: var(--text-primary);
+}
+html.dark .search-input:focus {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(127,163,255,0.45);
+}
+
+/* ---- Buttons ---- */
+html.dark .btn-primary {
+  background: var(--accent);
+  color: #0F1420;
+  box-shadow: 0 2px 8px rgba(127,163,255,0.18);
+}
+html.dark .btn-primary:hover { box-shadow: 0 4px 12px rgba(127,163,255,0.28); }
+html.dark .btn-primary[disabled] {
+  background: rgba(255,255,255,0.08);
+  color: var(--text-tertiary);
+}
+
+html.dark .btn-secondary,
+html.dark .btn-signout,
+html.dark .back-link,
+html.dark .photo-add,
+html.dark .reference-detail-btn,
+html.dark .shared-drawer-close {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+}
+html.dark .btn-secondary:hover,
+html.dark .btn-signout:hover,
+html.dark .back-link:hover,
+html.dark .photo-add:hover,
+html.dark .reference-detail-btn:hover,
+html.dark .shared-drawer-close:active {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.18);
+}
+
+html.dark .toggle-password:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+html.dark .forgot:hover { color: rgba(127,163,255,0.85); }
+html.dark .btn-text:hover { color: rgba(127,163,255,0.85); }
+
+/* ---- Status / semantic colors ---- */
+html.dark .status.info {
+  background: rgba(127,163,255,0.12);
+  color: #93B5FF;
+  border-color: rgba(127,163,255,0.22);
+}
+html.dark .status.error,
+html.dark .status.warning {
+  background: rgba(248,113,113,0.12);
+  color: #F87171;
+  border-color: rgba(248,113,113,0.22);
+}
+html.dark .status.success {
+  background: rgba(74,222,128,0.12);
+  color: #4ADE80;
+  border-color: rgba(74,222,128,0.22);
+}
+html.dark .hub-error {
+  background: rgba(248,113,113,0.12);
+  color: #F87171;
+  border-color: rgba(248,113,113,0.22);
+}
+
+/* ---- Hero ---- */
+html.dark .hub-hero-eyebrow {
+  background: rgba(127,163,255,0.14);
+  border-color: rgba(127,163,255,0.28);
+  color: var(--accent);
+}
+html.dark .hub-hero-weather {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(127,163,255,0.28);
+  box-shadow:
+    0 0 0 1px rgba(127,163,255,0.16),
+    0 4px 12px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+html.dark .hub-hero-weather-loc { border-left-color: rgba(255,255,255,0.18); }
+html.dark .hub-hero-name {
+  background: linear-gradient(135deg, #93B5FF 0%, #7FA3FF 60%, #B7C9FF 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+html.dark .hub-hero-badge {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(127,163,255,0.28);
+  box-shadow:
+    0 0 0 1px rgba(127,163,255,0.16),
+    0 8px 20px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* ---- Tiles ---- */
+html.dark .tile.featured {
+  background: rgba(127,163,255,0.08);
+  border-color: rgba(127,163,255,0.18);
+}
+html.dark .tile.featured:hover {
+  background: rgba(127,163,255,0.12);
+  border-color: rgba(127,163,255,0.28);
+}
+html.dark .tile-icon { background: rgba(255,255,255,0.06); }
+html.dark .tile.featured .tile-icon { background: rgba(127,163,255,0.18); }
+
+/* ---- Emergency banner ---- */
+html.dark .emergency-banner {
+  background: rgba(248,113,113,0.10);
+  border-color: rgba(248,113,113,0.24);
+  box-shadow:
+    0 0 0 1px rgba(248,113,113,0.14),
+    0 6px 18px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+}
+html.dark .emergency-banner:hover {
+  background: rgba(248,113,113,0.16);
+  border-color: rgba(248,113,113,0.32);
+}
+html.dark .emergency-title { color: #F87171; }
+
+/* ---- Quick cards / featured / reference ---- */
+html.dark .quick-card,
+html.dark .reference-card,
+html.dark .featured-action-card + .featured-action-card {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(127,163,255,0.18);
+  box-shadow:
+    0 0 0 1px rgba(127,163,255,0.12),
+    0 6px 16px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+}
+html.dark .quick-card:hover,
+html.dark .reference-card:hover,
+html.dark .featured-action-card + .featured-action-card:hover {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(127,163,255,0.32);
+}
+html.dark .qc-icon {
+  background: linear-gradient(135deg, rgba(127,163,255,0.15), rgba(127,163,255,0.25));
+  border-color: rgba(127,163,255,0.3);
+}
+html.dark .featured-action-card {
+  background: linear-gradient(135deg, #1B2D5B 0%, #2A3D7A 100%);
+  border-color: rgba(127,163,255,0.32);
+}
+html.dark .featured-action-card:hover {
+  background: linear-gradient(135deg, #233a72 0%, #324893 100%);
+}
+html.dark .featured-action-card + .featured-action-card { color: var(--text-primary); }
+html.dark .reference-card { border-left: 3px solid var(--accent); }
+
+/* ---- Emergency call buttons ---- */
+html.dark .emergency-call-911,
+html.dark .emergency-call-office {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(127,163,255,0.18);
+  color: var(--text-primary);
+  box-shadow:
+    0 0 0 1px rgba(127,163,255,0.12),
+    0 6px 16px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+}
+html.dark .emergency-call-911 {
+  background: rgba(248,113,113,0.10);
+  border-color: rgba(248,113,113,0.24);
+}
+html.dark .emergency-call-911:hover { background: rgba(248,113,113,0.16); }
+html.dark .emergency-call-office {
+  background: rgba(127,163,255,0.10);
+  border-color: rgba(127,163,255,0.32);
+}
+html.dark .emergency-call-office:hover { background: rgba(127,163,255,0.16); }
+
+/* ---- PPE cells ---- */
+html.dark .ppe-cell {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--glass-border);
+}
+
+/* ---- Inspection form ---- */
+html.dark .insp-body { background: var(--bg-primary); }
+html.dark .insp-section-hdr {
+  background: rgba(255,255,255,0.04);
+  border-bottom-color: var(--glass-border);
+}
+html.dark .insp-subhdr {
+  background: rgba(255,255,255,0.02);
+  border-color: var(--glass-border);
+}
+html.dark .insp-row { border-top-color: rgba(255,255,255,0.05); }
+html.dark .upsell-item {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--glass-border);
+}
+html.dark .upsell-item:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.16);
+}
+html.dark .photo-thumb,
+html.dark .sig-canvas,
+html.dark .files-photo {
+  background: var(--bg-tertiary);
+  border-color: var(--glass-border);
+}
+html.dark .insp-actions #reset-btn {
+  color: #F87171;
+  border-color: rgba(248,113,113,0.30);
+  background: rgba(248,113,113,0.08);
+}
+
+/* Radio chips */
+html.dark .radio-chip {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--glass-border);
+  color: var(--text-secondary);
+}
+html.dark .radio-opt:hover .radio-chip {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.16);
+}
+html.dark .radio-opt.r-na input:checked + .radio-chip,
+html.dark .radio-opt.r-al input:checked + .radio-chip {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.18);
+  color: var(--text-secondary);
+}
+
+/* Autosave badge */
+html.dark .autosave-badge {
+  background: rgba(74,222,128,0.14);
+  color: #4ADE80;
+  border-color: rgba(74,222,128,0.24);
+}
+
+/* ---- Drawer items ---- */
+html.dark .shared-drawer-item:active { background: rgba(255,255,255,0.06); }
+html.dark .shared-drawer-item.active {
+  color: var(--accent);
+  background: rgba(127,163,255,0.12);
+}
+html.dark .shared-drawer-item-icon { background: rgba(255,255,255,0.06); }
+html.dark .shared-drawer-item.active .shared-drawer-item-icon {
+  background: rgba(127,163,255,0.18);
+}
+
+/* ---- Topbar buttons ---- */
+html.dark .topbar-hamburger:active,
+html.dark .hamburger-btn:active,
+html.dark .topbar-signout:active {
+  background: rgba(255,255,255,0.08);
+}
+
+/* ---- Documents / TOC / SDS ---- */
+html.dark .doc-card:hover { border-color: rgba(255,255,255,0.16); }
+html.dark .doc-card-icon--manual { background: rgba(127,163,255,0.16); }
+html.dark .doc-card-icon--sds {
+  background: rgba(248,113,113,0.16);
+  color: #F87171;
+}
+html.dark .doc-card-badge {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-secondary);
+}
+html.dark .manual-open-btn {
+  color: #0F1420;
+  box-shadow: 0 2px 8px rgba(127,163,255,0.30);
+}
+html.dark .manual-open-icon { background: rgba(15,20,32,0.20); }
+html.dark .toc-row {
+  border-bottom-color: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+html.dark .toc-row:active { background: rgba(255,255,255,0.06); }
+html.dark .sds-card-title { color: var(--text-primary); }
+html.dark .sds-signal--danger,
+html.dark .sds-tag--flame,
+html.dark .sds-tag--toxic {
+  background: rgba(248,113,113,0.14);
+  color: #F87171;
+}
+html.dark .sds-signal--warning,
+html.dark .sds-tag--irritant {
+  background: rgba(250,204,21,0.14);
+  color: #FACC15;
+}
+html.dark .sds-tag--health { background: rgba(192,132,252,0.14); color: #C084FC; }
+html.dark .sds-tag--corrosive { background: rgba(251,146,60,0.14); color: #FB923C; }
+html.dark .sds-tag--gas { background: rgba(96,165,250,0.14); color: #60A5FA; }
+html.dark .sds-tag--env,
+html.dark .sds-tag--minimal {
+  background: rgba(74,222,128,0.14);
+  color: #4ADE80;
+}
+html.dark .sds-card-btn {
+  background: rgba(127,163,255,0.10);
+  color: var(--accent);
+}
+html.dark .sds-card-btn:active { background: rgba(127,163,255,0.18); }
+
+/* ---- Compact back link ---- */
+html.dark .compact-back {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+html.dark .compact-back:active { background: rgba(255,255,255,0.12); }
+
+/* ---- Office dashboard files ---- */
+html.dark .files-loading,
+html.dark .files-empty { color: var(--text-secondary); }
+html.dark .files-error { color: #F87171; }
+
+/* ---- Office dashboard (mostly unstyled — give modal/filter scaffolding sane defaults) ---- */
+html.dark .modal-content,
+html.dark .modal-body,
+html.dark .dashboard-filters,
+html.dark .filter-group,
+html.dark .inspection-card,
+html.dark .empty-state,
+html.dark .loading-state {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+}
+html.dark .modal-overlay { background: rgba(0,0,0,0.6); }
+html.dark .btn-danger {
+  background: #DC2626;
+  color: #FFFFFF;
+}
+
+/* ---- Step number / role pill / fac-icon: hardcoded white text ---- */
+html.dark .step-number { color: #0F1420; }
+html.dark .hub-user-role { color: #0F1420; }
+/* fac-icon on the navy-gradient card stays white — fine */
 
 /* ---------- Office dashboard: report & photos ---------- */
 .details-files { margin-top: 8px; }
