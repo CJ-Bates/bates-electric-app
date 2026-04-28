@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
@@ -30,6 +31,9 @@ app.use('/auth', authRoutes);
 // mount it there as well for convenience.
 app.use('/', authRoutes);
 app.use('/inspections', inspectionRoutes);
+
+// Serve the frontend as static files (after API routes so they take priority)
+app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 app.use((err, req, res, next) => {
   console.error(err);
