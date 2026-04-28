@@ -1,8 +1,8 @@
 const express = require('express');
 const archiver = require('archiver');
+const nodemailer = require('nodemailer');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
-const { Resend } = require('resend');
 const { buildInspectionPdf } = require('../lib/buildPdf');
 const { SECTIONS, UPSELL_NAMES, JOB_FIELDS } = require('../lib/inspectionFields');
 
@@ -11,9 +11,15 @@ const PDF_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 const router = express.Router();
 
-// Initialize Resend email service
-const resendApiKey = process.env.RESEND_API_KEY;
-const resend = resendApiKey ? new Resend(resendApiKey) : null;
+// Initialize Gmail SMTP transport via Nodemailer
+const gmailUser = process.env.GMAIL_USER;
+const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
+const transporter = (gmailUser && gmailAppPassword)
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: gmailUser, pass: gmailAppPassword },
+    })
+  : null;
 
 // Pulls the indexed columns out of the form blob so the office dashboard
 // can filter fast. Everything else stays in `data`.
@@ -62,30 +68,29 @@ router.post('/', requireAuth, async (req, res) => {
     });
   }
 
-  if (row.status === 'submitted' && resend) {
+  if (row.status === 'submitted' && transporter) {
     try {
       const emailBody = buildEmailHTML(data, pdfSignedUrl);
       const custEmail = data.job_email || '';
       const custName = data.job_cust || 'Customer';
       const date = data.job_date || new Date().toLocaleDateString();
       const officeEmail = process.env.OFFICE_EMAIL || 'office@bates-electric.com';
-      const fromEmail = process.env.EMAIL_FROM || 'noreply@bates-electric.com';
 
       const toAddresses = [officeEmail];
       if (custEmail && custEmail.trim()) {
-        toAddresses.push(custEmail);
+        toAddresses.push(custEmail.trim());
       }
 
-      await resend.emails.send({
-        from: fromEmail,
-        to: toAddresses,
+      const info = await transporter.sendMail({
+        from: `Bates Electric <${gmailUser}>`,
+        to: toAddresses.join(', '),
         subject: `Bates Electric Safety Inspection — ${custName} — ${date}`,
         html: emailBody,
       });
 
-      console.log('Email sent successfully for inspection', inserted.id);
+      console.log('Email sent successfully for inspection', inserted.id, '| messageId:', info.messageId);
     } catch (emailErr) {
-      console.error('Failed to send email:', emailErr);
+      console.error('Failed to send email:', emailErr.message || emailErr);
       // Don't fail the API response if email fails — the inspection was still created
     }
   }

@@ -20,7 +20,13 @@
       "Bash(curl -sI http://localhost:5173/)",
       "Bash(curl -sI http://localhost:5173/inspection.html)",
       "Bash(curl -sI http://localhost:5173/inspection)",
-      "Bash(node -e \"const css=require\\('fs'\\).readFileSync\\('frontend/styles.css','utf8'\\); let depth=0,line=1,bad=null; for\\(const c of css\\){if\\(c==='\\\\n'\\)line++; if\\(c==='{'\\)depth++; if\\(c==='}'\\){depth--; if\\(depth<0\\){bad=line;break;}}} console.log\\('final depth:',depth,'bad line:',bad,'total lines:',line\\);\")"
+      "Bash(node -e \"const css=require\\('fs'\\).readFileSync\\('frontend/styles.css','utf8'\\); let depth=0,line=1,bad=null; for\\(const c of css\\){if\\(c==='\\\\n'\\)line++; if\\(c==='{'\\)depth++; if\\(c==='}'\\){depth--; if\\(depth<0\\){bad=line;break;}}} console.log\\('final depth:',depth,'bad line:',bad,'total lines:',line\\);\")",
+      "Bash(ls \"c:/Users/cjbates/OneDrive - Bates Electric, Inc/bates-electric-app/frontend/\"*.css)",
+      "Bash(ls \"c:/Users/cjbates/OneDrive - Bates Electric, Inc/bates-electric-app/frontend/\"*.js)",
+      "Bash(node -e \"require\\('./lib/buildPdf'\\); require\\('./lib/inspectionFields'\\); console.log\\('lib OK'\\); process.env.SUPABASE_URL='https://x.supabase.co'; process.env.SUPABASE_ANON_KEY='x'; process.env.SUPABASE_SERVICE_ROLE_KEY='x'; require\\('./routes/inspections'\\); console.log\\('route OK'\\);\")",
+      "Bash(ls -la \"c:/Users/cjbates/OneDrive - Bates Electric, Inc/bates-electric-app/frontend/settings.\"*)",
+      "Bash(curl -si 'https://veiunqctijuzirvpsqkg.supabase.co/auth/v1/verify?token=53937b2e96f8a06dcac8ec6574e9bf9ab0235976f9127b5c47a402df&type=recovery&redirect_to=http://localhost:3000')",
+      "Bash(node -e ' *)"
     ]
   }
 }

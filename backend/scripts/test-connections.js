@@ -10,9 +10,9 @@ const required = [
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
-  'RESEND_API_KEY',
+  'GMAIL_USER',
+  'GMAIL_APP_PASSWORD',
   'OFFICE_EMAIL',
-  'EMAIL_FROM',
 ];
 
 let ok = true;
@@ -68,18 +68,17 @@ const fail = (msg) => { console.log('  FAIL  ' + msg); ok = false; };
     fail('Supabase client threw: ' + e.message);
   }
 
-  console.log('\n3. Resend — API key accepted');
+  console.log('\n3. Gmail SMTP — credentials accepted');
   try {
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    // Listing API keys is a cheap, read-only call that fails fast on a bad key.
-    const { data, error } = await resend.apiKeys.list();
-    if (error) {
-      fail(`Resend — ${error.message || JSON.stringify(error)}`);
-    } else {
-      pass(`Resend authenticated (${data?.data?.length ?? 0} keys in account)`);
-    }
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+    });
+    await transporter.verify();
+    pass(`Gmail SMTP authenticated as ${process.env.GMAIL_USER}`);
   } catch (e) {
-    fail('Resend client threw: ' + e.message);
+    fail('Gmail SMTP verification failed: ' + e.message);
   }
 
   console.log('\n=== Result: ' + (ok ? 'ALL GOOD' : 'SOMETHING FAILED') + ' ===\n');

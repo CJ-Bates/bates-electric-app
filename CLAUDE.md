@@ -8,7 +8,7 @@ Bates Electric field-service app: technicians in the field fill out inspection f
 
 ## Layout
 
-- `backend/` — Node/Express API (CommonJS, Express 5). Talks to Supabase and Resend.
+- `backend/` — Node/Express API (CommonJS, Express 5). Talks to Supabase; sends email via Gmail SMTP (Nodemailer).
 - `frontend/` — Vanilla JS PWA (no bundler, no framework). Plain `.html` + `.js` + `.css` served statically. Service worker provides offline support in production.
 - `backend/sql/001_initial_schema.sql` — canonical schema. Run manually in the Supabase SQL Editor; there is no migration runner.
 - `reference/` — static HTML reference material, not shipped.
@@ -20,13 +20,13 @@ All backend commands run from `backend/`:
 ```bash
 npm install
 node server.js                      # start API
-node scripts/test-connections.js    # verify Supabase + Resend creds and schema
+node scripts/test-connections.js    # verify Supabase + Gmail SMTP creds and schema
 node scripts/test-inspections.js    # smoke-test inspections table
 ```
 
 No build step, no linter, no test runner wired up (`npm test` is a placeholder). Frontend is served as static files — open `frontend/index.html` via any static server; `app.js` assumes the API is at `http://localhost:4000` when on localhost, so run the backend with `PORT=4000` in dev.
 
-Required env vars in `backend/.env` (see `scripts/test-connections.js` for the full list): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `OFFICE_EMAIL`, `EMAIL_FROM`, `PORT`.
+Required env vars in `backend/.env` (see `scripts/test-connections.js` for the full list): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `OFFICE_EMAIL`, `PORT`.
 
 ## Architecture — things you need to read multiple files to see
 
