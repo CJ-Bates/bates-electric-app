@@ -1917,6 +1917,14 @@ input:focus-visible {
   flex: 1 1 240px;
   min-height: 56px;
 }
+.insp-actions #reset-btn {
+  flex: 0 1 auto;
+  min-height: 44px;
+  font-size: 13px;
+  color: #b91c1c;
+  border-color: rgba(185,28,28,0.25);
+  background: rgba(185,28,28,0.06);
+}
 
 /* ============================================================
    TOP BAR WITH HAMBURGER
