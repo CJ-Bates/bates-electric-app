@@ -392,10 +392,18 @@
   }
 
   // ---------- photo upload ----------
+  function withTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label || 'Operation'} timed out after ${ms}ms`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   let cachedConfig = null;
   async function getConfig() {
     if (cachedConfig) return cachedConfig;
-    const res = await fetch(`${API_BASE}/config`);
+    const res = await withTimeout(fetch(`${API_BASE}/config`), 10000, 'Config fetch');
     if (!res.ok) throw new Error('Failed to load config');
     cachedConfig = await res.json();
     return cachedConfig;
@@ -455,7 +463,11 @@
       const arr = sectionPhotos[sectionKey];
       for (const entry of arr) {
         try {
-          await uploadOnePhoto(cfg, token, inspectionId, sectionKey, entry, idx);
+          await withTimeout(
+            uploadOnePhoto(cfg, token, inspectionId, sectionKey, entry, idx),
+            45000,
+            'Photo upload'
+          );
           uploaded++;
         } catch (e) {
           console.error('Photo upload failed', e);
@@ -593,8 +605,11 @@
       status: 'submitted',
     };
 
+    // ----- Step 1: POST inspection (the source-of-truth save) -----
+    // If this fails, we fall back to EmailJS. If it succeeds, we are committed
+    // to the success path — nothing below may fall back to the EmailJS branch.
+    let inspectionId = null;
     try {
-      // Try to submit via backend
       const response = await fetch(`${API_BASE}/inspections`, {
         method: 'POST',
         headers: {
@@ -603,62 +618,73 @@
         },
         body: JSON.stringify(payload),
       });
-
-      if (response.ok) {
-        const result = await response.json();
-        const inspectionId = result?.inspection?.id;
-
-        const totalPhotos = totalPhotoCount();
-        let photoSuffix = '';
-        if (inspectionId && totalPhotos > 0) {
-          setSubmitButton(`Uploading photos (0/${totalPhotos})...`, true);
-          showStatus(`Uploading 0/${totalPhotos} photos...`, 'info');
-          const { uploaded, failed } = await uploadPhotos(inspectionId, token, (done) => {
-            setSubmitButton(`Uploading photos (${done}/${totalPhotos})...`, true);
-            showStatus(`Uploading ${done}/${totalPhotos} photos...`, 'info');
-          });
-          if (failed > 0) {
-            // Don't claim full success if any photo failed.
-            showStatus(`Submitted. Uploaded ${uploaded}/${totalPhotos} photos (${failed} failed).`, 'warning');
-            setSubmitButton('Redirecting...', true);
-            clearDraft();
-            clearAllSectionPhotos();
-            setTimeout(() => window.location.replace('home.html'), 3000);
-            return;
-          }
-          photoSuffix = ` with ${uploaded} photo${uploaded === 1 ? '' : 's'}`;
-        }
-
-        // Everything's done — show one clear final success message and redirect.
-        showStatus(`✓ Inspection submitted successfully${photoSuffix}!`, 'success');
-        setSubmitButton('Redirecting...', true);
-        clearDraft();
-        clearAllSectionPhotos();
-        setTimeout(() => {
-          window.location.replace('home.html');
-        }, 3000);
-        return;
-      } else {
-        const err = await response.json();
-        throw new Error(err.error || 'Backend submission failed');
+      if (!response.ok) {
+        let errMsg = `Backend submission failed (${response.status})`;
+        try {
+          const errBody = await response.json();
+          if (errBody && errBody.error) errMsg = errBody.error;
+        } catch (_) {}
+        throw new Error(errMsg);
       }
+      const result = await response.json().catch(() => ({}));
+      inspectionId = (result && result.inspection && result.inspection.id) || null;
     } catch (backendErr) {
       console.warn('Backend submission failed, trying EmailJS fallback:', backendErr);
-
-      // Fallback to EmailJS
       try {
         await submitViaEmailJS(formData);
         showStatus('✓ Inspection submitted via email (fallback). Server may be offline.', 'warning');
-        setSubmitButton('Redirecting...', true);
+        setSubmitButton('Submitted!', true);
         clearDraft();
-        setTimeout(() => {
-          window.location.replace('home.html');
-        }, 3000);
+        setTimeout(() => window.location.replace('home.html'), 3000);
       } catch (emailErr) {
         showStatus(`Submission failed: ${emailErr.message}. Please try again.`, 'error');
         restoreSubmitButton();
       }
+      return;
     }
+
+    // ----- Step 2: Upload photos (best-effort; never blocks success) -----
+    const totalPhotos = totalPhotoCount();
+    let uploadResult = null;
+    if (inspectionId && totalPhotos > 0) {
+      setSubmitButton(`Uploading photos (0/${totalPhotos})...`, true);
+      showStatus(`Uploading 0/${totalPhotos} photos...`, 'info');
+      try {
+        uploadResult = await uploadPhotos(inspectionId, token, (done) => {
+          setSubmitButton(`Uploading photos (${done}/${totalPhotos})...`, true);
+          showStatus(`Uploading ${done}/${totalPhotos} photos...`, 'info');
+        });
+      } catch (photoErr) {
+        // uploadPhotos shouldn't throw, but defend against it just in case so
+        // an unexpected error here can't prevent us from reaching the success
+        // state — the inspection is already saved on the server.
+        console.error('Photo upload threw unexpectedly:', photoErr);
+        uploadResult = { uploaded: 0, failed: totalPhotos };
+      }
+    }
+
+    // ----- Step 3: Show success (always, since the inspection saved) -----
+    let successMsg;
+    let kind = 'success';
+    if (uploadResult && uploadResult.failed > 0) {
+      kind = 'warning';
+      if (uploadResult.uploaded > 0) {
+        successMsg = `✓ Inspection submitted! Uploaded ${uploadResult.uploaded}/${totalPhotos} photos (${uploadResult.failed} failed).`;
+      } else {
+        successMsg = '✓ Inspection submitted! Photos failed to upload — check your connection.';
+      }
+    } else if (uploadResult && uploadResult.uploaded > 0) {
+      const n = uploadResult.uploaded;
+      successMsg = `✓ Inspection submitted successfully with ${n} photo${n === 1 ? '' : 's'}!`;
+    } else {
+      successMsg = '✓ Inspection submitted successfully!';
+    }
+
+    showStatus(successMsg, kind);
+    setSubmitButton('Submitted!', true);
+    clearDraft();
+    clearAllSectionPhotos();
+    setTimeout(() => window.location.replace('home.html'), 3000);
   }
 
   async function submitViaEmailJS(formData) {
