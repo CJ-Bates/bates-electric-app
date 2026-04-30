@@ -4,7 +4,7 @@ const nodemailer = require('nodemailer');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { buildInspectionPdf } = require('../lib/buildPdf');
-const { SECTIONS, UPSELL_NAMES, JOB_FIELDS } = require('../lib/inspectionFields');
+const { SECTIONS, UPSELL_ITEMS, JOB_FIELDS } = require('../lib/inspectionFields');
 
 const PHOTOS_BUCKET = 'inspection-photos';
 const PDF_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -207,7 +207,15 @@ function buildEmailHTML(data, pdfUrl) {
     html += `</table>`;
   }
 
-  const checked = UPSELL_NAMES.map((n) => d[n]).filter(Boolean);
+  // Newer drafts store the label string per checkbox; older drafts stored
+  // `true`. Fall back to the canonical label when we see the legacy shape.
+  const checked = UPSELL_ITEMS
+    .map(([n, label]) => {
+      const v = d[n];
+      if (!v) return null;
+      return typeof v === 'string' ? v : label;
+    })
+    .filter(Boolean);
   if (checked.length || d.up_other) {
     html += `<h3 style="color: #0B2545; margin-top: 20px;">Recommended Services</h3>`;
     if (checked.length) html += `<p>${escapeHtml(checked.join(', '))}</p>`;

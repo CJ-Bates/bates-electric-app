@@ -370,7 +370,10 @@
       if (el.type === 'radio') {
         if (el.checked) out[el.name] = el.value;
       } else if (el.type === 'checkbox') {
-        out[el.name] = el.checked;
+        // Store the label (el.value) when checked so downstream renderers can
+        // print the label directly instead of a useless `true`. Empty string
+        // for unchecked keeps the field present for clarity.
+        out[el.name] = el.checked ? el.value : '';
       } else if (el.type === 'file' || el.type === 'button' || el.type === 'submit') {
         // skip
       } else {
@@ -459,13 +462,21 @@
 
   // ---------- submission ----------
   async function submitInspection() {
-    const form = document.getElementById('inspection-form');
+    const submitBtn = document.getElementById('submit-btn');
+    const originalSubmitText = submitBtn ? submitBtn.textContent : '';
+    const setSubmitButton = (text, disabled) => {
+      if (!submitBtn) return;
+      submitBtn.textContent = text;
+      submitBtn.disabled = !!disabled;
+    };
+    const restoreSubmitButton = () => setSubmitButton(originalSubmitText, false);
 
     // Collect all form data
     const formData = collectFields();
     formData.sigTech = signatures.sigTech ? signatures.sigTech.toDataURL() : null;
     formData.sigCust = signatures.sigCust ? signatures.sigCust.toDataURL() : null;
 
+    setSubmitButton('Submitting...', true);
     showStatus('Submitting inspection...', 'info');
 
     const token = getToken();
@@ -490,25 +501,34 @@
         const inspectionId = result?.inspection?.id;
 
         const totalPhotos = totalPhotoCount();
+        let photoSuffix = '';
         if (inspectionId && totalPhotos > 0) {
+          setSubmitButton(`Uploading photos (0/${totalPhotos})...`, true);
           showStatus(`Uploading 0/${totalPhotos} photos...`, 'info');
           const { uploaded, failed } = await uploadPhotos(inspectionId, token, (done) => {
+            setSubmitButton(`Uploading photos (${done}/${totalPhotos})...`, true);
             showStatus(`Uploading ${done}/${totalPhotos} photos...`, 'info');
           });
           if (failed > 0) {
+            // Don't claim full success if any photo failed.
             showStatus(`Submitted. Uploaded ${uploaded}/${totalPhotos} photos (${failed} failed).`, 'warning');
-          } else {
-            showStatus(`Inspection submitted with ${uploaded} photo(s)!`, 'success');
+            setSubmitButton('Redirecting...', true);
+            clearDraft();
+            clearAllSectionPhotos();
+            setTimeout(() => window.location.replace('home.html'), 3000);
+            return;
           }
-        } else {
-          showStatus('Inspection submitted successfully!', 'success');
+          photoSuffix = ` with ${uploaded} photo${uploaded === 1 ? '' : 's'}`;
         }
 
+        // Everything's done — show one clear final success message and redirect.
+        showStatus(`✓ Inspection submitted successfully${photoSuffix}!`, 'success');
+        setSubmitButton('Redirecting...', true);
         clearDraft();
         clearAllSectionPhotos();
         setTimeout(() => {
           window.location.replace('home.html');
-        }, 1500);
+        }, 3000);
         return;
       } else {
         const err = await response.json();
@@ -520,13 +540,15 @@
       // Fallback to EmailJS
       try {
         await submitViaEmailJS(formData);
-        showStatus('Inspection submitted via email (fallback). Server may be offline.', 'warning');
+        showStatus('✓ Inspection submitted via email (fallback). Server may be offline.', 'warning');
+        setSubmitButton('Redirecting...', true);
         clearDraft();
         setTimeout(() => {
           window.location.replace('home.html');
-        }, 2000);
+        }, 3000);
       } catch (emailErr) {
         showStatus(`Submission failed: ${emailErr.message}. Please try again.`, 'error');
+        restoreSubmitButton();
       }
     }
   }
@@ -681,15 +703,14 @@
     ];
     addSection('Furnace & A/C Wiring', hvFields);
 
-    // Recommended services
+    // Recommended services. Items from window.INSPECTION_UPSELL_ITEMS provide
+    // canonical labels; old drafts may have `true` instead of a label string.
+    const upsellItems = (window.INSPECTION_UPSELL_ITEMS || []);
     const checked = [];
-    const upsellNames = [
-      'up_panel', 'up_surge', 'up_breaker', 'up_gfci', 'up_afci', 'up_ev',
-      'up_sub', 'up_circuit', 'up_smoke', 'up_co', 'up_alum', 'up_arc',
-      'up_svc', 'up_gen', 'up_outdoor', 'up_covers', 'up_label', 'up_ground'
-    ];
-    upsellNames.forEach(n => {
-      if (d[n]) checked.push(d[n]);
+    upsellItems.forEach(({ name, label }) => {
+      const v = d[name];
+      if (!v) return;
+      checked.push(typeof v === 'string' ? v : label);
     });
     if (checked.length || d.up_other) {
       html += `<h3 style="color: #0B2545; margin-top: 20px;">Recommended Services</h3>`;

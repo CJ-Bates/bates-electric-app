@@ -252,15 +252,34 @@
         </table>
       `;
 
-      // Recommended services
+      // Recommended services. Older inspections stored `true` per checkbox;
+      // newer ones store the label string. Fall back to a label lookup when
+      // we encounter the legacy `true` shape.
+      const upsellLabels = {
+        up_panel: 'Panel upgrade / replacement',
+        up_surge: 'Whole-home surge protector',
+        up_breaker: 'Main breaker replacement',
+        up_gfci: 'GFCI outlet installation',
+        up_afci: 'AFCI breaker installation',
+        up_ev: 'EV charging outlet (240V)',
+        up_sub: 'Subpanel installation',
+        up_circuit: 'Dedicated circuit(s)',
+        up_smoke: 'Smoke detector replacement',
+        up_co: 'CO detector installation',
+        up_alum: 'Aluminum wiring remediation',
+        up_arc: 'Arc fault protection upgrade',
+        up_svc: 'Service upgrade (100A → 200A)',
+        up_gen: 'Whole-home generator / transfer sw.',
+        up_outdoor: 'Outdoor / weatherproof outlets',
+        up_covers: 'In-use outlet covers installation',
+        up_label: 'Label / map panel circuits',
+        up_ground: 'Grounding / bonding correction',
+      };
       const checked = [];
-      const upsellNames = [
-        'up_panel', 'up_surge', 'up_breaker', 'up_gfci', 'up_afci', 'up_ev',
-        'up_sub', 'up_circuit', 'up_smoke', 'up_co', 'up_alum', 'up_arc',
-        'up_svc', 'up_gen', 'up_outdoor', 'up_covers', 'up_label', 'up_ground'
-      ];
-      upsellNames.forEach(n => {
-        if (data[n]) checked.push(data[n]);
+      Object.keys(upsellLabels).forEach((n) => {
+        const v = data[n];
+        if (!v) return;
+        checked.push(typeof v === 'string' ? v : upsellLabels[n]);
       });
       if (checked.length || data.up_other) {
         html += `<h3 class="details-section-title">Recommended Services</h3><p>`;

@@ -1,5 +1,5 @@
 const PDFDocument = require('pdfkit');
-const { SECTIONS, UPSELL_NAMES, JOB_FIELDS } = require('./inspectionFields');
+const { SECTIONS, UPSELL_ITEMS, JOB_FIELDS } = require('./inspectionFields');
 
 const NAVY = '#0B2545';
 const GOLD = '#F5B700';
@@ -106,7 +106,14 @@ function drawTable(doc, rows) {
 }
 
 function drawUpsell(doc, d) {
-  const checked = UPSELL_NAMES.map((n) => d[n]).filter(Boolean);
+  // Newer drafts store the label string; older drafts stored `true`.
+  const checked = UPSELL_ITEMS
+    .map(([n, label]) => {
+      const v = d[n];
+      if (!v) return null;
+      return typeof v === 'string' ? v : label;
+    })
+    .filter(Boolean);
   if (checked.length === 0 && !d.up_other) return;
   sectionTitle(doc, 'Recommended Services');
   doc.font('Helvetica').fontSize(10).fillColor('#222');
