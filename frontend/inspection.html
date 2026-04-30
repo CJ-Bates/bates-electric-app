@@ -68,6 +68,15 @@
         <div class="insp-rows" data-rows="mp_main"></div>
         <div class="insp-subhdr"><span>Panel Wiring Detail</span></div>
         <div class="insp-rows" data-rows="mp_wiring"></div>
+        <div class="section-photos" data-photo-section="mp">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= SECONDARY / SUB PANEL ================= -->
@@ -90,6 +99,15 @@
         <div class="insp-rows" data-rows="sp_main"></div>
         <div class="insp-subhdr"><span>Panel Wiring Detail</span></div>
         <div class="insp-rows" data-rows="sp_wiring"></div>
+        <div class="section-photos" data-photo-section="sp">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= MAIN ELECTRICAL SERVICE ================= -->
@@ -103,30 +121,75 @@
           <div class="insp-field"><label>POA Condition</label><input type="text" name="svc_poa"></div>
         </div>
         <div class="insp-rows" data-rows="svc"></div>
+        <div class="section-photos" data-photo-section="svc">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= GENERAL WIRING ================= -->
       <section class="insp-section">
         <div class="insp-section-hdr"><span>GENERAL WIRING</span></div>
         <div class="insp-rows" data-rows="gw"></div>
+        <div class="section-photos" data-photo-section="gw">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= SMOKE & CO ALARMS ================= -->
       <section class="insp-section">
         <div class="insp-section-hdr"><span>SMOKE &amp; CO ALARMS</span></div>
         <div class="insp-rows" data-rows="sm"></div>
+        <div class="section-photos" data-photo-section="sm">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= ATTIC & CRAWLSPACE ================= -->
       <section class="insp-section">
         <div class="insp-section-hdr"><span>ATTIC &amp; CRAWLSPACE</span></div>
         <div class="insp-rows" data-rows="ac"></div>
+        <div class="section-photos" data-photo-section="ac">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= FURNACE & A/C WIRING ================= -->
       <section class="insp-section">
         <div class="insp-section-hdr"><span>FURNACE &amp; A/C WIRING</span></div>
         <div class="insp-rows" data-rows="hv"></div>
+        <div class="section-photos" data-photo-section="hv">
+          <div class="section-photo-hdr">Section Photos</div>
+          <p class="section-photo-prompts"></p>
+          <div class="photo-grid"></div>
+          <label class="btn-secondary photo-add">
+            <input type="file" accept="image/*" multiple hidden>
+            + Add Photo
+          </label>
+        </div>
       </section>
 
       <!-- ================= RECOMMENDED SERVICES ================= -->
@@ -138,17 +201,6 @@
           <label for="up_other">Other:</label>
           <input type="text" name="up_other" id="up_other" placeholder="Describe any additional recommendations">
         </div>
-      </section>
-
-      <!-- ================= PHOTOS ================= -->
-      <section class="insp-section">
-        <div class="insp-section-hdr"><span>JOB SITE PHOTOS</span></div>
-        <p class="insp-help">Tap the button to take or choose a photo. Photos are stored with this inspection.</p>
-        <div class="photo-grid" id="photo-grid"></div>
-        <label class="btn-secondary photo-add">
-          <input type="file" accept="image/*" capture="environment" id="photo-input" multiple hidden>
-          + Add Photo
-        </label>
       </section>
 
       <!-- ================= NOTES ================= -->

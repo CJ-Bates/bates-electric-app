@@ -1885,6 +1885,29 @@ input:focus-visible {
   border-color: rgba(27,45,91,0.12);
 }
 
+/* Per-section photo blocks (mp/sp/svc/gw/sm/ac/hv) */
+.section-photos {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 0.5px solid rgba(27,45,91,0.08);
+}
+.section-photo-hdr {
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+.section-photo-prompts {
+  padding: 4px 18px 0;
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-secondary);
+}
+.section-photo-prompts:empty { display: none; }
+
 /* Signatures */
 .sig-pair {
   display: grid;
@@ -3005,6 +3028,9 @@ html.dark .sig-canvas,
 html.dark .files-photo {
   background: var(--bg-tertiary);
   border-color: var(--glass-border);
+}
+html.dark .section-photos {
+  border-top-color: var(--glass-border);
 }
 html.dark .insp-actions #reset-btn {
   color: #F87171;

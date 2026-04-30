@@ -19,8 +19,13 @@
   // Holds { clear, isEmpty, toDataURL, restoreFromDataURL } per canvas id.
   const signatures = {};
 
-  // Selected photo File objects, parallel to DOM thumbnails in #photo-grid.
-  const selectedPhotos = [];
+  // Selected photos keyed by section (mp/sp/svc/gw/sm/ac/hv). Each value is an
+  // array of { file, url } entries parallel to thumbnails in that section's grid.
+  const sectionPhotos = {};
+
+  function totalPhotoCount() {
+    return Object.values(sectionPhotos).reduce((n, arr) => n + arr.length, 0);
+  }
 
   // ---------- build repetitive rows from data ----------
   function radioChip(name, value, cls) {
@@ -158,27 +163,53 @@
 
   // ---------- photos ----------
   // Thumbnails are local previews only; File objects are kept in
-  // `selectedPhotos` and uploaded to Supabase Storage on submit.
-  function initPhotos() {
-    const grid = document.getElementById('photo-grid');
-    const input = document.getElementById('photo-input');
-    input.addEventListener('change', (e) => {
-      for (const file of e.target.files) {
-        const url = URL.createObjectURL(file);
-        const entry = { file, url };
-        selectedPhotos.push(entry);
-        const div = document.createElement('div');
-        div.className = 'photo-thumb';
-        div.innerHTML = `<img src="${url}" alt="photo"><button type="button" class="photo-remove" aria-label="Remove photo">&times;</button>`;
-        div.querySelector('.photo-remove').addEventListener('click', () => {
-          URL.revokeObjectURL(url);
-          const idx = selectedPhotos.indexOf(entry);
-          if (idx !== -1) selectedPhotos.splice(idx, 1);
-          div.remove();
-        });
-        grid.appendChild(div);
+  // `sectionPhotos[sectionKey]` and uploaded to Supabase Storage on submit.
+  function initSectionPhotos() {
+    const prompts = window.INSPECTION_PHOTO_PROMPTS || {};
+    document.querySelectorAll('[data-photo-section]').forEach((block) => {
+      const key = block.getAttribute('data-photo-section');
+      sectionPhotos[key] = sectionPhotos[key] || [];
+
+      const promptEl = block.querySelector('.section-photo-prompts');
+      const list = prompts[key] || [];
+      if (promptEl) {
+        promptEl.textContent = list.length
+          ? `Recommended: ${list.join(' • ')}`
+          : '';
       }
-      input.value = '';
+
+      const grid = block.querySelector('.photo-grid');
+      const input = block.querySelector('input[type="file"]');
+      if (!grid || !input) return;
+
+      input.addEventListener('change', (e) => {
+        for (const file of e.target.files) {
+          const url = URL.createObjectURL(file);
+          const entry = { file, url };
+          sectionPhotos[key].push(entry);
+          const div = document.createElement('div');
+          div.className = 'photo-thumb';
+          div.innerHTML = `<img src="${url}" alt="photo"><button type="button" class="photo-remove" aria-label="Remove photo">&times;</button>`;
+          div.querySelector('.photo-remove').addEventListener('click', () => {
+            URL.revokeObjectURL(url);
+            const idx = sectionPhotos[key].indexOf(entry);
+            if (idx !== -1) sectionPhotos[key].splice(idx, 1);
+            div.remove();
+          });
+          grid.appendChild(div);
+        }
+        input.value = '';
+      });
+    });
+  }
+
+  function clearAllSectionPhotos() {
+    for (const key of Object.keys(sectionPhotos)) {
+      for (const p of sectionPhotos[key]) URL.revokeObjectURL(p.url);
+      sectionPhotos[key].length = 0;
+    }
+    document.querySelectorAll('[data-photo-section] .photo-grid').forEach((g) => {
+      g.innerHTML = '';
     });
   }
 
@@ -196,8 +227,8 @@
     return (name || 'photo.jpg').replace(/[^A-Za-z0-9._-]/g, '_');
   }
 
-  async function uploadOnePhoto(cfg, token, inspectionId, entry, idx) {
-    const path = `${inspectionId}/${Date.now()}-${idx}-${safeFileName(entry.file.name)}`;
+  async function uploadOnePhoto(cfg, token, inspectionId, sectionKey, entry, idx) {
+    const path = `${inspectionId}/${sectionKey}/${Date.now()}-${idx}-${safeFileName(entry.file.name)}`;
     const storageUrl = `${cfg.supabaseUrl}/storage/v1/object/inspection-photos/${path}`;
     const storageRes = await fetch(storageUrl, {
       method: 'POST',
@@ -231,24 +262,30 @@
   }
 
   async function uploadPhotos(inspectionId, token, onProgress) {
+    const total = totalPhotoCount();
     let cfg;
     try {
       cfg = await getConfig();
     } catch (e) {
       console.error(e);
-      return { uploaded: 0, failed: selectedPhotos.length };
+      return { uploaded: 0, failed: total };
     }
     let uploaded = 0;
     let failed = 0;
-    for (let i = 0; i < selectedPhotos.length; i++) {
-      try {
-        await uploadOnePhoto(cfg, token, inspectionId, selectedPhotos[i], i);
-        uploaded++;
-      } catch (e) {
-        console.error('Photo upload failed', e);
-        failed++;
+    let idx = 0;
+    for (const sectionKey of Object.keys(sectionPhotos)) {
+      const arr = sectionPhotos[sectionKey];
+      for (const entry of arr) {
+        try {
+          await uploadOnePhoto(cfg, token, inspectionId, sectionKey, entry, idx);
+          uploaded++;
+        } catch (e) {
+          console.error('Photo upload failed', e);
+          failed++;
+        }
+        idx++;
+        if (onProgress) onProgress(uploaded + failed);
       }
-      if (onProgress) onProgress(uploaded + failed);
     }
     return { uploaded, failed };
   }
@@ -380,13 +417,14 @@
         const result = await response.json();
         const inspectionId = result?.inspection?.id;
 
-        if (inspectionId && selectedPhotos.length > 0) {
-          showStatus(`Uploading 0/${selectedPhotos.length} photos...`, 'info');
+        const totalPhotos = totalPhotoCount();
+        if (inspectionId && totalPhotos > 0) {
+          showStatus(`Uploading 0/${totalPhotos} photos...`, 'info');
           const { uploaded, failed } = await uploadPhotos(inspectionId, token, (done) => {
-            showStatus(`Uploading ${done}/${selectedPhotos.length} photos...`, 'info');
+            showStatus(`Uploading ${done}/${totalPhotos} photos...`, 'info');
           });
           if (failed > 0) {
-            showStatus(`Submitted. Uploaded ${uploaded}/${selectedPhotos.length} photos (${failed} failed).`, 'warning');
+            showStatus(`Submitted. Uploaded ${uploaded}/${totalPhotos} photos (${failed} failed).`, 'warning');
           } else {
             showStatus(`Inspection submitted with ${uploaded} photo(s)!`, 'success');
           }
@@ -395,8 +433,7 @@
         }
 
         clearDraft();
-        for (const p of selectedPhotos) URL.revokeObjectURL(p.url);
-        selectedPhotos.length = 0;
+        clearAllSectionPhotos();
         setTimeout(() => {
           window.location.replace('home.html');
         }, 1500);
@@ -613,9 +650,7 @@
       document.getElementById('inspection-form').reset();
       clearDraft();
       Object.values(signatures).forEach((s) => s.clear());
-      for (const p of selectedPhotos) URL.revokeObjectURL(p.url);
-      selectedPhotos.length = 0;
-      document.getElementById('photo-grid').innerHTML = '';
+      clearAllSectionPhotos();
       showStatus('Inspection reset.', 'info');
     });
 
@@ -641,7 +676,7 @@
   renderRows();
   renderUpsell();
   initSignatures();
-  initPhotos();
+  initSectionPhotos();
   restoreDraft();
   attachAutosave();
   wireActions();

@@ -98,6 +98,41 @@ router.post('/', requireAuth, async (req, res) => {
   res.status(201).json({ inspection: inserted, pdfUrl: pdfSignedUrl });
 });
 
+// Photos now live under `${inspectionId}/${sectionKey}/...`. `report.pdf` is
+// still at the top level. Supabase `.list(prefix)` only returns one level, so
+// we recurse one step into each subfolder. Returns relative paths (i.e. without
+// the inspectionId prefix), e.g. `mp/123-0-foo.jpg` or `legacy.jpg`.
+async function listAllPhotoPaths(inspectionId) {
+  const { data: top, error: topErr } = await supabaseAdmin
+    .storage
+    .from(PHOTOS_BUCKET)
+    .list(inspectionId, { limit: 1000 });
+  if (topErr) throw topErr;
+
+  const out = [];
+  for (const entry of top || []) {
+    if (entry.name === 'report.pdf') continue;
+    // Files have a non-null id; "folders" have id === null.
+    if (entry.id) {
+      out.push(entry.name);
+      continue;
+    }
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .storage
+      .from(PHOTOS_BUCKET)
+      .list(`${inspectionId}/${entry.name}`, { limit: 1000 });
+    if (subErr) {
+      console.warn('subfolder list failed', entry.name, subErr);
+      continue;
+    }
+    for (const file of sub || []) {
+      if (!file.id) continue;
+      out.push(`${entry.name}/${file.name}`);
+    }
+  }
+  return out;
+}
+
 async function generateAndStorePdf(inspectionId, data) {
   const buffer = await buildInspectionPdf(data);
   const path = `${inspectionId}/report.pdf`;
@@ -235,15 +270,14 @@ router.get('/:id/files', requireAuth, async (req, res) => {
   }
 
   try {
-    // List everything in the inspection's folder.
-    const { data: objects, error: listErr } = await supabaseAdmin
+    // Check whether the PDF is at the top level.
+    const { data: topLevel, error: topErr } = await supabaseAdmin
       .storage
       .from(PHOTOS_BUCKET)
       .list(inspectionId, { limit: 1000 });
-    if (listErr) throw listErr;
+    if (topErr) throw topErr;
 
-    const allNames = (objects || []).map((o) => o.name);
-    const pdfExists = allNames.includes('report.pdf');
+    const pdfExists = (topLevel || []).some((o) => o.name === 'report.pdf' && o.id);
 
     // Fall back to regenerating the PDF if it's missing.
     if (!pdfExists) {
@@ -258,7 +292,7 @@ router.get('/:id/files', requireAuth, async (req, res) => {
       if (uploadErr) throw uploadErr;
     }
 
-    const photoNames = allNames.filter((n) => n !== 'report.pdf');
+    const photoRelPaths = await listAllPhotoPaths(inspectionId);
 
     const pdfPath = `${inspectionId}/report.pdf`;
     const { data: pdfSigned, error: pdfSignErr } = await supabaseAdmin
@@ -268,14 +302,14 @@ router.get('/:id/files', requireAuth, async (req, res) => {
     if (pdfSignErr) throw pdfSignErr;
 
     const photos = [];
-    for (const name of photoNames) {
-      const path = `${inspectionId}/${name}`;
+    for (const rel of photoRelPaths) {
+      const path = `${inspectionId}/${rel}`;
       const { data: signed, error: signErr } = await supabaseAdmin
         .storage
         .from(PHOTOS_BUCKET)
         .createSignedUrl(path, PDF_SIGNED_URL_TTL_SECONDS);
       if (signErr) continue;
-      photos.push({ name, url: signed.signedUrl });
+      photos.push({ name: rel, url: signed.signedUrl });
     }
 
     res.json({ pdfUrl: pdfSigned.signedUrl, photos });
@@ -300,17 +334,9 @@ router.get('/:id/photos.zip', requireAuth, async (req, res) => {
   }
 
   try {
-    const { data: objects, error: listErr } = await supabaseAdmin
-      .storage
-      .from(PHOTOS_BUCKET)
-      .list(inspectionId, { limit: 1000 });
-    if (listErr) throw listErr;
+    const photoRelPaths = await listAllPhotoPaths(inspectionId);
 
-    const photoNames = (objects || [])
-      .map((o) => o.name)
-      .filter((n) => n !== 'report.pdf');
-
-    if (photoNames.length === 0) {
+    if (photoRelPaths.length === 0) {
       return res.status(404).json({ error: 'No photos for this inspection' });
     }
 
@@ -328,8 +354,8 @@ router.get('/:id/photos.zip', requireAuth, async (req, res) => {
     });
     archive.pipe(res);
 
-    for (const name of photoNames) {
-      const path = `${inspectionId}/${name}`;
+    for (const rel of photoRelPaths) {
+      const path = `${inspectionId}/${rel}`;
       const { data: blob, error: dlErr } = await supabaseAdmin
         .storage
         .from(PHOTOS_BUCKET)
@@ -339,7 +365,7 @@ router.get('/:id/photos.zip', requireAuth, async (req, res) => {
         continue;
       }
       const arrayBuf = await blob.arrayBuffer();
-      archive.append(Buffer.from(arrayBuf), { name });
+      archive.append(Buffer.from(arrayBuf), { name: rel });
     }
 
     await archive.finalize();

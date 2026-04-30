@@ -138,5 +138,58 @@ const UPSELL_ITEMS = [
   { name: 'up_ground',  label: 'Grounding / bonding correction' },
 ];
 
+// Industry-standard photo prompts per section. Shown to the tech inside each
+// section so they remember what to capture before submitting.
+const PHOTO_PROMPTS = {
+  mp: [
+    'Dead front cover removed',
+    'Panel label/directory',
+    'Main breaker',
+    'Bus bars & wiring',
+    'Grounding/bonding connections',
+    'Any deficiencies found',
+  ],
+  sp: [
+    'Dead front cover removed',
+    'Panel label/directory',
+    'Main breaker',
+    'Bus bars & wiring',
+    'Grounding/bonding connections',
+    'Any deficiencies found',
+  ],
+  svc: [
+    'Weatherhead & mast',
+    'Meter base & socket',
+    'Service entrance cable',
+    'Grounding electrode system',
+    'Disconnect switch',
+    'Any deficiencies found',
+  ],
+  gw: [
+    'Sample outlets tested (show tester)',
+    'GFCI outlets tested',
+    'Open junction boxes',
+    'Any deficiencies found',
+  ],
+  sm: [
+    'Detector locations',
+    'Missing or expired units',
+    'Test results',
+  ],
+  ac: [
+    'Junction boxes',
+    'Wiring methods visible',
+    'Any hazards found',
+  ],
+  hv: [
+    'A/C disconnect switch',
+    'A/C unit wiring',
+    'Furnace disconnect',
+    'Furnace wiring',
+    'Any deficiencies found',
+  ],
+};
+
 window.INSPECTION_ROW_GROUPS = ROW_GROUPS;
 window.INSPECTION_UPSELL_ITEMS = UPSELL_ITEMS;
+window.INSPECTION_PHOTO_PROMPTS = PHOTO_PROMPTS;
