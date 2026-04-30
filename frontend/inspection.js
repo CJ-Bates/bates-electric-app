@@ -166,7 +166,20 @@
         empty = true;
       },
       isEmpty: () => empty,
-      toDataURL: () => (empty ? null : canvas.toDataURL('image/jpeg', 0.6)),
+      // Flatten onto a white canvas before exporting. JPEG has no alpha, so a
+      // transparent canvas would otherwise be encoded with a black background
+      // (which then shows up behind the signature in the PDF).
+      toDataURL: () => {
+        if (empty) return null;
+        const tmp = document.createElement('canvas');
+        tmp.width = canvas.width;
+        tmp.height = canvas.height;
+        const tctx = tmp.getContext('2d');
+        tctx.fillStyle = '#ffffff';
+        tctx.fillRect(0, 0, tmp.width, tmp.height);
+        tctx.drawImage(canvas, 0, 0);
+        return tmp.toDataURL('image/jpeg', 0.6);
+      },
       restoreFromDataURL: (dataUrl) => {
         if (!dataUrl) return;
         const img = new Image();
