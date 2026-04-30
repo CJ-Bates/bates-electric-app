@@ -1824,6 +1824,25 @@ input:focus-visible {
   flex-shrink: 0;
   cursor: pointer;
 }
+.upsell-item .upsell-label { flex: 1; }
+.upsell-item .auto-badge {
+  display: none;
+  margin-left: 6px;
+  padding: 2px 7px;
+  background: #F5B700;
+  color: #0B2545;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.upsell-item.auto-checked {
+  background: rgba(245,183,0,0.10);
+  border-color: rgba(245,183,0,0.35);
+}
+.upsell-item.auto-checked .auto-badge { display: inline-block; }
 
 /* Photos */
 .photo-grid {
@@ -3366,6 +3385,10 @@ html.dark .upsell-item {
 html.dark .upsell-item:hover {
   background: rgba(255,255,255,0.08);
   border-color: rgba(255,255,255,0.16);
+}
+html.dark .upsell-item.auto-checked {
+  background: rgba(245,183,0,0.14);
+  border-color: rgba(245,183,0,0.45);
 }
 html.dark .photo-thumb,
 html.dark .sig-canvas,

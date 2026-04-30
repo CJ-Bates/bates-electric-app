@@ -103,9 +103,103 @@
     grid.innerHTML = UPSELL_ITEMS.map((it) => `
       <label class="upsell-item">
         <input type="checkbox" name="${it.name}" value="${it.label}">
-        <span>${it.label}</span>
+        <span class="upsell-label">${it.label}</span>
+        <span class="auto-badge" aria-hidden="true">Auto</span>
       </label>
     `).join('');
+  }
+
+  // ---------- auto-recommendations ----------
+  // Suggestions ride on top of the form: when an answer indicates a problem,
+  // we auto-check the matching upsell so techs don't miss obvious follow-ups.
+  // The tech can always uncheck — that's recorded in `dismissed` so we don't
+  // re-suggest after they've said no.
+  const AUTO_RULES = [
+    { upsell: 'up_panel',   when: (d) => d.mp_obs === 'Y' || d.sp_obs === 'Y'
+                                       || d.mp_rating === 'Hazard' || d.sp_rating === 'Hazard'
+                                       || d.mp_cond === 'Poor' || d.sp_cond === 'Poor' },
+    { upsell: 'up_gfci',    when: (d) => d.mp_gfci === 'N' || d.sp_gfci === 'N'
+                                       || d.gw_q01 === 'N' || d.gw_q09 === 'N' || d.gw_q02 === 'N' },
+    { upsell: 'up_afci',    when: (d) => d.mp_afci === 'N' || d.sp_afci === 'N' || d.gw_q10 === 'N' },
+    { upsell: 'up_surge',   when: (d) => d.mp_surge === 'N' || d.mp_surge2 === 'N'
+                                       || d.sp_surge === 'N' || d.sp_surge2 === 'N' },
+    { upsell: 'up_ground',  when: (d) => d.mp_ground === 'N' || d.sp_ground === 'N' || d.svc_q07 === 'N' },
+    { upsell: 'up_alum',    when: (d) => d.mp_wiretype === 'Aluminum' || d.sp_wiretype === 'Aluminum' },
+    { upsell: 'up_label',   when: (d) => d.mp_labeled === 'N' || d.sp_labeled === 'N' },
+    { upsell: 'up_svc',     when: (d) => d.svc_rating === 'Hazard' },
+    { upsell: 'up_outdoor', when: (d) => d.gw_q02 === 'N' },
+    { upsell: 'up_covers',  when: (d) => d.gw_q03 === 'N' },
+    { upsell: 'up_smoke',   when: (d) => d.sm_q01 === 'N' || d.sm_q02 === 'N' || d.sm_q03 === 'N' },
+    { upsell: 'up_co',      when: (d) => d.sm_q04 === 'N' },
+  ];
+
+  // Names this run's rules currently want checked. Visual badge follows this.
+  const autoSet = new Set();
+  // Names the tech explicitly unchecked after we auto-checked them. Sticky:
+  // we won't re-suggest until the tech checks the box manually again.
+  const dismissed = new Set();
+
+  function upsellCheckbox(name) {
+    return document.querySelector(`#upsell-grid input[type="checkbox"][name="${name}"]`);
+  }
+
+  function setAutoBadge(name, on) {
+    const cb = upsellCheckbox(name);
+    if (!cb) return;
+    const label = cb.closest('.upsell-item');
+    if (!label) return;
+    label.classList.toggle('auto-checked', on);
+  }
+
+  function updateAutoRecommendations() {
+    const data = collectFields();
+    const desired = new Set();
+    for (const rule of AUTO_RULES) {
+      if (rule.when(data)) desired.add(rule.upsell);
+    }
+
+    for (const item of UPSELL_ITEMS) {
+      const name = item.name;
+      const cb = upsellCheckbox(name);
+      if (!cb) continue;
+
+      if (desired.has(name) && !dismissed.has(name)) {
+        if (!cb.checked) {
+          cb.checked = true;
+        }
+        autoSet.add(name);
+        setAutoBadge(name, true);
+      } else if (autoSet.has(name) && !desired.has(name)) {
+        // Rule used to fire and we'd auto-checked it; rule no longer applies.
+        cb.checked = false;
+        autoSet.delete(name);
+        setAutoBadge(name, false);
+      }
+    }
+  }
+
+  function attachUpsellListeners() {
+    for (const item of UPSELL_ITEMS) {
+      const cb = upsellCheckbox(item.name);
+      if (!cb) continue;
+      cb.addEventListener('change', () => {
+        const name = item.name;
+        if (!cb.checked) {
+          // Tech is rejecting a suggestion. Remember that so we don't re-add it.
+          if (autoSet.has(name)) {
+            dismissed.add(name);
+            autoSet.delete(name);
+            setAutoBadge(name, false);
+          }
+          // If they uncheck a manual check (not auto), nothing to track.
+        } else {
+          // Re-engaging auto management — clear the dismissal so future rule
+          // fires can re-suggest naturally. The badge itself is owned by
+          // updateAutoRecommendations and gets set on the next change.
+          dismissed.delete(name);
+        }
+      });
+    }
   }
 
   // ---------- signature canvases ----------
@@ -467,6 +561,7 @@
     form.addEventListener('input', scheduleSave);
     form.addEventListener('change', scheduleSave);
     form.addEventListener('change', evaluateConditionals);
+    form.addEventListener('change', updateAutoRecommendations);
   }
 
   function clearDraft() {
@@ -756,6 +851,10 @@
       clearDraft();
       Object.values(signatures).forEach((s) => s.clear());
       clearAllSectionPhotos();
+      autoSet.forEach((n) => setAutoBadge(n, false));
+      autoSet.clear();
+      dismissed.clear();
+      evaluateConditionals();
       showStatus('Inspection reset.', 'info');
     });
 
@@ -780,10 +879,12 @@
   // ---------- init ----------
   renderRows();
   renderUpsell();
+  attachUpsellListeners();
   initSignatures();
   initSectionPhotos();
   restoreDraft();
   evaluateConditionals();
+  updateAutoRecommendations();
   attachAutosave();
   wireActions();
 })();
