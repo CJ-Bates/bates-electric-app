@@ -2692,6 +2692,286 @@ input:focus-visible {
 }
 
 /* ============================================================
+   CONTACTS PAGE
+   Theme-aware: colors come from CSS variables, so a future theme
+   change to --accent / --bg-* / --text-* / --glass-border flows
+   through here automatically. The only hard-coded colors are the
+   semantic emergency-red and copied-success-green palettes.
+   ============================================================ */
+
+.contacts-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 0 18px;
+}
+
+.contacts-search-icon {
+  position: absolute;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  pointer-events: none;
+  color: var(--text-tertiary);
+  z-index: 1;
+}
+
+.contacts-search-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px 0 40px;
+  background: #FFFFFF;
+  border: 0.5px solid var(--glass-border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+}
+.contacts-search-input::placeholder { color: var(--text-tertiary); }
+.contacts-search-input:focus-visible {
+  border-color: rgba(27,45,91,0.22);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.contacts-empty {
+  margin: 4px 2px 16px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 0.5px dashed var(--glass-border);
+  border-radius: 12px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.contacts-section {
+  margin-bottom: 22px;
+  animation: contactsFadeIn 0.45s cubic-bezier(.2,.8,.2,1) both;
+}
+.contacts-section[hidden] { display: none; }
+.contacts-section:nth-of-type(1) { animation-delay: 0.02s; }
+.contacts-section:nth-of-type(2) { animation-delay: 0.06s; }
+.contacts-section:nth-of-type(3) { animation-delay: 0.10s; }
+.contacts-section:nth-of-type(4) { animation-delay: 0.14s; }
+.contacts-section:nth-of-type(5) { animation-delay: 0.18s; }
+
+@keyframes contactsFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.contacts-section-title {
+  margin: 0 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-tertiary);
+}
+
+.contact-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: #FFFFFF;
+  border: 0.5px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.05), 0 1px 2px rgba(15,23,42,0.04);
+  text-decoration: none;
+  color: var(--text-primary);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+a.contact-card { cursor: pointer; }
+
+a.contact-card:hover,
+a.contact-card:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(27,45,91,0.16);
+  box-shadow: 0 6px 18px -4px rgba(27,45,91,0.16);
+  outline: none;
+}
+
+.contact-card--detail {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.contact-card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.contact-card--emergency {
+  background: linear-gradient(180deg, rgba(220,38,38,0.06) 0%, rgba(220,38,38,0.02) 100%);
+  border-color: rgba(220,38,38,0.20);
+  box-shadow:
+    0 1px 3px rgba(220,38,38,0.08),
+    0 8px 22px -10px rgba(220,38,38,0.30);
+}
+.contact-card--emergency:hover,
+.contact-card--emergency:focus-visible {
+  border-color: rgba(220,38,38,0.32);
+  box-shadow:
+    0 1px 3px rgba(220,38,38,0.10),
+    0 12px 28px -10px rgba(220,38,38,0.40);
+}
+.contact-card--emergency .contact-name { color: #B91C1C; }
+.contact-card--emergency .contact-role { color: rgba(185,28,28,0.78); }
+
+.contact-avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(27,45,91,0.10), rgba(37,99,235,0.10));
+  border: 0.5px solid var(--glass-border);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.contact-avatar--brand {
+  background: #FFFFFF;
+  padding: 4px;
+}
+
+.contact-avatar--emergency {
+  background: linear-gradient(135deg, #DC2626, #B91C1C);
+  border-color: rgba(185,28,28,0.32);
+  color: #FFFFFF;
+  box-shadow: 0 6px 16px -4px rgba(220,38,38,0.40);
+}
+
+.contact-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.contact-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--text-primary);
+}
+
+.contact-role {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.contact-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  word-break: break-word;
+}
+.contact-meta svg { flex-shrink: 0; opacity: 0.8; }
+
+.contact-cta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(220,38,38,0.10);
+  color: #B91C1C;
+}
+
+.contact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--glass-border);
+}
+
+.contact-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 0.5px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.05s;
+  -webkit-tap-highlight-color: transparent;
+}
+.contact-action svg { color: var(--accent); }
+.contact-action:hover {
+  background: var(--bg-tertiary);
+  border-color: rgba(27,45,91,0.16);
+}
+.contact-action:active { transform: scale(0.98); }
+.contact-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.contact-action.copied {
+  background: rgba(22,163,74,0.10);
+  border-color: rgba(22,163,74,0.28);
+  color: #16A34A;
+}
+.contact-action.copied svg { color: #16A34A; }
+
+.contacts-toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(96px, calc(76px + env(safe-area-inset-bottom)));
+  transform: translateX(-50%) translateY(8px);
+  padding: 10px 16px;
+  background: rgba(15,20,32,0.92);
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+  box-shadow: 0 10px 28px rgba(15,20,32,0.30);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 200;
+}
+.contacts-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (max-width: 380px) {
+  .contact-name { font-size: 15px; }
+  .contact-actions { gap: 6px; }
+  .contact-action { padding: 7px 10px; font-size: 12px; }
+}
+
+/* ============================================================
    DARK MODE (applied via `html.dark`)
    Overrides the core CSS variables so the rest of the app
    (which draws from these vars) flips automatically.
@@ -2787,6 +3067,58 @@ html.dark .brand-mark {
   border-color: rgba(255,255,255,0.10);
 }
 html.dark .legal { border-top-color: var(--glass-border); }
+
+/* ---- Contacts ---- */
+html.dark .contact-card {
+  background: var(--bg-secondary);
+  border-color: var(--glass-border);
+}
+html.dark a.contact-card:hover,
+html.dark a.contact-card:focus-visible {
+  border-color: rgba(127,163,255,0.30);
+  box-shadow: 0 6px 18px -4px rgba(0,0,0,0.45);
+}
+html.dark .contact-card--emergency {
+  background: linear-gradient(180deg, rgba(248,113,113,0.10) 0%, rgba(248,113,113,0.04) 100%);
+  border-color: rgba(248,113,113,0.30);
+}
+html.dark .contact-card--emergency:hover,
+html.dark .contact-card--emergency:focus-visible {
+  border-color: rgba(248,113,113,0.45);
+  box-shadow: 0 12px 28px -10px rgba(220,38,38,0.45);
+}
+html.dark .contact-card--emergency .contact-name { color: #FCA5A5; }
+html.dark .contact-card--emergency .contact-role { color: rgba(252,165,165,0.78); }
+html.dark .contact-cta {
+  background: rgba(248,113,113,0.16);
+  color: #FCA5A5;
+}
+html.dark .contact-avatar {
+  background: linear-gradient(135deg, rgba(127,163,255,0.18), rgba(127,163,255,0.08));
+}
+html.dark .contact-avatar--brand {
+  background: var(--bg-tertiary);
+}
+html.dark .contact-action {
+  background: rgba(255,255,255,0.04);
+}
+html.dark .contact-action:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(127,163,255,0.30);
+}
+html.dark .contact-action.copied {
+  background: rgba(34,197,94,0.14);
+  border-color: rgba(34,197,94,0.34);
+  color: #4ADE80;
+}
+html.dark .contact-action.copied svg { color: #4ADE80; }
+html.dark .contacts-empty {
+  background: rgba(255,255,255,0.03);
+}
+html.dark .contacts-toast {
+  background: rgba(230,234,242,0.95);
+  color: #0F1420;
+}
 
 /* ---- Inputs (universal) ---- */
 html.dark input[type="email"],
