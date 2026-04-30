@@ -77,7 +77,6 @@ const JOB_FIELDS = [
   ['Email', 'job_email'],
   ['Year Built', 'job_yr'],
   ['Property Type', 'job_type'],
-  ['# Photos', 'job_photos'],
 ];
 
 module.exports = { SECTIONS, UPSELL_NAMES, JOB_FIELDS };

@@ -40,10 +40,18 @@
     return map[v] || '';
   }
 
+  // Rows can declare `showIf: { name, equals }`. The renderer drops the
+  // condition onto the wrapper as data-* and `evaluateConditionals()` toggles
+  // visibility based on the current radio selection.
+  function condAttrs(row) {
+    if (!row.showIf) return '';
+    return ` data-show-if-name="${row.showIf.name}" data-show-if-equals="${row.showIf.equals}"`;
+  }
+
   function rowHTML(row) {
     if (row.inputType === 'text') {
       return `
-        <div class="insp-row">
+        <div class="insp-row"${condAttrs(row)}>
           <div class="insp-row-q">${row.q}</div>
           <div class="insp-row-ctrl"><input type="text" name="${row.name}" class="insp-row-input"></div>
         </div>`;
@@ -51,10 +59,35 @@
     const chips = row.opts.map((v) => radioChip(row.name, v, classForOption(v))).join('');
     const sub = row.sub ? `<span class="insp-row-sub">${row.sub}</span>` : '';
     return `
-      <div class="insp-row">
+      <div class="insp-row"${condAttrs(row)}>
         <div class="insp-row-q">${row.q}${sub}</div>
         <div class="insp-row-ctrl"><div class="radio-group">${chips}</div></div>
       </div>`;
+  }
+
+  // Show/hide rows that declared a `showIf` condition. Cleared inputs in a
+  // hidden row are blanked so we don't ship stale values on submit.
+  function evaluateConditionals() {
+    const form = document.getElementById('inspection-form');
+    document.querySelectorAll('[data-show-if-name]').forEach((row) => {
+      const name = row.getAttribute('data-show-if-name');
+      const want = row.getAttribute('data-show-if-equals');
+      const els = form.elements[name];
+      let current = '';
+      if (els) {
+        if (els.length) {
+          for (const el of els) if (el.checked) { current = el.value; break; }
+        } else {
+          current = els.value || '';
+        }
+      }
+      const show = current === want;
+      row.hidden = !show;
+      if (!show) {
+        row.querySelectorAll('input[type="text"]').forEach((i) => { i.value = ''; });
+        row.querySelectorAll('input[type="radio"]').forEach((i) => { i.checked = false; });
+      }
+    });
   }
 
   function renderRows() {
@@ -164,11 +197,17 @@
   // ---------- photos ----------
   // Thumbnails are local previews only; File objects are kept in
   // `sectionPhotos[sectionKey]` and uploaded to Supabase Storage on submit.
+  // Auto-retrigger: after a photo is selected we re-open the picker so the tech
+  // can keep snapping. The "Done adding photos" button (shown once at least one
+  // photo exists) opts out of that loop for the section.
+  const autoRetrigger = {};
+
   function initSectionPhotos() {
     const prompts = window.INSPECTION_PHOTO_PROMPTS || {};
     document.querySelectorAll('[data-photo-section]').forEach((block) => {
       const key = block.getAttribute('data-photo-section');
       sectionPhotos[key] = sectionPhotos[key] || [];
+      autoRetrigger[key] = true;
 
       const promptEl = block.querySelector('.section-photo-prompts');
       const list = prompts[key] || [];
@@ -180,9 +219,30 @@
 
       const grid = block.querySelector('.photo-grid');
       const input = block.querySelector('input[type="file"]');
+      const addBtn = block.querySelector('.photo-add');
       if (!grid || !input) return;
 
+      // "Done adding photos" — created once, inserted after the Add button.
+      const doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = 'btn-text photo-done';
+      doneBtn.textContent = 'Done adding photos';
+      doneBtn.hidden = true;
+      doneBtn.addEventListener('click', () => {
+        autoRetrigger[key] = false;
+        doneBtn.hidden = true;
+      });
+      if (addBtn && addBtn.parentNode) {
+        addBtn.parentNode.insertBefore(doneBtn, addBtn.nextSibling);
+      }
+
+      const refreshDoneBtn = () => {
+        const hasPhotos = sectionPhotos[key].length > 0;
+        doneBtn.hidden = !(hasPhotos && autoRetrigger[key]);
+      };
+
       input.addEventListener('change', (e) => {
+        const added = e.target.files.length;
         for (const file of e.target.files) {
           const url = URL.createObjectURL(file);
           const entry = { file, url };
@@ -195,10 +255,17 @@
             const idx = sectionPhotos[key].indexOf(entry);
             if (idx !== -1) sectionPhotos[key].splice(idx, 1);
             div.remove();
+            refreshDoneBtn();
           });
           grid.appendChild(div);
         }
         input.value = '';
+        refreshDoneBtn();
+        // Re-open the picker so multiple shots can be added in a row. The user
+        // cancels the picker (or clicks "Done adding photos") to break out.
+        if (added > 0 && autoRetrigger[key]) {
+          setTimeout(() => input.click(), 0);
+        }
       });
     });
   }
@@ -207,9 +274,13 @@
     for (const key of Object.keys(sectionPhotos)) {
       for (const p of sectionPhotos[key]) URL.revokeObjectURL(p.url);
       sectionPhotos[key].length = 0;
+      autoRetrigger[key] = true;
     }
     document.querySelectorAll('[data-photo-section] .photo-grid').forEach((g) => {
       g.innerHTML = '';
+    });
+    document.querySelectorAll('[data-photo-section] .photo-done').forEach((b) => {
+      b.hidden = true;
     });
   }
 
@@ -379,6 +450,7 @@
     const form = document.getElementById('inspection-form');
     form.addEventListener('input', scheduleSave);
     form.addEventListener('change', scheduleSave);
+    form.addEventListener('change', evaluateConditionals);
   }
 
   function clearDraft() {
@@ -535,7 +607,6 @@
 <tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Email:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${custEmail}</td></tr>
 <tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Year Built:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_yr || ''}</td></tr>
 <tr><td style="padding: 6px; border: 1px solid #ddd;"><strong>Property Type:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_type || ''}</td></tr>
-<tr><td style="padding: 6px; border: 1px solid #ddd;"><strong># Photos:</strong></td><td style="padding: 6px; border: 1px solid #ddd;">${d.job_photos || ''}</td></tr>
 </table>
     `;
 
@@ -678,6 +749,7 @@
   initSignatures();
   initSectionPhotos();
   restoreDraft();
+  evaluateConditionals();
   attachAutosave();
   wireActions();
 })();

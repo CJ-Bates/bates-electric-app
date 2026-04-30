@@ -1710,6 +1710,7 @@ input:focus-visible {
   flex-wrap: wrap;
 }
 .insp-row:first-child { border-top: 0; }
+.insp-row[hidden] { display: none; }
 
 .insp-row-q {
   flex: 1 1 260px;
@@ -1776,7 +1777,7 @@ input:focus-visible {
 /* Selected states */
 .radio-opt.r-y    input:checked + .radio-chip { background: #2563EB; border-color: #2563EB; color: #fff; }
 .radio-opt.r-n    input:checked + .radio-chip { background: #FF6B35; border-color: #FF6B35; color: #fff; }
-.radio-opt.r-na   input:checked + .radio-chip { background: #EDF0F5; border-color: rgba(27,45,91,0.12); color: var(--text-secondary); }
+.radio-opt.r-na   input:checked + .radio-chip { background: #9E9E9E; border-color: #9E9E9E; color: #fff; }
 .radio-opt.r-good input:checked + .radio-chip { background: #2563EB; border-color: #2563EB; color: #fff; }
 .radio-opt.r-fair input:checked + .radio-chip { background: var(--accent); border-color: var(--accent); color: #fff; }
 .radio-opt.r-poor input:checked + .radio-chip { background: #DC2626; border-color: #DC2626; color: #fff; }
@@ -1907,6 +1908,17 @@ input:focus-visible {
   color: var(--text-secondary);
 }
 .section-photo-prompts:empty { display: none; }
+.photo-done {
+  margin: 0 18px 18px;
+  padding: 10px 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.photo-done:hover { color: var(--text-primary); }
 
 /* Signatures */
 .sig-pair {
@@ -3048,7 +3060,11 @@ html.dark .radio-opt:hover .radio-chip {
   background: rgba(255,255,255,0.08);
   border-color: rgba(255,255,255,0.16);
 }
-html.dark .radio-opt.r-na input:checked + .radio-chip,
+html.dark .radio-opt.r-na input:checked + .radio-chip {
+  background: #9E9E9E;
+  border-color: #9E9E9E;
+  color: #0F1420;
+}
 html.dark .radio-opt.r-al input:checked + .radio-chip {
   background: rgba(255,255,255,0.10);
   border-color: rgba(255,255,255,0.18);

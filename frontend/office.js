@@ -213,7 +213,6 @@
           <tr><td><strong>Technician:</strong></td><td>${data.job_tech || 'N/A'}</td></tr>
           <tr><td><strong>Year Built:</strong></td><td>${data.job_yr || 'N/A'}</td></tr>
           <tr><td><strong>Property Type:</strong></td><td>${data.job_type || 'N/A'}</td></tr>
-          <tr><td><strong># Photos:</strong></td><td>${data.job_photos || 'N/A'}</td></tr>
         </table>
       `;
 
