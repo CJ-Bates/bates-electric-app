@@ -87,33 +87,51 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(16px, env(safe-area-inset-top)) 16px
-           max(16px, env(safe-area-inset-bottom));
+  padding: max(24px, env(safe-area-inset-top)) 20px
+           max(24px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(900px 620px at 12% -10%, rgba(27,45,91,0.10), transparent 60%),
+    radial-gradient(800px 600px at 110% 110%, rgba(37,99,235,0.07), transparent 55%),
+    var(--bg-primary);
 }
 
 .auth-shell,
 .login-card {
   width: 100%;
-  max-width: 420px;
-  background: #FFFFFF;
-  border: 0.5px solid rgba(27,45,91,0.08);
-  border-radius: 20px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-  padding: 28px 24px 24px;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
 }
 
 .auth-card {
-  background: inherit;
-  border: inherit;
-  border-radius: inherit;
-  padding: 0;
+  position: relative;
+  background: #FFFFFF;
+  border: 0.5px solid rgba(27,45,91,0.06);
+  border-radius: 24px;
+  padding: 36px 32px 28px;
+  box-shadow:
+    0 1px 2px rgba(15,23,42,0.04),
+    0 12px 32px -8px rgba(27,45,91,0.16),
+    0 28px 60px -22px rgba(27,45,91,0.20);
+  overflow: hidden;
+}
+
+.auth-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(27,45,91,0.55) 30%,
+    rgba(37,99,235,0.55) 70%,
+    transparent 100%);
 }
 
 @media (max-width: 400px) {
-  .auth-shell,
-  .login-card {
-    padding: 24px 18px 20px;
-    border-radius: 16px;
+  .auth-card {
+    padding: 28px 20px 22px;
+    border-radius: 20px;
   }
 }
 
@@ -155,20 +173,22 @@ body {
 
 .brand {
   text-align: center;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .brand-mark {
-  width: 60px;
-  height: 60px;
-  margin: 0 auto 12px;
-  border-radius: 14px;
-  background: rgba(27,45,91,0.06);
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: 16px;
+  background: #FFFFFF;
   border: 1px solid rgba(27,45,91,0.10);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.04),
+    0 10px 24px -8px rgba(27,45,91,0.25);
 }
 
 .bolt {
@@ -179,16 +199,16 @@ body {
 
 .brand h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.4px;
   color: var(--text-primary);
 }
 
 .tagline {
   margin: 6px 0 0;
   color: var(--text-secondary);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -317,23 +337,28 @@ input:focus-visible {
 .forgot:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
 
 .btn-primary {
-  margin-top: 4px;
+  margin-top: 6px;
   width: 100%;
-  height: 48px;
+  height: 50px;
   border: 0;
   border-radius: 12px;
-  background: #1B2D5B;
+  background: linear-gradient(180deg, #243A6F 0%, #1B2D5B 100%);
   color: #FFFFFF;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: -0.2px;
+  letter-spacing: 0.1px;
   cursor: pointer;
-  transition: transform 0.05s, box-shadow 0.15s;
-  box-shadow: 0 2px 8px rgba(27,45,91,0.12);
+  transition: transform 0.05s, box-shadow 0.15s, filter 0.15s;
+  box-shadow:
+    0 6px 16px -4px rgba(27,45,91,0.32),
+    inset 0 1px 0 rgba(255,255,255,0.10);
 }
 
 .btn-primary:hover {
-  box-shadow: 0 4px 12px rgba(27,45,91,0.2);
+  filter: brightness(1.06);
+  box-shadow:
+    0 10px 22px -4px rgba(27,45,91,0.40),
+    inset 0 1px 0 rgba(255,255,255,0.12);
 }
 
 .btn-primary:active {
@@ -438,8 +463,9 @@ input:focus-visible {
 
 @media (min-width: 900px) {
   .auth-shell,
-  .login-card { max-width: 520px; padding: 48px 44px 32px; }
-  .brand h1 { font-size: 32px; }
+  .login-card { max-width: 460px; }
+  .auth-card { padding: 44px 40px 32px; }
+  .brand h1 { font-size: 30px; }
 }
 
 /* ============================================================
@@ -2669,6 +2695,13 @@ html.dark body {
     var(--bg-primary);
 }
 
+html.dark .auth-body {
+  background:
+    radial-gradient(900px 620px at 12% -10%, rgba(127,163,255,0.12), transparent 60%),
+    radial-gradient(800px 600px at 110% 110%, rgba(127,163,255,0.08), transparent 55%),
+    var(--bg-primary);
+}
+
 /* ---- Hub body: replace bright blue gradient with a deep dark mesh ---- */
 html.dark .hub-body {
   background:
@@ -2684,7 +2717,7 @@ html.dark .hub-blob { opacity: 0.45; filter: blur(85px); }
 html.dark .glass-card,
 html.dark .app-topbar,
 html.dark .shared-drawer,
-html.dark .auth-shell,
+html.dark .auth-card,
 html.dark .login-card,
 html.dark .hub-header,
 html.dark .tile,
@@ -2696,6 +2729,13 @@ html.dark .toc-list,
 html.dark .sds-card {
   background: var(--bg-secondary);
   border-color: var(--glass-border);
+}
+html.dark .auth-card::before {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(127,163,255,0.45) 30%,
+    rgba(127,163,255,0.55) 70%,
+    transparent 100%);
 }
 html.dark .app-topbar {
   background: rgba(15,20,32,0.7);
