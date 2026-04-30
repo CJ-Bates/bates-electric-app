@@ -242,6 +242,24 @@
     </form>
   </main>
 
+  <div id="submit-success-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="submit-success-title" hidden>
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="max-width: 420px; align-self: center;">
+      <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+        <h2 id="submit-success-title" style="display: flex; align-items: center; gap: 10px;">
+          <span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(22,163,74,0.12); color: #16A34A; font-weight: 800;">✓</span>
+          Inspection Submitted
+        </h2>
+      </div>
+      <div class="modal-body" id="submit-success-message" style="font-size: 15px;">
+        Your inspection has been submitted successfully.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-primary" id="submit-success-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+
   <script src="inspection-fields.js"></script>
   <script src="inspection.js"></script>
   <script src="shared-nav.js"></script>
