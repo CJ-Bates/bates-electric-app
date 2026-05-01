@@ -1,6 +1,6 @@
 const express = require('express');
 const archiver = require('archiver');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { buildInspectionPdf } = require('../lib/buildPdf');
@@ -11,15 +11,10 @@ const PDF_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 const router = express.Router();
 
-// Initialize Gmail SMTP transport via Nodemailer
-const gmailUser = process.env.GMAIL_USER;
-const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
-const transporter = (gmailUser && gmailAppPassword)
-  ? nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: gmailUser, pass: gmailAppPassword },
-    })
-  : null;
+// Initialize SendGrid email (HTTPS-based — works on Render free tier)
+const sendgridKey = process.env.SENDGRID_API_KEY;
+if (sendgridKey) sgMail.setApiKey(sendgridKey);
+const emailFrom = process.env.GMAIL_USER || 'inspections.bateselectric@gmail.com';
 
 // Pulls the indexed columns out of the form blob so the office dashboard
 // can filter fast. Everything else stays in `data`.
@@ -68,7 +63,7 @@ router.post('/', requireAuth, async (req, res) => {
     });
   }
 
-  if (row.status === 'submitted' && transporter) {
+  if (row.status === 'submitted' && sendgridKey) {
     try {
       const emailBody = buildEmailHTML(data, pdfSignedUrl);
       const custEmail = data.job_email || '';
@@ -81,16 +76,19 @@ router.post('/', requireAuth, async (req, res) => {
         toAddresses.push(custEmail.trim());
       }
 
-      const info = await transporter.sendMail({
-        from: `Bates Electric <${gmailUser}>`,
-        to: toAddresses.join(', '),
+      const msg = {
+        to: toAddresses,
+        from: { email: emailFrom, name: 'Bates Electric' },
         subject: `Bates Electric Safety Inspection — ${custName} — ${date}`,
         html: emailBody,
-      });
+      };
 
-      console.log('Email sent successfully for inspection', inserted.id, '| messageId:', info.messageId);
+      await sgMail.send(msg);
+
+      console.log('Email sent successfully for inspection', inserted.id, '| to:', toAddresses.join(', '));
     } catch (emailErr) {
-      console.error('Failed to send email:', emailErr.message || emailErr);
+      const detail = emailErr.response ? JSON.stringify(emailErr.response.body) : (emailErr.message || emailErr);
+      console.error('Failed to send email:', detail);
       // Don't fail the API response if email fails — the inspection was still created
     }
   }

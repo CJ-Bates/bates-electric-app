@@ -1,17 +1,15 @@
-// Throwaway script: verify the backend can talk to Supabase + Resend.
+// Throwaway script: verify the backend can talk to Supabase + SendGrid.
 // Run from the backend folder:  node scripts/test-connections.js
 // It does NOT send a real email and does NOT write any data.
 
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
-const { Resend } = require('resend');
 
 const required = [
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
-  'GMAIL_USER',
-  'GMAIL_APP_PASSWORD',
+  'SENDGRID_API_KEY',
   'OFFICE_EMAIL',
 ];
 
@@ -68,17 +66,18 @@ const fail = (msg) => { console.log('  FAIL  ' + msg); ok = false; };
     fail('Supabase client threw: ' + e.message);
   }
 
-  console.log('\n3. Gmail SMTP — credentials accepted');
+  console.log('\n3. SendGrid API key check');
   try {
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
-    });
-    await transporter.verify();
-    pass(`Gmail SMTP authenticated as ${process.env.GMAIL_USER}`);
+    const sgMail = require('@sendgrid/mail');
+    const key = process.env.SENDGRID_API_KEY || '';
+    if (key.startsWith('SG.')) {
+      sgMail.setApiKey(key);
+      pass('SendGrid API key is set (starts with SG.)');
+    } else {
+      fail('SENDGRID_API_KEY does not look valid (should start with SG.)');
+    }
   } catch (e) {
-    fail('Gmail SMTP verification failed: ' + e.message);
+    fail('SendGrid check failed: ' + e.message);
   }
 
   console.log('\n=== Result: ' + (ok ? 'ALL GOOD' : 'SOMETHING FAILED') + ' ===\n');
