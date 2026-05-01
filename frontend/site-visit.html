@@ -34,7 +34,7 @@
     </div>
 
     <!-- FORM TAB -->
-    <div id="form-tab-content" style="display: block;">
+    <div id="form-tab-content">
 
       <!-- Section 1: Job Information -->
       <div class="sv-section">
@@ -59,7 +59,7 @@
             <label class="sv-label">Customer Phone</label>
             <input class="sv-input" type="tel" id="sv-phone" placeholder="(xxx) xxx-xxxx">
           </div>
-          <div class="sv-field" style="grid-column: 1 / -1;">
+          <div class="sv-field sv-field--full">
             <label class="sv-label">Property Address *</label>
             <input class="sv-input" type="text" id="sv-address" placeholder="123 Main St, City, MO">
           </div>
@@ -87,9 +87,9 @@
           Scope of Work
         </h3>
         <div class="sv-field-group">
-          <div class="sv-field" style="grid-column: 1 / -1;">
+          <div class="sv-field sv-field--full">
             <label class="sv-label">Service Type(s) Requested *</label>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;" id="sv-scope-tags">
+            <div class="sv-chip-wrap" id="sv-scope-tags">
               <label class="sv-chip"><input type="checkbox" value="Panel Upgrade"> Panel Upgrade</label>
               <label class="sv-chip"><input type="checkbox" value="Service Upgrade"> Service Upgrade</label>
               <label class="sv-chip"><input type="checkbox" value="New Circuits"> New Circuits</label>
@@ -104,7 +104,7 @@
               <label class="sv-chip"><input type="checkbox" value="Other"> Other</label>
             </div>
           </div>
-          <div class="sv-field" style="grid-column: 1 / -1;">
+          <div class="sv-field sv-field--full">
             <label class="sv-label">Describe the Work Requested</label>
             <textarea class="sv-textarea" id="sv-scope-desc" placeholder="What does the customer want done? Any specific requests or concerns?"></textarea>
           </div>
@@ -124,7 +124,7 @@
             <label class="sv-label">Panel Brand / Condition</label>
             <input class="sv-input" type="text" id="sv-panel-brand" placeholder="e.g. Square D, Fair condition">
           </div>
-          <div class="sv-field" style="grid-column: 1 / -1;">
+          <div class="sv-field sv-field--full">
             <label class="sv-label">Access / Site Notes</label>
             <textarea class="sv-textarea" id="sv-access" placeholder="Gate codes, tight spaces, attic access, crawlspace issues, distance from panel to work area..."></textarea>
           </div>
@@ -136,18 +136,18 @@
         <h3 class="sv-section-title">
           <div class="sv-section-num">3</div>
           Required Photos
-          <span style="margin-left: auto; font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.7);" id="sv-photo-count">0 uploaded</span>
+          <span class="sv-photo-count" id="sv-photo-count">0 uploaded</span>
         </h3>
-        <div style="background: rgba(30, 58, 110, 0.05); border-radius: 10px; padding: 10px 14px; margin: 14px; font-size: 12px; color: rgba(15, 31, 61, 0.6); line-height: 1.6;">
+        <div class="sv-photo-section-info">
           These photos are always required. Tap each prompt to add the photo. You can add multiple photos per prompt.
         </div>
-        <div id="sv-photo-prompts" style="display: flex; flex-direction: column; gap: 10px; padding: 0 14px 14px;"></div>
+        <div id="sv-photo-prompts" class="sv-photo-prompts-list"></div>
 
         <!-- Extra photos -->
-        <div style="margin: 14px; padding-top: 14px; border-top: 1px solid rgba(30, 58, 110, 0.1);">
-          <div style="font-size: 13px; font-weight: 600; color: rgba(15, 31, 61, 0.65); margin-bottom: 8px;">Additional Photos / Videos</div>
-          <div id="sv-extra-uploads" style="display: flex; flex-direction: column; gap: 8px;"></div>
-          <button onclick="svAddExtraUpload()" style="width: 100%; margin-top: 8px; padding: 12px; background: rgba(255, 255, 255, 0.7); border: 1px dashed rgba(30, 58, 110, 0.25); border-radius: 12px; font-size: 13px; font-weight: 600; color: rgba(15, 31, 61, 0.55); cursor: pointer; font-family: inherit;">
+        <div class="sv-extra-section">
+          <div class="sv-extra-section-title">Additional Photos / Videos</div>
+          <div id="sv-extra-uploads" class="sv-extra-uploads-list"></div>
+          <button onclick="svAddExtraUpload()" class="sv-extra-add-btn">
             + Add Photo / Video
           </button>
         </div>
@@ -160,9 +160,9 @@
           Tech Notes
         </h3>
         <div class="sv-field-group">
-          <div class="sv-field" style="grid-column: 1 / -1;">
+          <div class="sv-field sv-field--full">
             <label class="sv-label">Observations &amp; Recommendations</label>
-            <textarea class="sv-textarea" id="sv-notes" style="min-height: 120px;" placeholder="Anything the estimator should know - existing issues, unusual conditions, what you think the job will involve..."></textarea>
+            <textarea class="sv-textarea sv-textarea--tall" id="sv-notes" placeholder="Anything the estimator should know - existing issues, unusual conditions, what you think the job will involve..."></textarea>
           </div>
           <div class="sv-field">
             <label class="sv-label">Estimated Complexity</label>
@@ -184,9 +184,9 @@
       </div>
 
       <!-- Submit -->
-      <div style="padding: 0 14px 60px; margin-top: 8px;">
-        <div id="sv-submit-status" style="display: none; padding: 12px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; margin-bottom: 12px;"></div>
-        <button id="sv-submit-btn" onclick="svSubmit()" style="width: 100%; padding: 16px; background: linear-gradient(135deg, rgba(30, 58, 110, 0.9), rgba(15, 31, 61, 0.95)); border: none; border-radius: 14px; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: -0.2px; display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <div class="sv-footer-actions">
+        <div id="sv-submit-status" class="sv-submit-status"></div>
+        <button id="sv-submit-btn" class="sv-submit-btn" onclick="svSubmit()">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           Submit to Estimator
         </button>
@@ -195,12 +195,12 @@
     </div><!-- /form tab -->
 
     <!-- DASHBOARD TAB -->
-    <div id="dash-tab-content" style="display: none; padding-bottom: 60px;">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
-        <div style="font-size: 13px; color: rgba(15, 31, 61, 0.55);" id="sv-dash-count">Loading submissions...</div>
-        <button onclick="svLoadDashboard()" style="background: rgba(30, 58, 110, 0.08); border: 0.5px solid rgba(30, 58, 110, 0.2); border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; color: rgba(15, 31, 61, 0.65); cursor: pointer; font-family: inherit;">Refresh</button>
+    <div id="dash-tab-content" class="sv-dash-tab" style="display: none;">
+      <div class="sv-dash-header">
+        <div class="sv-dash-count" id="sv-dash-count">Loading submissions...</div>
+        <button onclick="svLoadDashboard()" class="sv-dash-refresh-btn">Refresh</button>
       </div>
-      <div id="sv-dash-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+      <div id="sv-dash-list" class="sv-dash-list"></div>
     </div>
 
   </main>
