@@ -26,7 +26,21 @@
       "Bash(node -e \"require\\('./lib/buildPdf'\\); require\\('./lib/inspectionFields'\\); console.log\\('lib OK'\\); process.env.SUPABASE_URL='https://x.supabase.co'; process.env.SUPABASE_ANON_KEY='x'; process.env.SUPABASE_SERVICE_ROLE_KEY='x'; require\\('./routes/inspections'\\); console.log\\('route OK'\\);\")",
       "Bash(ls -la \"c:/Users/cjbates/OneDrive - Bates Electric, Inc/bates-electric-app/frontend/settings.\"*)",
       "Bash(curl -si 'https://veiunqctijuzirvpsqkg.supabase.co/auth/v1/verify?token=53937b2e96f8a06dcac8ec6574e9bf9ab0235976f9127b5c47a402df&type=recovery&redirect_to=http://localhost:3000')",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(node -e \"require\\('./routes/inspections.js'\\); console.log\\('routes/inspections.js loads OK'\\)\")",
+      "Bash(node --check \"C:\\\\Users\\\\cjbates\\\\OneDrive - Bates Electric, Inc\\\\bates-electric-app\\\\backend\\\\routes\\\\inspections.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\cjbates\\\\OneDrive - Bates Electric, Inc\\\\bates-electric-app\\\\frontend\\\\inspection.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\cjbates\\\\OneDrive - Bates Electric, Inc\\\\bates-electric-app\\\\frontend\\\\inspection-fields.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\cjbates\\\\OneDrive - Bates Electric, Inc\\\\bates-electric-app\\\\frontend\\\\office.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\cjbates\\\\OneDrive - Bates Electric, Inc\\\\bates-electric-app\\\\backend\\\\lib\\\\inspectionFields.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\cjbates\\\\OneDrive - Bates Electric, Inc\\\\bates-electric-app\\\\backend\\\\lib\\\\buildPdf.js\")",
+      "Bash(python *)",
+      "Bash(node -e *)",
+      "Bash(awk 'NR==705,NR==886' frontend/inspection.js)",
+      "Bash(node --check frontend/inspection.js)"
     ]
   }
 }
