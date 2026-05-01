@@ -1,12 +1,8 @@
 const express = require('express');
-const { Resend } = require('resend');
 const { supabaseAnon, supabaseAdmin, supabaseForUser } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
-
-const resendApiKey = process.env.RESEND_API_KEY;
-const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 const PROD_ORIGIN = 'https://bates-electric-app.onrender.com';
 
