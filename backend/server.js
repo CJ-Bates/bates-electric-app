@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth');
 const inspectionRoutes = require('./routes/inspections');
 const generatorWebhookRouter = require('./routes/generator-webhook');
 const generatorCareRouter = require('./routes/generator-care');
+const generatorCareCronRouter = require('./routes/generator-care-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,6 +47,7 @@ app.use((err, req, res, next) => {
 });
 
 app.use('/api/generator-care', generatorCareRouter);
+app.use('/api/cron/generator-care', generatorCareCronRouter);
 
 app.listen(PORT, () => {
   console.log(`Bates Electric backend running on port ${PORT}`);
