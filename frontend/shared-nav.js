@@ -106,6 +106,12 @@
    * Inject the navigation HTML into the page
    */
   function injectNavigation() {
+    // Skip if a topbar is already in the DOM (e.g. hardcoded fallback in the page)
+    if (document.querySelector('.app-topbar')) {
+      console.log('[shared-nav] topbar already present, skipping injection');
+      return;
+    }
+    console.log('[shared-nav] injecting topbar');
     const pageTitle = getPageTitle();
     const isOffice = isOfficeRole();
 
