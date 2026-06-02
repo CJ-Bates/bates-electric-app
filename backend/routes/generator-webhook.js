@@ -106,7 +106,9 @@ async function handleSubscriptionCreated(subscription) {
   const today = new Date();
   const monthsAhead = meta.plan === 'semi_annual' ? 6 : 12;
   const next = new Date(today);
-  next.setMonth(next.getMonth() + monthsAhead);
+  // First visit: schedule for signup day so dashboard shows 'needs scheduling now'.
+  // monthsAhead cadence kicks in only after first visit is marked complete.
+  next.setMonth(next.getMonth() + 0);
   const todayStr = today.toISOString().slice(0, 10);
   const nextStr = next.toISOString().slice(0, 10);
 
