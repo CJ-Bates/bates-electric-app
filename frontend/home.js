@@ -34,6 +34,14 @@
     href: 'office.html',
   };
 
+
+  const GENERATOR_FEATURED = {
+    id: 'generator-care',
+    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    title: 'Generator Care',
+    desc: 'Customers + scheduled service visits',
+    href: 'generator-care.html',
+  };
   // Quick links for all users
   const QUICK_LINKS = [
     { id: 'site-visit',    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
@@ -42,7 +50,7 @@
     { id: 'games',         icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1.11 0 2.08-.402 2.592-1.382L9 15h6l1.408 2.618C16.92 18.598 17.89 19 19 19a3 3 0 0 0 3-3c0-1.544-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>', title: 'Games',            desc: 'Safety training',      href: 'games.html' },
   ];
 
-  // WMO weather code → { label, svg }
+  // WMO weather code â { label, svg }
   const WEATHER_ICONS = {
     sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
     cloudSun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m19.07 4.93-1.41 1.41"/><path d="M15.947 12.65a4 4 0 0 0-5.925-4.128"/><path d="M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z"/></svg>',
@@ -121,7 +129,7 @@
   function renderWeather(els, loc, weather) {
     const w = weatherFromCode(weather.code);
     els.iconEl.innerHTML = WEATHER_ICONS[w.icon] || WEATHER_ICONS.cloud;
-    els.tempEl.textContent = `${weather.t}°`;
+    els.tempEl.textContent = `${weather.t}Â°`;
     els.locEl.textContent = loc.city || '';
     els.wrap.title = w.label;
     els.wrap.hidden = false;
@@ -197,7 +205,7 @@
         tempEl: document.getElementById('hero-weather-temp'),
         locEl: document.getElementById('hero-weather-loc'),
       };
-      els.locEl.textContent = 'Locating…';
+      els.locEl.textContent = 'Locatingâ¦';
       await requestFreshLocation(els, { silent: false });
     };
     wrap.addEventListener('click', handler);
@@ -269,6 +277,7 @@
     grid.innerHTML = '';
 
     if (role === 'office') {
+      grid.appendChild(makeFeaturedCard(GENERATOR_FEATURED));
       grid.appendChild(makeFeaturedCard(OFFICE_FEATURED));
       grid.appendChild(makeFeaturedCard({
         ...TECH_FEATURED,
@@ -339,15 +348,6 @@
           card.style.display = '';
         }
       });
-    });
-  }
-
-  // Emergency banner handler
-  const emergencyBanner = document.getElementById('emergency-banner');
-  if (emergencyBanner) {
-    emergencyBanner.addEventListener('click', () => {
-      // Could open a modal with incident response steps
-      alert('Emergency Steps:\\n1. Ensure scene is safe\\n2. Call 911 if needed\\n3. Call office (636) 464-3939\\n4. Administer first aid\\n5. Secure the area\\n6. Document the incident');
     });
   }
 
