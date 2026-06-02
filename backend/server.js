@@ -5,11 +5,15 @@ const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
 const inspectionRoutes = require('./routes/inspections');
+const generatorWebhookRouter = require('./routes/generator-webhook');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+// Stripe webhook must receive raw body for signature verification
+app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), generatorWebhookRouter);
+
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', (req, res) => {
