@@ -109,7 +109,7 @@ router.post('/visits/:id/complete', async (req, res) => {
         subscription_id: sub.id,
         visit_type: 'regular_service',
         scheduled_date: nextStr,
-        status: 'scheduled',
+        status: 'tentative',
       });
     }
 
@@ -159,6 +159,40 @@ router.patch('/subscriptions/:id', async (req, res) => {
     res.json({ ok: true, subscription: updated });
   } catch (err) {
     console.error('[generator-care] subscription patch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// POST /api/generator-care/visits/:id/confirm
+// Promote a tentative visit to scheduled. Optionally update the scheduled_date in the same call.
+router.post('/visits/:id/confirm', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { scheduled_date } = req.body || {};
+
+    const updates = { status: 'scheduled' };
+    if (scheduled_date) updates.scheduled_date = scheduled_date;
+
+    const { data: updated, error: vErr } = await supabaseAdmin
+      .from('generator_service_visits')
+      .update(updates)
+      .eq('id', id)
+      .select('*, subscription:generator_subscriptions(id)')
+      .single();
+    if (vErr) throw vErr;
+
+    // If date was updated, keep subscription.next_visit_due in sync
+    if (scheduled_date && updated.subscription) {
+      await supabaseAdmin
+        .from('generator_subscriptions')
+        .update({ next_visit_due: scheduled_date })
+        .eq('id', updated.subscription.id);
+    }
+
+    res.json({ ok: true, visit: updated });
+  } catch (err) {
+    console.error('[generator-care] confirm visit error:', err);
     res.status(500).json({ error: err.message });
   }
 });
