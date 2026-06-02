@@ -278,10 +278,21 @@
       if (visits.length === 0) html += `<p style="color: #6b7280;">No visits on record.</p>`;
       else {
         for (const v of visits) {
-          const date = v.completed_date ? `Completed ${fmtDate(v.completed_date)}` : `Scheduled ${fmtDate(v.scheduled_date)}`;
-          const action = v.status === 'scheduled'
-            ? `<button class="gc-mark-done" data-complete-visit="${v.id}">Mark complete</button>`
-            : `<span class="gc-badge gc-badge-active" style="font-size: 0.7rem;">${escapeHtml(v.status)}</span>`;
+          const date = v.completed_date
+            ? `Completed ${fmtDate(v.completed_date)}`
+            : v.status === 'tentative'
+              ? `Tentative — ${fmtDate(v.scheduled_date)} (needs confirmation)`
+              : `Scheduled ${fmtDate(v.scheduled_date)}`;
+          let action;
+          if (v.status === 'tentative') {
+            action = `
+              <button class="gc-mark-done" data-confirm-visit="${v.id}" style="background:#F59E0B; margin-right:0.3rem;">Confirm</button>
+              <button class="gc-mark-done" data-complete-visit="${v.id}">Mark complete</button>`;
+          } else if (v.status === 'scheduled') {
+            action = `<button class="gc-mark-done" data-complete-visit="${v.id}">Mark complete</button>`;
+          } else {
+            action = `<span class="gc-badge gc-badge-active" style="font-size: 0.7rem;">${escapeHtml(v.status)}</span>`;
+          }
           html += `<div class="gc-visit-row">
             <div>
               <div>${escapeHtml(v.visit_type === 'regular_service' ? 'Regular Service' : 'On-Demand')}</div>
@@ -313,6 +324,11 @@
       // Wire up "Mark complete" buttons
       body.querySelectorAll('[data-complete-visit]').forEach(btn => {
         btn.addEventListener('click', () => completeVisit(btn.dataset.completeVisit, id));
+      });
+
+      // Wire up Confirm buttons for tentative visits
+      body.querySelectorAll('[data-confirm-visit]').forEach(btn => {
+        btn.addEventListener('click', () => confirmVisit(btn.dataset.confirmVisit, id));
       });
 
       // Wire up "Save next visit due" button
@@ -356,6 +372,37 @@
       coolant_flush: 'Coolant System Flush',
       coolant_topoff: 'Coolant Top-Off',
     })[t] || t;
+  }
+
+  async function confirmVisit(visitId, subscriptionId) {
+    const dateStr = prompt(
+      'Confirm the actual scheduled date for this visit.\n\nFormat: YYYY-MM-DD\n(Press OK to keep the current date.)',
+      ''
+    );
+    if (dateStr === null) return; // user cancelled
+    const trimmed = (dateStr || '').trim();
+    let body = {};
+    if (trimmed) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-15). Leave blank to keep current.');
+        return;
+      }
+      body.scheduled_date = trimmed;
+    }
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/visits/${visitId}/confirm`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      showStatus('Visit confirmed.', 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Confirm visit failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
   }
 
   async function completeVisit(visitId, subscriptionId) {
