@@ -120,4 +120,47 @@ router.post('/visits/:id/complete', async (req, res) => {
   }
 });
 
+
+// PATCH /api/generator-care/subscriptions/:id
+// Edit subscription details (currently: next_visit_due, status, notes).
+// When next_visit_due changes, also update the matching scheduled visit row.
+router.patch('/subscriptions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { next_visit_due, status, notes } = req.body || {};
+
+    // Build update payload (only include fields user actually passed)
+    const updates = {};
+    if (next_visit_due !== undefined) updates.next_visit_due = next_visit_due || null;
+    if (status !== undefined) updates.status = status;
+    if (notes !== undefined) updates.notes = notes;
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'no editable fields provided' });
+    }
+
+    // Update the subscription
+    const { data: updated, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (subErr) throw subErr;
+
+    // If next_visit_due changed, sync the most-recent scheduled visit row to match.
+    if (next_visit_due !== undefined && next_visit_due) {
+      await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ scheduled_date: next_visit_due })
+        .eq('subscription_id', id)
+        .eq('status', 'scheduled');
+    }
+
+    res.json({ ok: true, subscription: updated });
+  } catch (err) {
+    console.error('[generator-care] subscription patch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
