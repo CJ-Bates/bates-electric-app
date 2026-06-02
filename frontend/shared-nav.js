@@ -111,9 +111,9 @@
 
     // Create top bar HTML
     const topbarHTML = `
-      <header class="app-topbar">
+      <header class="app-topbar" style="background:rgba(255,255,255,0.85);backdrop-filter:saturate(120%) blur(8px);-webkit-backdrop-filter:saturate(120%) blur(8px);">
         <div class="topbar-left">
-          <button class="topbar-hamburger" id="hamburgerBtn" aria-label="Open menu">
+          <button class="topbar-hamburger" id="hamburgerBtn" aria-label="Open menu" style="background:rgba(255,255,255,0.92);border:1px solid rgba(31,58,95,0.18);box-shadow:0 1px 2px rgba(0,0,0,0.06);">
             ${svgIcons.hamburger}
           </button>
         </div>
