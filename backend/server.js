@@ -6,6 +6,7 @@ const cors = require('cors');
 const authRoutes = require('./routes/auth');
 const inspectionRoutes = require('./routes/inspections');
 const generatorWebhookRouter = require('./routes/generator-webhook');
+const generatorCareRouter = require('./routes/generator-care');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +44,8 @@ app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Server error' });
 });
+
+app.use('/api/generator-care', generatorCareRouter);
 
 app.listen(PORT, () => {
   console.log(`Bates Electric backend running on port ${PORT}`);
