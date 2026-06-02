@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Bates Electric — Generator Care</title>
+  <style>
+    /* Generator Care specific styles */
+    .gc-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .gc-tab { padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; cursor: pointer; font-size: 0.9rem; font-family: inherit; }
+    .gc-tab.active { background: #1F3A5F; color: #fff; border-color: #1F3A5F; }
+    .gc-tab .count { display: inline-block; margin-left: 6px; background: rgba(0,0,0,0.1); padding: 1px 7px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+    .gc-tab.active .count { background: rgba(255,255,255,0.25); }
+    .gc-table-wrap { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; }
+    .gc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .gc-table th { background: #f3f4f6; padding: 10px 14px; text-align: left; font-weight: 600; color: #374151; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
+    .gc-table td { padding: 12px 14px; border-bottom: 1px solid #f3f4f6; }
+    .gc-row { cursor: pointer; transition: background 0.1s; }
+    .gc-row:hover { background: #f9fafb; }
+    .gc-row.overdue { background: #fef2f2; }
+    .gc-row.overdue:hover { background: #fee2e2; }
+    .gc-row.soon { background: #fefce8; }
+    .gc-row.soon:hover { background: #fef3c7; }
+    .gc-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; }
+    .gc-badge-overdue { background: #fee2e2; color: #991b1b; }
+    .gc-badge-soon { background: #fef3c7; color: #92400e; }
+    .gc-badge-active { background: #d1fae5; color: #065f46; }
+    .gc-badge-fleet { background: #dbeafe; color: #1e3a8a; }
+    .gc-customer-name { font-weight: 600; color: #1F3A5F; }
+    .gc-customer-meta { color: #6b7280; font-size: 0.82rem; }
+    .gc-gen-info { color: #374151; font-size: 0.85rem; }
+    .gc-empty { padding: 60px 20px; text-align: center; color: #6b7280; }
+    .gc-mobile-card { display: none; }
+    @media (max-width: 768px) {
+      .gc-table { display: none; }
+      .gc-mobile-card { display: block; }
+      .gc-card { background: #fff; padding: 14px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid #d1d5db; cursor: pointer; }
+      .gc-card.overdue { border-left-color: #ef4444; }
+      .gc-card.soon { border-left-color: #f59e0b; }
+      .gc-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+      .gc-card-name { font-weight: 600; color: #1F3A5F; font-size: 1rem; }
+      .gc-card-meta { color: #6b7280; font-size: 0.82rem; }
+      .gc-card-due { font-size: 0.85rem; font-weight: 600; margin-top: 8px; }
+      .gc-card-due.overdue { color: #991b1b; }
+      .gc-card-due.soon { color: #92400e; }
+    }
+    /* Detail modal styles */
+    .gc-detail-section { margin-bottom: 24px; }
+    .gc-detail-h { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+    .gc-detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; font-size: 0.9rem; }
+    .gc-detail-grid dt { color: #6b7280; }
+    .gc-detail-grid dd { color: #111827; margin: 0; }
+    .gc-visit-row { padding: 10px 0; border-bottom: 1px solid #f3f4f6; display: flex; justify-content: space-between; align-items: center; }
+    .gc-visit-row:last-child { border-bottom: none; }
+    .gc-mark-done { padding: 6px 12px; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; font-family: inherit; }
+    .gc-mark-done:hover { background: #059669; }
+    .gc-mark-done:disabled { background: #9ca3af; cursor: not-allowed; }
+  </style>
+</head>
+<body class="hub-body dashboard-body">
+
+  <main class="dashboard-main">
+    <div class="dashboard-header">
+      <h1>Generator Care</h1>
+      <div class="dashboard-header-actions">
+        <span id="result-count" class="result-count"></span>
+        <button type="button" id="refresh-btn" class="btn-secondary btn-sm">Refresh</button>
+      </div>
+    </div>
+
+    <div class="gc-tabs" id="gc-tabs">
+      <button class="gc-tab active" data-filter="all">All Active <span class="count" id="count-all">0</span></button>
+      <button class="gc-tab" data-filter="overdue">Overdue <span class="count" id="count-overdue">0</span></button>
+      <button class="gc-tab" data-filter="soon">Due in 14 days <span class="count" id="count-soon">0</span></button>
+      <button class="gc-tab" data-filter="month">Due this month <span class="count" id="count-month">0</span></button>
+    </div>
+
+    <section class="dashboard-filters">
+      <div class="filter-group">
+        <label for="filter-name">Search</label>
+        <input type="text" id="filter-name" placeholder="Customer name, address, model..." />
+      </div>
+    </section>
+
+    <section class="dashboard-content">
+      <div id="loading" class="loading-state" hidden><p>Loading subscriptions...</p></div>
+      <div id="empty" class="gc-empty" hidden>
+        <p style="font-size: 1.1rem;">No matching customers.</p>
+        <p style="font-size: 0.85rem; margin-top: 8px;">Try a different filter or check back after a customer signs up at <a href="https://bates-generator.netlify.app" target="_blank" style="color: #1F3A5F;">bates-generator.netlify.app</a>.</p>
+      </div>
+
+      <!-- Desktop table -->
+      <div class="gc-table-wrap" id="gc-table-wrap" hidden>
+        <table class="gc-table">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Generator</th>
+              <th>Plan</th>
+              <th>Next Visit</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="gc-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Mobile cards -->
+      <div class="gc-mobile-card" id="gc-cards"></div>
+    </section>
+
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <!-- Detail modal -->
+  <div id="detailsModal" class="modal" hidden>
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Customer Detail</h2>
+        <button type="button" class="modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div id="modal-body" class="modal-body">
+        <p>Loading…</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" id="modal-close-btn2">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="shared-nav.js"></script>
+  <script src="generator-care.js"></script>
+</body>
+</html>
