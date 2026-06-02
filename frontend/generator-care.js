@@ -1,0 +1,392 @@
+// frontend/generator-care.js
+// Office dashboard for the Generator Care subscription program.
+// Mirrors the auth pattern used by office.js.
+
+(() => {
+  const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? 'http://localhost:4000'
+    : 'https://bates-electric-app.onrender.com';
+  const TOKEN_KEY = 'bates.auth.token';
+
+  const getToken = () =>
+    localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
+
+  const token = getToken();
+  if (!token) {
+    window.location.replace('index.html');
+    return;
+  }
+
+  // State
+  let allSubs = [];
+  let activeFilter = 'all';
+  let searchQuery = '';
+
+  // ---- Role check (must be office) ----
+  async function checkRole() {
+    try {
+      const r = await fetch(`${API_BASE}/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error('Failed to get profile');
+      const { profile } = await r.json();
+      if (profile.role !== 'office') {
+        showStatus('Access denied. Office role required.', 'error');
+        setTimeout(() => window.location.replace('home.html'), 1500);
+      }
+    } catch (err) {
+      console.error('Role check failed:', err);
+    }
+  }
+
+  // ---- Load all subscriptions ----
+  async function loadSubscriptions() {
+    showLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const { subscriptions } = await r.json();
+      allSubs = subscriptions || [];
+      render();
+      showLoading(false);
+    } catch (err) {
+      console.error('Load failed:', err);
+      showStatus(`Load failed: ${err.message}`, 'error');
+      showLoading(false);
+    }
+  }
+
+  // ---- Filtering / classification ----
+  function daysUntil(dateStr) {
+    if (!dateStr) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(dateStr + 'T00:00:00');
+    return Math.floor((target - today) / (1000 * 60 * 60 * 24));
+  }
+
+  function bucket(sub) {
+    if (sub.status !== 'active') return 'inactive';
+    const d = daysUntil(sub.next_visit_due);
+    if (d === null) return 'unknown';
+    if (d < 0) return 'overdue';
+    if (d <= 14) return 'soon';
+    if (d <= 31) return 'month';
+    return 'future';
+  }
+
+  function matchesSearch(sub) {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const fields = [
+      sub.customer?.name,
+      sub.customer?.email,
+      sub.customer?.phone,
+      sub.customer?.install_address,
+      sub.customer?.install_city,
+      sub.customer?.install_zip,
+      sub.gen_model,
+      sub.gen_serial,
+      sub.gen_type_label,
+    ];
+    return fields.some(f => f && String(f).toLowerCase().includes(q));
+  }
+
+  function filteredSubs() {
+    return allSubs.filter(sub => {
+      if (!matchesSearch(sub)) return false;
+      const b = bucket(sub);
+      if (activeFilter === 'all') return b === 'overdue' || b === 'soon' || b === 'month' || b === 'future';
+      if (activeFilter === 'overdue') return b === 'overdue';
+      if (activeFilter === 'soon') return b === 'overdue' || b === 'soon';
+      if (activeFilter === 'month') return b === 'overdue' || b === 'soon' || b === 'month';
+      return true;
+    });
+  }
+
+  // ---- Render ----
+  function render() {
+    // Update tab counts
+    let cOver = 0, cSoon = 0, cMonth = 0, cAll = 0;
+    for (const s of allSubs.filter(matchesSearch)) {
+      const b = bucket(s);
+      if (b === 'overdue') { cOver++; cSoon++; cMonth++; cAll++; }
+      else if (b === 'soon') { cSoon++; cMonth++; cAll++; }
+      else if (b === 'month') { cMonth++; cAll++; }
+      else if (b === 'future') { cAll++; }
+    }
+    document.getElementById('count-all').textContent = cAll;
+    document.getElementById('count-overdue').textContent = cOver;
+    document.getElementById('count-soon').textContent = cSoon;
+    document.getElementById('count-month').textContent = cMonth;
+
+    const subs = filteredSubs();
+    const empty = document.getElementById('empty');
+    const tableWrap = document.getElementById('gc-table-wrap');
+    const cards = document.getElementById('gc-cards');
+    const countEl = document.getElementById('result-count');
+    if (countEl) countEl.textContent = `${subs.length} customer${subs.length === 1 ? '' : 's'}`;
+
+    if (subs.length === 0) {
+      empty.hidden = false;
+      tableWrap.hidden = true;
+      cards.innerHTML = '';
+      return;
+    }
+    empty.hidden = true;
+    tableWrap.hidden = false;
+
+    // Desktop table
+    const tbody = document.getElementById('gc-tbody');
+    tbody.innerHTML = subs.map(sub => rowHTML(sub)).join('');
+    // Mobile cards
+    cards.innerHTML = subs.map(sub => cardHTML(sub)).join('');
+
+    // Wire up click handlers
+    document.querySelectorAll('[data-sub-id]').forEach(el => {
+      el.addEventListener('click', () => showDetail(el.dataset.subId));
+    });
+  }
+
+  function planLabel(plan) {
+    return plan === 'semi_annual' ? 'Semi-Annual' : (plan === 'annual' ? 'Annual' : plan);
+  }
+  function genClassLabel(c) {
+    return ({
+      air_cooled: 'Air Cooled',
+      liquid_22_38: 'Liquid 22-38 KW',
+      liquid_48_150: 'Liquid 48-150 KW',
+    })[c] || c;
+  }
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+  function fmtDate(dateStr) {
+    if (!dateStr) return '—';
+    return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function dueLabel(sub) {
+    const d = daysUntil(sub.next_visit_due);
+    if (d === null) return '—';
+    if (d < 0) return `${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} OVERDUE`;
+    if (d === 0) return 'Today';
+    if (d === 1) return 'Tomorrow';
+    if (d <= 14) return `In ${d} days`;
+    return fmtDate(sub.next_visit_due);
+  }
+
+  function rowHTML(sub) {
+    const b = bucket(sub);
+    const rowClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const cust = sub.customer || {};
+    const fleet = sub.fleet_monitoring ? '<span class="gc-badge gc-badge-fleet" title="Fleet Monitoring enabled">FM</span>' : '';
+    return `
+      <tr class="gc-row ${rowClass}" data-sub-id="${sub.id}">
+        <td>
+          <div class="gc-customer-name">${escapeHtml(cust.name)}</div>
+          <div class="gc-customer-meta">${escapeHtml(cust.install_city)}, ${escapeHtml(cust.install_state)} · ${escapeHtml(cust.phone)}</div>
+        </td>
+        <td class="gc-gen-info">
+          ${escapeHtml(genClassLabel(sub.gen_class))}<br>
+          <span class="gc-customer-meta">${escapeHtml(sub.gen_model || 'Model n/a')}</span>
+        </td>
+        <td>${escapeHtml(planLabel(sub.plan))} ${fleet}</td>
+        <td>${dueLabel(sub)}</td>
+        <td>${badgeForBucket(b)}</td>
+      </tr>
+    `;
+  }
+
+  function cardHTML(sub) {
+    const b = bucket(sub);
+    const cardClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const dueClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const cust = sub.customer || {};
+    return `
+      <div class="gc-card ${cardClass}" data-sub-id="${sub.id}">
+        <div class="gc-card-header">
+          <div>
+            <div class="gc-card-name">${escapeHtml(cust.name)}</div>
+            <div class="gc-card-meta">${escapeHtml(cust.install_city)} · ${escapeHtml(genClassLabel(sub.gen_class))} · ${escapeHtml(planLabel(sub.plan))}</div>
+          </div>
+          ${badgeForBucket(b)}
+        </div>
+        <div class="gc-card-due ${dueClass}">Next visit: ${dueLabel(sub)}</div>
+      </div>
+    `;
+  }
+
+  function badgeForBucket(b) {
+    if (b === 'overdue') return '<span class="gc-badge gc-badge-overdue">Overdue</span>';
+    if (b === 'soon') return '<span class="gc-badge gc-badge-soon">Soon</span>';
+    return '<span class="gc-badge gc-badge-active">Active</span>';
+  }
+
+  // ---- Detail modal ----
+  async function showDetail(id) {
+    const modal = document.getElementById('detailsModal');
+    const title = document.getElementById('modal-title');
+    const body = document.getElementById('modal-body');
+    modal.hidden = false;
+    title.textContent = 'Loading…';
+    body.innerHTML = '<p>Loading customer detail…</p>';
+
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const { subscription, visits, pending_addons } = await r.json();
+      const c = subscription.customer || {};
+      title.textContent = c.name || 'Customer';
+
+      const addrLine = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
+      const annual = subscription.annual_price_cents ? `$${(subscription.annual_price_cents/100).toFixed(2)}` : '—';
+
+      let html = '';
+      // Customer info
+      html += `<div class="gc-detail-section">
+        <div class="gc-detail-h">Customer</div>
+        <dl class="gc-detail-grid">
+          <dt>Phone</dt><dd>${escapeHtml(c.phone) || '—'}</dd>
+          <dt>Email</dt><dd>${escapeHtml(c.email) || '—'}</dd>
+          <dt>Install address</dt><dd>${escapeHtml(addrLine) || '—'}</dd>
+        </dl>
+      </div>`;
+
+      // Subscription info
+      html += `<div class="gc-detail-section">
+        <div class="gc-detail-h">Subscription</div>
+        <dl class="gc-detail-grid">
+          <dt>Plan</dt><dd>${escapeHtml(planLabel(subscription.plan))}</dd>
+          <dt>Generator</dt><dd>${escapeHtml(genClassLabel(subscription.gen_class))} — ${escapeHtml(subscription.gen_model || 'model n/a')}</dd>
+          <dt>Serial</dt><dd>${escapeHtml(subscription.gen_serial) || '—'}</dd>
+          <dt>Fleet Monitoring</dt><dd>${subscription.fleet_monitoring ? 'Yes' : 'No'}</dd>
+          <dt>Annual price</dt><dd>${annual}</dd>
+          <dt>Signed up</dt><dd>${fmtDate(subscription.signup_date)}</dd>
+          <dt>Status</dt><dd>${escapeHtml(subscription.status)}</dd>
+        </dl>
+      </div>`;
+
+      // Service visits
+      html += `<div class="gc-detail-section"><div class="gc-detail-h">Service Visits</div>`;
+      if (visits.length === 0) html += `<p style="color: #6b7280;">No visits on record.</p>`;
+      else {
+        for (const v of visits) {
+          const date = v.completed_date ? `Completed ${fmtDate(v.completed_date)}` : `Scheduled ${fmtDate(v.scheduled_date)}`;
+          const action = v.status === 'scheduled'
+            ? `<button class="gc-mark-done" data-complete-visit="${v.id}">Mark complete</button>`
+            : `<span class="gc-badge gc-badge-active" style="font-size: 0.7rem;">${escapeHtml(v.status)}</span>`;
+          html += `<div class="gc-visit-row">
+            <div>
+              <div>${escapeHtml(v.visit_type === 'regular_service' ? 'Regular Service' : 'On-Demand')}</div>
+              <div style="color: #6b7280; font-size: 0.82rem;">${date}</div>
+            </div>
+            ${action}
+          </div>`;
+        }
+      }
+      html += `</div>`;
+
+      // Pending add-ons
+      if (pending_addons.length > 0) {
+        html += `<div class="gc-detail-section"><div class="gc-detail-h">Pre-authorized Add-ons</div>`;
+        for (const a of pending_addons) {
+          const amt = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
+          html += `<div class="gc-visit-row">
+            <div>
+              <div>${escapeHtml(addonLabel(a.addon_type))}</div>
+              <div style="color: #6b7280; font-size: 0.82rem;">${amt} · ${escapeHtml(a.status)}</div>
+            </div>
+          </div>`;
+        }
+        html += `</div>`;
+      }
+
+      body.innerHTML = html;
+
+      // Wire up "Mark complete" buttons
+      body.querySelectorAll('[data-complete-visit]').forEach(btn => {
+        btn.addEventListener('click', () => completeVisit(btn.dataset.completeVisit, id));
+      });
+    } catch (err) {
+      console.error('Detail load failed:', err);
+      body.innerHTML = `<p style="color: #ef4444;">Failed to load: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function addonLabel(t) {
+    return ({
+      battery_diagnostics: 'Battery Diagnostics / Load Test',
+      battery_replacement: 'Battery Replacement',
+      exterior_wash: 'Exterior Wash & Interior Blow-Out',
+      outage_test: 'Simulated Power Outage Test',
+      coolant_flush: 'Coolant System Flush',
+      coolant_topoff: 'Coolant Top-Off',
+    })[t] || t;
+  }
+
+  async function completeVisit(visitId, subscriptionId) {
+    if (!confirm('Mark this visit as complete? This will also schedule the next visit.')) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      showStatus('Visit marked complete. Next visit scheduled.', 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Complete visit failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  function closeModal() {
+    document.getElementById('detailsModal').hidden = true;
+  }
+
+  // ---- Helpers ----
+  function showLoading(b) {
+    document.getElementById('loading').hidden = !b;
+  }
+  function showStatus(msg, kind = 'info') {
+    const el = document.getElementById('status');
+    el.hidden = false;
+    el.className = `status ${kind}`;
+    el.textContent = msg;
+    setTimeout(() => { el.hidden = true; }, 3000);
+  }
+
+  // ---- Init ----
+  checkRole();
+
+  document.getElementById('refresh-btn').addEventListener('click', loadSubscriptions);
+
+  document.querySelectorAll('.gc-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.gc-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      render();
+    });
+  });
+
+  document.getElementById('filter-name').addEventListener('input', (e) => {
+    searchQuery = e.target.value;
+    render();
+  });
+
+  document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+  document.getElementById('modal-close-btn2').addEventListener('click', closeModal);
+  document.querySelector('#detailsModal .modal-overlay').addEventListener('click', closeModal);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+  loadSubscriptions();
+})();
