@@ -147,7 +147,7 @@ async function handleSubscriptionCreated(subscription) {
     subscription_id: sub.id,
     visit_type: 'regular_service',
     scheduled_date: nextStr,
-    status: 'scheduled',
+    status: 'tentative',
   });
 
   // 6. Pending add-ons (charged later off saved card when performed)
