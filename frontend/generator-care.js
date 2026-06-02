@@ -268,6 +268,7 @@
           <dt>Fleet Monitoring</dt><dd>${subscription.fleet_monitoring ? 'Yes' : 'No'}</dd>
           <dt>Annual price</dt><dd>${annual}</dd>
           <dt>Signed up</dt><dd>${fmtDate(subscription.signup_date)}</dd>
+          <dt>Next visit due</dt><dd><input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.85rem;" /> <button id="gc-next-visit-save" class="gc-mark-done" style="font-size: 0.75rem; padding: 0.25rem 0.55rem; margin-left: 0.3rem;">Save</button></dd>
           <dt>Status</dt><dd>${escapeHtml(subscription.status)}</dd>
         </dl>
       </div>`;
@@ -313,6 +314,33 @@
       body.querySelectorAll('[data-complete-visit]').forEach(btn => {
         btn.addEventListener('click', () => completeVisit(btn.dataset.completeVisit, id));
       });
+
+      // Wire up "Save next visit due" button
+      const saveNvBtn = body.querySelector('#gc-next-visit-save');
+      if (saveNvBtn) {
+        saveNvBtn.addEventListener('click', async () => {
+          const newDate = body.querySelector('#gc-next-visit-input').value;
+          if (!newDate) { showStatus('Please pick a date.', 'error'); return; }
+          saveNvBtn.disabled = true;
+          saveNvBtn.textContent = 'Saving...';
+          try {
+            const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ next_visit_due: newDate }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            showStatus('Next visit date saved.', 'success');
+            await loadSubscriptions();
+            showDetail(id);
+          } catch (err) {
+            console.error('Save next visit failed:', err);
+            showStatus(`Failed: ${err.message}`, 'error');
+            saveNvBtn.disabled = false;
+            saveNvBtn.textContent = 'Save';
+          }
+        });
+      }
     } catch (err) {
       console.error('Detail load failed:', err);
       body.innerHTML = `<p style="color: #ef4444;">Failed to load: ${escapeHtml(err.message)}</p>`;
@@ -331,12 +359,22 @@
   }
 
   async function completeVisit(visitId, subscriptionId) {
-    if (!confirm('Mark this visit as complete? This will also schedule the next visit.')) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const dateStr = prompt(
+      'What date was this visit actually performed?\n\nFormat: YYYY-MM-DD\n(The next visit will be scheduled relative to this date.)',
+      today
+    );
+    if (dateStr === null) return; // user cancelled
+    const completed_date = (dateStr || '').trim() || today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(completed_date)) {
+      alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-02).');
+      return;
+    }
     try {
       const r = await fetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ completed_date }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       showStatus('Visit marked complete. Next visit scheduled.', 'success');
