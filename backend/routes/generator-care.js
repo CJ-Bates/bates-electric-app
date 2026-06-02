@@ -75,7 +75,7 @@ router.post('/visits/:id/complete', async (req, res) => {
   try {
     const id = req.params.id;
     const { notes, addons_performed, technician_id } = req.body || {};
-    const today = new Date().toISOString().slice(0, 10);
+    const today = (req.body && req.body.completed_date) || new Date().toISOString().slice(0, 10);
 
     // 1. Update the visit
     const { data: updated, error: updErr } = await supabaseAdmin
@@ -96,7 +96,7 @@ router.post('/visits/:id/complete', async (req, res) => {
     const sub = updated.subscription;
     if (sub) {
       const monthsAhead = sub.plan === 'semi_annual' ? 6 : 12;
-      const next = new Date();
+      const next = new Date(today);
       next.setMonth(next.getMonth() + monthsAhead);
       const nextStr = next.toISOString().slice(0, 10);
 
