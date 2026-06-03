@@ -201,82 +201,123 @@ router.post('/visits/:id/confirm', async (req, res) => {
 });
 
 
-// POST /api/generator-care/addons/:id/charge
-// Charge the customer's saved card for a pending add-on (off-session, default payment method).
-// On success: marks addon 'charged'. On failure (declined etc.): marks 'failed' with reason in notes.
-router.post('/addons/:id/charge', async (req, res) => {
+// POST /api/generator-care/addons/:id/mark-performed
+// Records that a pending add-on was performed during a visit + adds it as an invoice item
+// on the customer's next subscription invoice. Will be charged when subscription renews.
+// Webhooks (invoice.paid / invoice.payment_failed) flip status to charged/failed.
+router.post('/addons/:id/mark-performed', async (req, res) => {
   try {
     const { id } = req.params;
+    const { date_performed } = req.body || {};
+    const today = new Date().toISOString().slice(0, 10);
+    const performedDate = date_performed || today;
 
-    // 1. Fetch the addon + sub + customer
     const { data: addon, error: addonErr } = await supabaseAdmin
       .from('generator_pending_addons')
-      .select('*, subscription:generator_subscriptions(id, stripe_customer_id, customer:generator_customers(name))')
+      .select('*, subscription:generator_subscriptions(id, stripe_subscription_id, stripe_customer_id, customer:generator_customers(name))')
       .eq('id', id)
       .single();
     if (addonErr) throw addonErr;
     if (!addon) return res.status(404).json({ error: 'addon not found' });
 
-    if (addon.status === 'charged') {
-      return res.status(400).json({ error: 'addon already charged' });
+    if (addon.status === 'performed' || addon.status === 'charged') {
+      return res.status(400).json({ error: 'addon already ' + addon.status });
     }
     if (!addon.amount_cents || addon.amount_cents <= 0) {
-      return res.status(400).json({ error: 'no charge amount on this addon' });
+      return res.status(400).json({ error: 'no charge amount' });
     }
-    if (!addon.subscription || !addon.subscription.stripe_customer_id) {
-      return res.status(400).json({ error: 'no Stripe customer linked' });
+    if (!addon.subscription || !addon.subscription.stripe_customer_id || !addon.subscription.stripe_subscription_id) {
+      return res.status(400).json({ error: 'no Stripe subscription linked' });
     }
 
     const customerId = addon.subscription.stripe_customer_id;
-    const customerName = (addon.subscription.customer && addon.subscription.customer.name) || 'customer';
-    const today = new Date().toISOString().slice(0, 10);
+    const subId = addon.subscription.stripe_subscription_id;
+    const label = (addon.addon_type || 'add-on').replace(/_/g, ' ');
 
-    // 2. Create PaymentIntent on saved card (off-session)
-    let intent;
+    // Create Stripe invoice item attached to subscription's next invoice
+    let item;
     try {
-      intent = await stripe.paymentIntents.create({
+      item = await stripe.invoiceItems.create({
         customer: customerId,
+        subscription: subId,
         amount: addon.amount_cents,
         currency: 'usd',
-        payment_method_types: ['card'],
-        off_session: true,
-        confirm: true,
-        description: 'Generator add-on: ' + addon.addon_type + ' (' + customerName + ')',
+        description: 'Generator add-on: ' + label,
         metadata: {
           addon_id: id,
-          subscription_id: addon.subscription.id,
           addon_type: addon.addon_type,
+          subscription_id: addon.subscription.id,
+          performed_date: performedDate,
         },
       });
     } catch (stripeErr) {
       const reason = stripeErr.message || stripeErr.code || 'unknown_error';
-      await supabaseAdmin
-        .from('generator_pending_addons')
-        .update({
-          status: 'failed',
-          notes: 'Charge failed on ' + today + ': ' + reason,
-        })
-        .eq('id', id);
-      return res.status(402).json({ error: 'charge failed', reason, addon_id: id });
+      console.error('[generator-care] invoice item create failed:', stripeErr);
+      return res.status(502).json({ error: 'Stripe invoice item create failed', reason });
     }
 
-    // 3. Charge succeeded - record it
     const { data: updated, error: updErr } = await supabaseAdmin
       .from('generator_pending_addons')
       .update({
-        status: 'charged',
-        date_performed: addon.date_performed || today,
-        date_charged: today,
-        stripe_payment_intent_id: intent.id,
+        status: 'performed',
+        date_performed: performedDate,
+        stripe_invoice_item_id: item.id,
       })
       .eq('id', id)
       .select()
       .single();
     if (updErr) throw updErr;
 
-    res.json({ ok: true, addon: updated, payment_intent_id: intent.id, amount_cents: intent.amount });
+    res.json({ ok: true, addon: updated, invoice_item_id: item.id });
   } catch (err) {
-    console.error('[generator-care] addon charge error:', err);
+    console.error('[generator-care] mark-performed error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/generator-care/addons/:id/unmark-performed
+// Reverse: deletes the Stripe invoice item (if still removable) and resets addon to pending.
+router.post('/addons/:id/unmark-performed', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: addon, error: addonErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (addonErr) throw addonErr;
+    if (!addon) return res.status(404).json({ error: 'addon not found' });
+    if (addon.status !== 'performed') {
+      return res.status(400).json({ error: 'addon is not in performed status' });
+    }
+
+    // Try to delete invoice item from Stripe (works only while invoice is still draft / pending)
+    if (addon.stripe_invoice_item_id) {
+      try {
+        await stripe.invoiceItems.del(addon.stripe_invoice_item_id);
+      } catch (stripeErr) {
+        return res.status(400).json({
+          error: 'cannot unmark: invoice item already billed or not removable',
+          reason: stripeErr.message,
+        });
+      }
+    }
+
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .update({
+        status: 'pending',
+        date_performed: null,
+        stripe_invoice_item_id: null,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    res.json({ ok: true, addon: updated });
+  } catch (err) {
+    console.error('[generator-care] unmark-performed error:', err);
     res.status(500).json({ error: err.message });
   }
 });
