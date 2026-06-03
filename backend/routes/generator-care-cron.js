@@ -221,7 +221,8 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
 <body style="margin:0;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;background:#f9fafb;">
  <div style="max-width:680px;margin:0 auto;">
  <div style="background:#1F3A5F;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0;">
- <h1 style="margin:0;font-size:20px;">Generator Care  -  Good Morning</h1>
+ <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;opacity:0.7;margin-bottom:4px;">Bates Electric, Inc.</div>
+        <h1 style="margin:0;font-size:22px;letter-spacing:-0.3px;">Generator Care Digest</h1>
  <p style="margin:6px 0 0;opacity:0.85;font-size:13px;">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
  </div>
  <div style="background:#fff;padding:20px 24px;border-radius:0 0 8px 8px;border:1px solid #e5e7eb;border-top:none;">
@@ -239,6 +240,12 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  <p style="margin:24px 0 0;color:#6b7280;font-size:12px;text-align:center;">
  From the dashboard you can mark visits complete (next visit auto-schedules) and view full customer details.
  </p>
+ </div>
+
+ <div style="margin-top:24px;padding:16px 24px;text-align:center;color:#9ca3af;font-size:11px;line-height:1.6;">
+   <div style="font-weight:600;color:#6b7280;letter-spacing:0.5px;">BATES ELECTRIC, INC.</div>
+   <div>Commercial &middot; Residential &middot; Industrial &middot; Restorative</div>
+   <div style="margin-top:6px;">(314) 814-1414 &middot; bates-electric.com</div>
  </div>
  </div>
 </body></html>`;
