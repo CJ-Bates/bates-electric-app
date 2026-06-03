@@ -308,12 +308,28 @@
       if (pending_addons.length > 0) {
         html += `<div class="gc-detail-section"><div class="gc-detail-h">Pre-authorized Add-ons</div>`;
         for (const a of pending_addons) {
-          const amt = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
+          const amt = a.amount_cents ? `${(a.amount_cents/100).toFixed(2)}` : '';
+          let action = '';
+          let badgeColor = '#6b7280';
+          if (a.status === 'pending') {
+            action = `<button class="gc-mark-done" data-charge-addon="${a.id}" data-amount="${amt}" style="background:#0F766E;">Charge ${amt}</button>`;
+          } else if (a.status === 'charged') {
+            badgeColor = '#059669';
+            action = `<span class="gc-badge" style="background:#D1FAE5;color:#065F46;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Charged</span>`;
+          } else if (a.status === 'failed') {
+            badgeColor = '#DC2626';
+            action = `<button class="gc-mark-done" data-charge-addon="${a.id}" data-amount="${amt}" style="background:#DC2626;">Retry ${amt}</button>`;
+          } else {
+            action = `<span class="gc-badge gc-badge-active" style="font-size:0.7rem;">${escapeHtml(a.status)}</span>`;
+          }
+          const noteHtml = a.notes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(a.notes)}</div>` : '';
           html += `<div class="gc-visit-row">
             <div>
               <div>${escapeHtml(addonLabel(a.addon_type))}</div>
-              <div style="color: #6b7280; font-size: 0.82rem;">${amt} · ${escapeHtml(a.status)}</div>
+              <div style="color: ${badgeColor}; font-size: 0.82rem;">${amt} · ${escapeHtml(a.status)}</div>
+              ${noteHtml}
             </div>
+            ${action}
           </div>`;
         }
         html += `</div>`;
@@ -329,6 +345,11 @@
       // Wire up Confirm buttons for tentative visits
       body.querySelectorAll('[data-confirm-visit]').forEach(btn => {
         btn.addEventListener('click', () => confirmVisit(btn.dataset.confirmVisit, id));
+      });
+
+      // Wire up Charge buttons on pending/failed add-ons
+      body.querySelectorAll('[data-charge-addon]').forEach(btn => {
+        btn.addEventListener('click', () => chargeAddon(btn.dataset.chargeAddon, btn.dataset.amount, id));
       });
 
       // Wire up "Save next visit due" button
@@ -372,6 +393,29 @@
       coolant_flush: 'Coolant System Flush',
       coolant_topoff: 'Coolant Top-Off',
     })[t] || t;
+  }
+
+  async function chargeAddon(addonId, amount, subscriptionId) {
+    if (!confirm(`Charge ${amount} to the customer's card on file?\n\nThis will run immediately and cannot be auto-undone.`)) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/charge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Charge failed: ${reason}`, 'error');
+      } else {
+        showStatus(`Charged ${amount} successfully.`, 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Charge addon failed:', err);
+      showStatus(`Charge failed: ${err.message}`, 'error');
+    }
   }
 
   async function confirmVisit(visitId, subscriptionId) {
