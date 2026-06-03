@@ -44,7 +44,7 @@ router.post('/signup', async (req, res) => {
   if (!allowedBatesEmail(email)) {
     return res.status(403).json({
       error:
-        'This email is not a Bates Electric address. Use your @bates-electric.com or *.bateselectric@gmail.com address.',
+        'This email address is not authorized for sign-up. Contact your administrator if you need access.',
     });
   }
 
