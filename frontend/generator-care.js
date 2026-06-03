@@ -312,13 +312,20 @@
           let action = '';
           let badgeColor = '#6b7280';
           if (a.status === 'pending') {
-            action = `<button class="gc-mark-done" data-charge-addon="${a.id}" data-amount="${amt}" style="background:#0F766E;">Charge ${amt}</button>`;
+            action = `<button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#0F766E;">Mark Performed</button>`;
+          } else if (a.status === 'performed') {
+            badgeColor = '#D97706';
+            action = `
+              <div style="display:flex;flex-direction:column;gap:0.25rem;align-items:flex-end;">
+                <span class="gc-badge" style="background:#FEF3C7;color:#92400E;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Performed - will charge at renewal</span>
+                <button class="gc-mark-done" data-unmark="${a.id}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Undo</button>
+              </div>`;
           } else if (a.status === 'charged') {
             badgeColor = '#059669';
             action = `<span class="gc-badge" style="background:#D1FAE5;color:#065F46;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Charged</span>`;
           } else if (a.status === 'failed') {
             badgeColor = '#DC2626';
-            action = `<button class="gc-mark-done" data-charge-addon="${a.id}" data-amount="${amt}" style="background:#DC2626;">Retry ${amt}</button>`;
+            action = `<button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#DC2626;">Retry</button>`;
           } else {
             action = `<span class="gc-badge gc-badge-active" style="font-size:0.7rem;">${escapeHtml(a.status)}</span>`;
           }
@@ -348,8 +355,11 @@
       });
 
       // Wire up Charge buttons on pending/failed add-ons
-      body.querySelectorAll('[data-charge-addon]').forEach(btn => {
-        btn.addEventListener('click', () => chargeAddon(btn.dataset.chargeAddon, btn.dataset.amount, id));
+      body.querySelectorAll('[data-mark-performed]').forEach(btn => {
+        btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
+      });
+      body.querySelectorAll('[data-unmark]').forEach(btn => {
+        btn.addEventListener('click', () => unmarkPerformed(btn.dataset.unmark, id));
       });
 
       // Wire up "Save next visit due" button
@@ -392,13 +402,47 @@
       outage_test: 'Simulated Power Outage Test',
       coolant_flush: 'Coolant System Flush',
       coolant_topoff: 'Coolant Top-Off',
+      ats_inspection: 'ATS Inspection',
     })[t] || t;
   }
 
-  async function chargeAddon(addonId, amount, subscriptionId) {
-    if (!confirm(`Charge ${amount} to the customer's card on file?\n\nThis will run immediately and cannot be auto-undone.`)) return;
+  async function markPerformed(addonId, amount, label, subscriptionId) {
+    const today = new Date().toISOString().slice(0, 10);
+    const dateStr = prompt(
+      `Mark "${label}" (${amount}) as performed?\n\nThis adds the charge to the customer's next renewal invoice. They will NOT be charged immediately.\n\nDate performed (YYYY-MM-DD):`,
+      today
+    );
+    if (dateStr === null) return;
+    const performedDate = (dateStr || '').trim() || today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(performedDate)) {
+      alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-03).');
+      return;
+    }
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/charge`, {
+      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/mark-performed`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date_performed: performedDate }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Could not mark performed: ${reason}`, 'error');
+      } else {
+        showStatus(`${label} marked performed. Will charge at renewal.`, 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Mark performed failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function unmarkPerformed(addonId, subscriptionId) {
+    if (!confirm('Undo "performed" status? This removes it from the upcoming invoice. Only works before the invoice is finalized.')) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/unmark-performed`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -406,15 +450,15 @@
       const data = await r.json();
       if (!r.ok) {
         const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Charge failed: ${reason}`, 'error');
+        showStatus(`Could not undo: ${reason}`, 'error');
       } else {
-        showStatus(`Charged ${amount} successfully.`, 'success');
+        showStatus('Reverted to pending.', 'success');
       }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
-      console.error('Charge addon failed:', err);
-      showStatus(`Charge failed: ${err.message}`, 'error');
+      console.error('Unmark failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
     }
   }
 
