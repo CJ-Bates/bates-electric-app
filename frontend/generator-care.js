@@ -240,7 +240,7 @@
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { subscription, visits, pending_addons } = await r.json();
+      const { subscription, visits, pending_addons, adhoc_charges = [] } = await r.json();
       const c = subscription.customer || {};
       title.textContent = c.name || 'Customer';
 
@@ -361,6 +361,47 @@
         html += `</div>`;
       }
 
+      // Ad-hoc / other charges section
+      {
+        const visibleCharges = (adhoc_charges || []).filter(c => c.status !== 'canceled');
+        html += `<div class="gc-detail-section">
+          <div class="gc-detail-h" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Other Charges (non-program)</span>
+            ${subscription.status === 'canceled' ? '' : `<button class="gc-mark-done" id="gc-add-charge-btn" style="background:#0F766E;font-size:0.7rem;padding:0.25rem 0.6rem;">+ Add Charge</button>`}
+          </div>`;
+        if (visibleCharges.length === 0) {
+          html += `<div style="color: #6b7280; font-size: 0.85rem; padding: 0.5rem 0;">No ad-hoc charges. Use this for non-program work (parts, repairs, etc).</div>`;
+        }
+        for (const c of visibleCharges) {
+          const amt = c.amount_cents ? `${(c.amount_cents/100).toFixed(2)}` : '';
+          let badge, badgeColor, action = '';
+          if (c.status === 'pending') {
+            badgeColor = '#D97706';
+            badge = c.billing_method === 'renewal' ? 'Pending - will bill at renewal' : 'Pending';
+            action = `<button class="gc-mark-done" data-cancel-charge="${c.id}" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">&times;</button>`;
+          } else if (c.status === 'charged') {
+            badgeColor = '#059669';
+            badge = c.date_charged ? `Charged ${c.date_charged}` : 'Charged';
+          } else if (c.status === 'failed') {
+            badgeColor = '#DC2626';
+            badge = 'Failed';
+          } else {
+            badgeColor = '#6b7280';
+            badge = c.status;
+          }
+          const noteHtml = c.notes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(c.notes)}</div>` : '';
+          html += `<div class="gc-visit-row">
+            <div>
+              <div>${escapeHtml(c.description)}</div>
+              <div style="color: ${badgeColor}; font-size: 0.82rem;">${amt} - ${escapeHtml(badge)}</div>
+              ${noteHtml}
+            </div>
+            ${action}
+          </div>`;
+        }
+        html += `</div>`;
+      }
+
       body.innerHTML = html;
 
       // Wire up "Mark complete" buttons
@@ -374,6 +415,14 @@
       });
 
       // Wire up Charge buttons on pending/failed add-ons
+      const addChargeBtn = body.querySelector('#gc-add-charge-btn');
+      if (addChargeBtn) {
+        addChargeBtn.addEventListener('click', () => addAdhocCharge(id, visits || []));
+      }
+      body.querySelectorAll('[data-cancel-charge]').forEach(btn => {
+        btn.addEventListener('click', () => cancelAdhocCharge(btn.dataset.cancelCharge, btn.dataset.desc, id));
+      });
+
       const addBtn = body.querySelector('#gc-add-addon-btn');
       if (addBtn) {
         addBtn.addEventListener('click', () => addAddon(id));
@@ -513,6 +562,96 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Unmark failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function addAdhocCharge(subscriptionId, visits) {
+    const description = prompt('Describe the work or item (shown on customer receipt):', '');
+    if (description === null) return;
+    if (!description.trim()) {
+      showStatus('Description required.', 'error');
+      return;
+    }
+    const amountStr = prompt(`Amount in dollars (e.g. 125.50):`, '');
+    if (amountStr === null) return;
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      showStatus('Amount must be a positive number.', 'error');
+      return;
+    }
+    const amount_cents = Math.round(amount * 100);
+    const methodStr = prompt(`How to bill?\n\n1. Charge now (immediate, hits the saved card today)\n2. Add to next renewal invoice (bundles with subscription)\n\nEnter 1 or 2:`, '1');
+    if (methodStr === null) return;
+    const billing_method = methodStr.trim() === '2' ? 'renewal' : 'immediate';
+    
+    let service_visit_id = null;
+    if (visits && visits.length > 0) {
+      const scheduledOrCompleted = visits.filter(v => ['scheduled','tentative','completed'].includes(v.status));
+      if (scheduledOrCompleted.length > 0) {
+        const lines = scheduledOrCompleted.map((v, i) => {
+          const d = v.completed_date || v.scheduled_date || '';
+          return `${i+1}. ${v.visit_type === 'regular_service' ? 'Regular Service' : 'On-Demand'} - ${d} (${v.status})`;
+        });
+        const visitStr = prompt(`Link to a specific visit? (optional)\n\n0. Not tied to a specific visit\n${lines.join('\n')}\n\nEnter number:`, '0');
+        if (visitStr === null) return;
+        const visitIdx = parseInt(visitStr, 10) - 1;
+        if (!isNaN(visitIdx) && visitIdx >= 0 && visitIdx < scheduledOrCompleted.length) {
+          service_visit_id = scheduledOrCompleted[visitIdx].id;
+        }
+      }
+    }
+    
+    const methodLabel = billing_method === 'immediate' ? 'charge now' : 'add to next renewal';
+    if (!confirm(`Confirm:\n\n"${description.trim()}" - ${amount.toFixed(2)}\nMethod: ${methodLabel}\n\nProceed?`)) return;
+    
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/adhoc-charge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: description.trim(),
+          amount_cents,
+          billing_method,
+          service_visit_id,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Could not add charge: ${reason}`, 'error');
+      } else if (billing_method === 'immediate') {
+        showStatus(`Charged ${amount.toFixed(2)} successfully.`, 'success');
+      } else {
+        showStatus(`Added ${amount.toFixed(2)} to next renewal.`, 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Add adhoc charge failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function cancelAdhocCharge(chargeId, desc, subscriptionId) {
+    if (!confirm(`Cancel charge "${desc}"?\n\nIf pending, this removes it. If it was already charged, it cannot be canceled here (refund must be handled separately).`)) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/adhoc-charges/${chargeId}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Could not cancel: ${reason}`, 'error');
+      } else {
+        showStatus('Charge canceled.', 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Cancel adhoc charge failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
