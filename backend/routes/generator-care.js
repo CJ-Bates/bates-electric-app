@@ -388,4 +388,120 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
   }
 });
 
+
+// Hardcoded catalog of one-time add-ons by gen class.
+// Mirrors the catalog in bates-generator/netlify/functions/create-checkout.js.
+const ADDON_CATALOG = {
+  battery_diagnostics: {
+    label: 'Battery Diagnostics / Load Test',
+    prices: { all: { price_id: 'price_1TdcRYBbX7QhpMgbqf02jIWS', amount_cents: 5500 } },
+  },
+  battery_replacement: {
+    label: 'Battery Replacement',
+    prices: {
+      air_cooled:    { price_id: 'price_1TdcRZBbX7QhpMgba4u78SyS', amount_cents: 16500 },
+      liquid_22_38:  { price_id: 'price_1TdcRaBbX7QhpMgbpgDY7xUh', amount_cents: 23500 },
+      liquid_48_150: { price_id: 'price_1TdcRaBbX7QhpMgbtb0YgpLt', amount_cents: 26500 },
+    },
+  },
+  exterior_wash: {
+    label: 'Exterior Wash & Interior Blow-Out',
+    prices: { all: { price_id: 'price_1TdcRZBbX7QhpMgbJxnGgkBp', amount_cents: 8500 } },
+  },
+  outage_test: {
+    label: 'Simulated Power Outage Test',
+    prices: { all: { price_id: 'price_1TdcRZBbX7QhpMgbj4pU8wA9', amount_cents: 7500 } },
+  },
+  coolant_flush: {
+    label: 'Coolant System Flush',
+    prices: {
+      liquid_22_38:  { price_id: 'price_1TdcRaBbX7QhpMgbDUyQKlCh', amount_cents: 59500 },
+      liquid_48_150: { price_id: 'price_1TdcRbBbX7QhpMgbfeEKybBk', amount_cents: 69500 },
+    },
+  },
+  ats_inspection: {
+    label: 'Automatic Transfer Switch Inspection',
+    prices: { all: { price_id: 'price_1TdysDBbX7QhpMgb3nlOtlLn', amount_cents: 7500 } },
+  },
+};
+
+function lookupAddonPrice(addonType, genClass) {
+  const entry = ADDON_CATALOG[addonType];
+  if (!entry) return null;
+  if (entry.prices.all) return entry.prices.all;
+  return entry.prices[genClass] || null;
+}
+
+// GET /api/generator-care/subscriptions/:id/available-addons
+// Lists which add-ons can be added for this customer's gen class.
+router.get('/subscriptions/:id/available-addons', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, gen_class')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+
+    const available = [];
+    for (const [addonType, entry] of Object.entries(ADDON_CATALOG)) {
+      const price = lookupAddonPrice(addonType, sub.gen_class);
+      if (price) {
+        available.push({ addon_type: addonType, label: entry.label, amount_cents: price.amount_cents });
+      }
+    }
+    res.json({ ok: true, gen_class: sub.gen_class, addons: available });
+  } catch (err) {
+    console.error('[generator-care] available-addons error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/generator-care/subscriptions/:id/add-addon
+// Add a new pending add-on to an existing subscription mid-cycle.
+// Body: { addon_type }
+router.post('/subscriptions/:id/add-addon', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { addon_type } = req.body || {};
+    if (!addon_type) return res.status(400).json({ error: 'addon_type required' });
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, gen_class, status')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (sub.status === 'canceled') {
+      return res.status(400).json({ error: 'subscription is canceled; cannot add new add-ons' });
+    }
+
+    const price = lookupAddonPrice(addon_type, sub.gen_class);
+    if (!price) {
+      return res.status(400).json({ error: 'add-on not available for this gen class', addon_type, gen_class: sub.gen_class });
+    }
+
+    const { data: inserted, error: insErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .insert({
+        subscription_id: id,
+        addon_type,
+        stripe_price_id: price.price_id,
+        amount_cents: price.amount_cents,
+        status: 'pending',
+      })
+      .select()
+      .single();
+    if (insErr) throw insErr;
+
+    res.json({ ok: true, addon: inserted });
+  } catch (err) {
+    console.error('[generator-care] add-addon error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
