@@ -271,6 +271,13 @@
           <dt>Next visit due</dt><dd><input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.85rem;" /> <button id="gc-next-visit-save" class="gc-mark-done" style="font-size: 0.75rem; padding: 0.25rem 0.55rem; margin-left: 0.3rem;">Save</button></dd>
           <dt>Status</dt><dd>${escapeHtml(subscription.status)}</dd>
         </dl>
+        ${subscription.status === 'canceled'
+          ? `<div style="margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #FEF2F2; border-left: 3px solid #DC2626; color: #991B1B; font-size: 0.85rem;">
+              This subscription is canceled. Customer keeps service through their paid-through date; auto-renewal is off.
+            </div>`
+          : `<div style="margin-top: 0.75rem; text-align: right;">
+              <button class="gc-mark-done" id="gc-cancel-sub-btn" style="background: #DC2626; font-size: 0.75rem; padding: 0.3rem 0.7rem;">Cancel Subscription</button>
+            </div>`}
       </div>`;
 
       // Service visits
@@ -364,6 +371,11 @@
 
       // Wire up "Save next visit due" button
       const saveNvBtn = body.querySelector('#gc-next-visit-save');
+      const cancelBtn = body.querySelector('#gc-cancel-sub-btn');
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => cancelSubscription(id));
+      }
+
       if (saveNvBtn) {
         saveNvBtn.addEventListener('click', async () => {
           const newDate = body.querySelector('#gc-next-visit-input').value;
@@ -459,6 +471,32 @@
     } catch (err) {
       console.error('Unmark failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function cancelSubscription(subscriptionId) {
+    if (!confirm('Cancel this subscription?\n\nCustomer keeps service through their paid-through date. Stripe will NOT auto-renew at the end of the period.\n\nYou can add an optional reason in the next prompt.')) return;
+    const reason = prompt('Optional: reason for cancellation (or leave blank):', '');
+    if (reason === null) return; // user hit Cancel on the reason prompt
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim() || null }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Cancel failed: ${reason}`, 'error');
+      } else {
+        const through = data.service_through ? ` Service through ${data.service_through}.` : '';
+        showStatus(`Subscription canceled.${through}`, 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Cancel subscription failed:', err);
+      showStatus(`Cancel failed: ${err.message}`, 'error');
     }
   }
 
