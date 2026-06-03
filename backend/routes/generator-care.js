@@ -322,4 +322,70 @@ router.post('/addons/:id/unmark-performed', async (req, res) => {
   }
 });
 
+
+// POST /api/generator-care/subscriptions/:id/cancel
+// Cancel subscription at the end of the current billing period.
+// Customer keeps service through paid-through date; Stripe stops auto-renewal.
+// DB marks 'canceled' with optional reason in notes.
+router.post('/subscriptions/:id/cancel', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('*, customer:generator_customers(name)')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (sub.status === 'canceled') {
+      return res.status(400).json({ error: 'subscription already canceled' });
+    }
+    if (!sub.stripe_subscription_id) {
+      return res.status(400).json({ error: 'no Stripe subscription linked' });
+    }
+
+    // Cancel at period end in Stripe
+    let stripeSub;
+    try {
+      stripeSub = await stripe.subscriptions.update(sub.stripe_subscription_id, {
+        cancel_at_period_end: true,
+        cancellation_details: reason ? { comment: reason } : undefined,
+      });
+    } catch (stripeErr) {
+      console.error('[generator-care] Stripe cancel failed:', stripeErr);
+      return res.status(502).json({ error: 'Stripe update failed', reason: stripeErr.message });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const noteAddition = 'Canceled on ' + today + (reason ? ': ' + reason : '');
+    const newNotes = sub.notes ? sub.notes + '\n\n' + noteAddition : noteAddition;
+
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .update({
+        status: 'canceled',
+        notes: newNotes,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    const periodEnd = stripeSub.current_period_end
+      ? new Date(stripeSub.current_period_end * 1000).toISOString().slice(0, 10)
+      : null;
+
+    res.json({
+      ok: true,
+      subscription: updated,
+      service_through: periodEnd,
+    });
+  } catch (err) {
+    console.error('[generator-care] cancel subscription error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
