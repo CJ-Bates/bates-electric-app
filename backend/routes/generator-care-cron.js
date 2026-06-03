@@ -57,6 +57,22 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  else upcoming.push(s);
  }
 
+    // Look up visit statuses for upcoming subs to split tentative vs confirmed.
+    const upcomingSubIds = upcoming.map(s => s.id);
+    const statusBySubId = {};
+    if (upcomingSubIds.length > 0) {
+      const { data: visits } = await supabaseAdmin
+        .from('generator_service_visits')
+        .select('subscription_id, status')
+        .in('subscription_id', upcomingSubIds)
+        .in('status', ['tentative', 'scheduled']);
+      for (const v of (visits || [])) {
+        if (!statusBySubId[v.subscription_id]) statusBySubId[v.subscription_id] = v.status;
+      }
+    }
+    const upcomingTentative = upcoming.filter(s => statusBySubId[s.id] === 'tentative');
+    const upcomingConfirmed = upcoming.filter(s => statusBySubId[s.id] !== 'tentative');
+
  // Also pull any failed addon charges + failed adhoc charges so we can surface them.
     const [failedAddonsR, failedAdhocR] = await Promise.all([
       supabaseAdmin
@@ -79,7 +95,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  return res.json({ ok: true, sent: false, reason: 'No visits or failed charges', overdue: 0, upcoming: 0, failed: 0 });
  }
 
- const { subject, html, text } = buildEmail({ overdue, upcoming, failedAddons, failedAdhoc, todayStr });
+ const { subject, html, text } = buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, todayStr });
 
  if (!SENDGRID_KEY) {
  return res.status(500).json({ error: 'SENDGRID_API_KEY not configured', preview: { subject, text } });
@@ -93,7 +109,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  html,
  });
 
- res.json({ ok: true, sent: true, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length });
+ res.json({ ok: true, sent: true, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length });
  } catch (err) {
  console.error('[gc-cron] daily-email error:', err && (err.response?.body || err.message));
  res.status(500).json({ error: err.message });
@@ -102,7 +118,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 
 // Helpers --------------------------------------------------
 
-function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], todayStr }) {
+function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirmed = [], failedAddons = [], failedAdhoc = [], todayStr }) {
  const total = overdue.length + upcoming.length;
  const failedTotalForSubject = failedAddons.length + failedAdhoc.length;
       const subject = failedTotalForSubject > 0
@@ -214,7 +230,8 @@ function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], to
  ${overdue.length ? `<strong style="color:#b91c1c;">${overdue.length} overdue.</strong>` : ''}
  </p>
  ${section('Overdue', overdue, '#b91c1c')}
- ${section('Due in next 14 days', upcoming, '#1F3A5F')}
+ ${section('Tentative - please confirm with customer', upcomingTentative, '#D97706')}
+          ${section('Confirmed visits - due in next 14 days', upcomingConfirmed, '#1F3A5F')}
           ${renderFailedSection(failedAddons, failedAdhoc)}
  <p style="margin:24px 0 0;text-align:center;">
  <a href="${dashboardUrl}" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;font-size:14px;">Open Generator Care dashboard -></a>
@@ -239,10 +256,10 @@ function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], to
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  ${Math.abs(d)} days overdue  -  ${c.phone || ''}`);
  }
  }
- if (upcoming.length) {
+ if (upcomingTentative.length) {
  textLines.push('');
- textLines.push(`DUE IN NEXT 14 DAYS (${upcoming.length}):`);
- for (const s of upcoming) {
+ textLines.push(`TENTATIVE - PLEASE CONFIRM (${upcomingTentative.length}):`);
+ for (const s of upcomingTentative) {
  const c = s.customer || {};
  const d = daysUntil(s.next_visit_due);
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`} (${fmtDate(s.next_visit_due)})  -  ${c.phone || ''}`);
@@ -250,6 +267,16 @@ function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], to
  }
  textLines.push('');
  textLines.push(`Dashboard: ${dashboardUrl}`);
+
+ if (upcomingConfirmed.length) {
+        textLines.push('');
+        textLines.push(`CONFIRMED - DUE IN NEXT 14 DAYS (${upcomingConfirmed.length}):`);
+        for (const s of upcomingConfirmed) {
+          const d = Math.round((new Date(s.next_visit_due) - new Date(todayStr)) / 86400000);
+          const c = s.customer || {};
+          textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  in ${d} days  -  ${c.phone || ''}`);
+        }
+      }
 
  if (failedAddons.length || failedAdhoc.length) {
         textLines.push('');
