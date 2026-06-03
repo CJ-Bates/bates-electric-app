@@ -504,4 +504,46 @@ router.post('/subscriptions/:id/add-addon', async (req, res) => {
   }
 });
 
+
+// POST /api/generator-care/addons/:id/remove
+// Soft-delete a pending add-on (sets status='canceled'). Only allowed for status='pending'.
+// Performed addons should use /unmark-performed first to revert to pending.
+// Charged addons can't be removed (need a refund flow).
+router.post('/addons/:id/remove', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: addon, error: addonErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .select('id, status')
+      .eq('id', id)
+      .single();
+    if (addonErr) throw addonErr;
+    if (!addon) return res.status(404).json({ error: 'addon not found' });
+    if (addon.status !== 'pending') {
+      return res.status(400).json({
+        error: 'can only remove pending add-ons',
+        current_status: addon.status,
+        hint: addon.status === 'performed' ? 'use /unmark-performed first' : 'addon is past the pending stage',
+      });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .update({
+        status: 'canceled',
+        notes: 'Removed by office on ' + today,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    res.json({ ok: true, addon: updated });
+  } catch (err) {
+    console.error('[generator-care] remove addon error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
