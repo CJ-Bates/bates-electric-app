@@ -9,6 +9,9 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
 
 // All routes require office role
+const Stripe = require('stripe');
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
 router.use(requireAuth, requireRole('office'));
 
 // GET /api/generator-care/subscriptions
@@ -193,6 +196,87 @@ router.post('/visits/:id/confirm', async (req, res) => {
     res.json({ ok: true, visit: updated });
   } catch (err) {
     console.error('[generator-care] confirm visit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// POST /api/generator-care/addons/:id/charge
+// Charge the customer's saved card for a pending add-on (off-session, default payment method).
+// On success: marks addon 'charged'. On failure (declined etc.): marks 'failed' with reason in notes.
+router.post('/addons/:id/charge', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. Fetch the addon + sub + customer
+    const { data: addon, error: addonErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .select('*, subscription:generator_subscriptions(id, stripe_customer_id, customer:generator_customers(name))')
+      .eq('id', id)
+      .single();
+    if (addonErr) throw addonErr;
+    if (!addon) return res.status(404).json({ error: 'addon not found' });
+
+    if (addon.status === 'charged') {
+      return res.status(400).json({ error: 'addon already charged' });
+    }
+    if (!addon.amount_cents || addon.amount_cents <= 0) {
+      return res.status(400).json({ error: 'no charge amount on this addon' });
+    }
+    if (!addon.subscription || !addon.subscription.stripe_customer_id) {
+      return res.status(400).json({ error: 'no Stripe customer linked' });
+    }
+
+    const customerId = addon.subscription.stripe_customer_id;
+    const customerName = (addon.subscription.customer && addon.subscription.customer.name) || 'customer';
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 2. Create PaymentIntent on saved card (off-session)
+    let intent;
+    try {
+      intent = await stripe.paymentIntents.create({
+        customer: customerId,
+        amount: addon.amount_cents,
+        currency: 'usd',
+        payment_method_types: ['card'],
+        off_session: true,
+        confirm: true,
+        description: 'Generator add-on: ' + addon.addon_type + ' (' + customerName + ')',
+        metadata: {
+          addon_id: id,
+          subscription_id: addon.subscription.id,
+          addon_type: addon.addon_type,
+        },
+      });
+    } catch (stripeErr) {
+      const reason = stripeErr.message || stripeErr.code || 'unknown_error';
+      await supabaseAdmin
+        .from('generator_pending_addons')
+        .update({
+          status: 'failed',
+          notes: 'Charge failed on ' + today + ': ' + reason,
+        })
+        .eq('id', id);
+      return res.status(402).json({ error: 'charge failed', reason, addon_id: id });
+    }
+
+    // 3. Charge succeeded - record it
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .update({
+        status: 'charged',
+        date_performed: addon.date_performed || today,
+        date_charged: today,
+        stripe_payment_intent_id: intent.id,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    res.json({ ok: true, addon: updated, payment_intent_id: intent.id, amount_cents: intent.amount });
+  } catch (err) {
+    console.error('[generator-care] addon charge error:', err);
     res.status(500).json({ error: err.message });
   }
 });
