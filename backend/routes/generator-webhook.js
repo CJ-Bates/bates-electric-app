@@ -186,17 +186,32 @@ async function handleInvoicePaid(invoice) {
   for (const line of invoice.lines.data) {
     const meta = (line.metadata || {});
     const addonId = meta.addon_id;
-    if (!addonId) continue;
-    const { error } = await supabase
-      .from('generator_pending_addons')
-      .update({
-        status: 'charged',
-        date_charged: today,
-        stripe_payment_intent_id: paymentIntentId,
-      })
-      .eq('id', addonId);
-    if (error) {
-      console.error('[generator-webhook] failed to mark addon charged:', addonId, error.message);
+    const adhocId = meta.adhoc_charge_id;
+    if (addonId) {
+      const { error } = await supabase
+        .from('generator_pending_addons')
+        .update({
+          status: 'charged',
+          date_charged: today,
+          stripe_payment_intent_id: paymentIntentId,
+        })
+        .eq('id', addonId);
+      if (error) {
+        console.error('[generator-webhook] failed to mark addon charged:', addonId, error.message);
+      }
+    }
+    if (adhocId) {
+      const { error } = await supabase
+        .from('generator_adhoc_charges')
+        .update({
+          status: 'charged',
+          date_charged: today,
+          stripe_payment_intent_id: paymentIntentId,
+        })
+        .eq('id', adhocId);
+      if (error) {
+        console.error('[generator-webhook] failed to mark adhoc charged:', adhocId, error.message);
+      }
     }
   }
 }
@@ -211,16 +226,30 @@ async function handleInvoicePaymentFailed(invoice) {
   for (const line of invoice.lines.data) {
     const meta = (line.metadata || {});
     const addonId = meta.addon_id;
-    if (!addonId) continue;
-    const { error } = await supabase
-      .from('generator_pending_addons')
-      .update({
-        status: 'failed',
-        notes: 'Renewal charge failed on ' + today + ': ' + reason,
-      })
-      .eq('id', addonId);
-    if (error) {
-      console.error('[generator-webhook] failed to mark addon failed:', addonId, error.message);
+    const adhocId = meta.adhoc_charge_id;
+    if (addonId) {
+      const { error } = await supabase
+        .from('generator_pending_addons')
+        .update({
+          status: 'failed',
+          notes: 'Renewal charge failed on ' + today + ': ' + reason,
+        })
+        .eq('id', addonId);
+      if (error) {
+        console.error('[generator-webhook] failed to mark addon failed:', addonId, error.message);
+      }
+    }
+    if (adhocId) {
+      const { error } = await supabase
+        .from('generator_adhoc_charges')
+        .update({
+          status: 'failed',
+          notes: 'Renewal charge failed on ' + today + ': ' + reason,
+        })
+        .eq('id', adhocId);
+      if (error) {
+        console.error('[generator-webhook] failed to mark adhoc failed:', adhocId, error.message);
+      }
     }
   }
 }
