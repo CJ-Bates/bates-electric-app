@@ -399,10 +399,6 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
 // Hardcoded catalog of one-time add-ons by gen class.
 // Mirrors the catalog in bates-generator/netlify/functions/create-checkout.js.
 const ADDON_CATALOG = {
-  battery_diagnostics: {
-    label: 'Battery Diagnostics / Load Test',
-    prices: { all: { price_id: 'price_1TdcRYBbX7QhpMgbqf02jIWS', amount_cents: 5500 } },
-  },
   battery_replacement: {
     label: 'Battery Replacement',
     prices: {
