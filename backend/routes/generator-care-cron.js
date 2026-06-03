@@ -79,7 +79,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  return res.json({ ok: true, sent: false, reason: 'No visits or failed charges', overdue: 0, upcoming: 0, failed: 0 });
  }
 
- const { subject, html, text } = buildEmail({ overdue, upcoming, failedAddons, failedAdhoc, todayStr });
+ const { subject, html, text } = buildEmail({ overdue, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, todayStr });
 
  if (!SENDGRID_KEY) {
  return res.status(500).json({ error: 'SENDGRID_API_KEY not configured', preview: { subject, text } });
@@ -102,13 +102,13 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 
 // Helpers --------------------------------------------------
 
-function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], todayStr }) {
+function buildEmail({ overdue, upcomingTentative = [], upcomingConfirmed = [], failedAddons = [], failedAdhoc = [], todayStr }) {
  const total = overdue.length + upcoming.length;
  const failedTotalForSubject = failedAddons.length + failedAdhoc.length;
       const subject = failedTotalForSubject > 0
         ? 'Generator Care: ' + failedTotalForSubject + ' FAILED CHARGE' + (failedTotalForSubject === 1 ? '' : 'S') + ', ' + overdue.length + ' overdue, ' + upcoming.length + ' due soon'
         : overdue.length
- ? `Generator Care: ${overdue.length} OVERDUE, ${upcoming.length} due soon`
+ ? `Generator Care: ${overdue.length} OVERDUE, ${upcomingTentative.length + upcomingConfirmed.length} due soon`
  : `Generator Care: ${upcoming.length} visit${upcoming.length === 1 ? '' : 's'} due in the next 14 days`;
 
  const dashboardUrl = 'https://bates-electric-app.netlify.app/generator-care.html';
@@ -214,7 +214,8 @@ function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], to
  ${overdue.length ? `<strong style="color:#b91c1c;">${overdue.length} overdue.</strong>` : ''}
  </p>
  ${section('Overdue', overdue, '#b91c1c')}
- ${section('Due in next 14 days', upcoming, '#1F3A5F')}
+ ${section('Tentative - please confirm with customer', upcomingTentative, '#D97706', true)}
+          ${section('Confirmed visits - due in next 14 days', upcomingConfirmed, '#1F3A5F')}
           ${renderFailedSection(failedAddons, failedAdhoc)}
  <p style="margin:24px 0 0;text-align:center;">
  <a href="${dashboardUrl}" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;font-size:14px;">Open Generator Care dashboard -></a>
@@ -239,10 +240,10 @@ function buildEmail({ overdue, upcoming, failedAddons = [], failedAdhoc = [], to
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  ${Math.abs(d)} days overdue  -  ${c.phone || ''}`);
  }
  }
- if (upcoming.length) {
+ if (upcomingTentative.length) {
  textLines.push('');
- textLines.push(`DUE IN NEXT 14 DAYS (${upcoming.length}):`);
- for (const s of upcoming) {
+ textLines.push(`TENTATIVE - PLEASE CONFIRM (${upcomingTentative.length}):`);
+ for (const s of upcomingTentative) {
  const c = s.customer || {};
  const d = daysUntil(s.next_visit_due);
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`} (${fmtDate(s.next_visit_due)})  -  ${c.phone || ''}`);
