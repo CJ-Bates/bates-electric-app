@@ -311,9 +311,16 @@
       }
       html += `</div>`;
 
-      // Pending add-ons
-      if (pending_addons.length > 0) {
-        html += `<div class="gc-detail-section"><div class="gc-detail-h">Pre-authorized Add-ons</div>`;
+      // Pending add-ons (always show this section, even if empty)
+      {
+        html += `<div class="gc-detail-section">
+          <div class="gc-detail-h" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Pre-authorized Add-ons</span>
+            ${subscription.status === 'canceled' ? '' : `<button class="gc-mark-done" id="gc-add-addon-btn" style="background:#0F766E;font-size:0.7rem;padding:0.25rem 0.6rem;">+ Add Add-on</button>`}
+          </div>`;
+        if (pending_addons.length === 0) {
+          html += `<div style="color: #6b7280; font-size: 0.85rem; padding: 0.5rem 0;">No add-ons yet. Click "+ Add Add-on" to add one.</div>`;
+        }
         for (const a of pending_addons) {
           const amt = a.amount_cents ? `${(a.amount_cents/100).toFixed(2)}` : '';
           let action = '';
@@ -362,6 +369,11 @@
       });
 
       // Wire up Charge buttons on pending/failed add-ons
+      const addBtn = body.querySelector('#gc-add-addon-btn');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => addAddon(id));
+      }
+
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
       });
@@ -470,6 +482,52 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Unmark failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function addAddon(subscriptionId) {
+    try {
+      // Fetch available addons for this subscription's gen class
+      const listR = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/available-addons`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const listData = await listR.json();
+      if (!listR.ok) {
+        showStatus(`Could not load addons: ${listData.error || listR.status}`, 'error');
+        return;
+      }
+      const addons = listData.addons || [];
+      if (!addons.length) {
+        showStatus('No add-ons available for this generator class.', 'error');
+        return;
+      }
+      // Build numbered prompt
+      const lines = addons.map((a, i) => `${i+1}. ${a.label} (${(a.amount_cents/100).toFixed(2)})`);
+      const sel = prompt(`Which add-on to add?\n\n${lines.join('\n')}\n\nEnter the number (1-${addons.length}):`, '1');
+      if (sel === null) return;
+      const idx = parseInt(sel, 10) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= addons.length) {
+        showStatus('Invalid selection.', 'error');
+        return;
+      }
+      const choice = addons[idx];
+      if (!confirm(`Add "${choice.label}" (${(choice.amount_cents/100).toFixed(2)}) to this subscription as a pending add-on?\n\nIt will be charged at the next renewal once marked performed.`)) return;
+      const addR = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-addon`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addon_type: choice.addon_type }),
+      });
+      const addData = await addR.json();
+      if (!addR.ok) {
+        showStatus(`Could not add: ${addData.error || addR.status}`, 'error');
+      } else {
+        showStatus(`Added ${choice.label}.`, 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Add addon failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
