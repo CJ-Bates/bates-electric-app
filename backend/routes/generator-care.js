@@ -41,7 +41,7 @@ router.get('/subscriptions', async (req, res) => {
 router.get('/subscriptions/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    const [subR, visitsR, addonsR] = await Promise.all([
+    const [subR, visitsR, addonsR, adhocR] = await Promise.all([
       supabaseAdmin
         .from('generator_subscriptions')
         .select(`*, customer:generator_customers(*)`)
@@ -57,14 +57,21 @@ router.get('/subscriptions/:id', async (req, res) => {
         .select('*')
         .eq('subscription_id', id)
         .order('created_at', { ascending: true }),
+      supabaseAdmin
+        .from('generator_adhoc_charges')
+        .select('*')
+        .eq('subscription_id', id)
+        .order('created_at', { ascending: false }),
     ]);
     if (subR.error) throw subR.error;
     if (visitsR.error) throw visitsR.error;
     if (addonsR.error) throw addonsR.error;
+    if (adhocR.error) throw adhocR.error;
     res.json({
       subscription: subR.data,
       visits: visitsR.data || [],
       pending_addons: addonsR.data || [],
+      adhoc_charges: adhocR.data || [],
     });
   } catch (err) {
     console.error('[generator-care] subscription detail error:', err);
@@ -542,6 +549,202 @@ router.post('/addons/:id/remove', async (req, res) => {
     res.json({ ok: true, addon: updated });
   } catch (err) {
     console.error('[generator-care] remove addon error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// POST /api/generator-care/subscriptions/:id/adhoc-charge
+// Add an ad-hoc charge to a subscription for non-program work.
+// Body: { description, amount_cents, billing_method: 'immediate' | 'renewal', service_visit_id?, date_performed? }
+// 'immediate': charges the saved card now via PaymentIntent (off-session).
+// 'renewal':   adds a Stripe invoice item that bills at next subscription renewal.
+router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { description, amount_cents, billing_method, service_visit_id, date_performed } = req.body || {};
+
+    // Validate
+    if (!description || !description.trim()) {
+      return res.status(400).json({ error: 'description required' });
+    }
+    if (!amount_cents || !Number.isInteger(amount_cents) || amount_cents <= 0) {
+      return res.status(400).json({ error: 'amount_cents must be a positive integer' });
+    }
+    if (!['immediate', 'renewal'].includes(billing_method)) {
+      return res.status(400).json({ error: "billing_method must be 'immediate' or 'renewal'" });
+    }
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, stripe_subscription_id, stripe_customer_id, status, customer:generator_customers(name)')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (sub.status === 'canceled' && billing_method === 'renewal') {
+      return res.status(400).json({ error: 'subscription is canceled; no future renewal to bill against. Use billing_method=immediate.' });
+    }
+    if (!sub.stripe_customer_id) {
+      return res.status(400).json({ error: 'no Stripe customer linked' });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const performedDate = date_performed || today;
+    const customerName = (sub.customer && sub.customer.name) || 'customer';
+    const stripeDescription = 'Bates Electric: ' + description.trim();
+
+    // 1. Insert the row first as 'pending'
+    const { data: row, error: insErr } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .insert({
+        subscription_id: id,
+        service_visit_id: service_visit_id || null,
+        description: description.trim(),
+        amount_cents,
+        billing_method,
+        status: 'pending',
+        date_performed: performedDate,
+      })
+      .select()
+      .single();
+    if (insErr) throw insErr;
+
+    // 2. Hit Stripe based on billing_method
+    if (billing_method === 'immediate') {
+      let intent;
+      try {
+        intent = await stripe.paymentIntents.create({
+          customer: sub.stripe_customer_id,
+          amount: amount_cents,
+          currency: 'usd',
+          payment_method_types: ['card'],
+          off_session: true,
+          confirm: true,
+          description: stripeDescription,
+          metadata: {
+            adhoc_charge_id: row.id,
+            subscription_id: id,
+            customer_name: customerName,
+          },
+        });
+      } catch (stripeErr) {
+        const reason = stripeErr.message || stripeErr.code || 'unknown_error';
+        await supabaseAdmin
+          .from('generator_adhoc_charges')
+          .update({ status: 'failed', notes: 'Charge failed on ' + today + ': ' + reason })
+          .eq('id', row.id);
+        return res.status(402).json({ error: 'charge failed', reason, adhoc_charge_id: row.id });
+      }
+      const { data: updated, error: updErr } = await supabaseAdmin
+        .from('generator_adhoc_charges')
+        .update({
+          status: 'charged',
+          date_charged: today,
+          stripe_payment_intent_id: intent.id,
+        })
+        .eq('id', row.id)
+        .select()
+        .single();
+      if (updErr) throw updErr;
+      return res.json({ ok: true, adhoc_charge: updated, payment_intent_id: intent.id });
+    }
+
+    // billing_method === 'renewal' - create invoice item
+    if (!sub.stripe_subscription_id) {
+      await supabaseAdmin
+        .from('generator_adhoc_charges')
+        .update({ status: 'failed', notes: 'No Stripe subscription linked' })
+        .eq('id', row.id);
+      return res.status(400).json({ error: 'no Stripe subscription linked; cannot bill at renewal' });
+    }
+    let item;
+    try {
+      item = await stripe.invoiceItems.create({
+        customer: sub.stripe_customer_id,
+        subscription: sub.stripe_subscription_id,
+        amount: amount_cents,
+        currency: 'usd',
+        description: stripeDescription,
+        metadata: {
+          adhoc_charge_id: row.id,
+          subscription_id: id,
+          customer_name: customerName,
+        },
+      });
+    } catch (stripeErr) {
+      const reason = stripeErr.message || stripeErr.code || 'unknown_error';
+      await supabaseAdmin
+        .from('generator_adhoc_charges')
+        .update({ status: 'failed', notes: 'Invoice item create failed: ' + reason })
+        .eq('id', row.id);
+      return res.status(502).json({ error: 'Stripe invoice item create failed', reason });
+    }
+    const { data: updated, error: updErr2 } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .update({
+        stripe_invoice_item_id: item.id,
+      })
+      .eq('id', row.id)
+      .select()
+      .single();
+    if (updErr2) throw updErr2;
+
+    return res.json({ ok: true, adhoc_charge: updated, invoice_item_id: item.id });
+  } catch (err) {
+    console.error('[generator-care] adhoc-charge error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/generator-care/adhoc-charges/:id/cancel
+// Soft-cancel an ad-hoc charge.
+// If it's already charged: refuses (need refund flow).
+// If it's a pending renewal charge: also deletes the Stripe invoice item.
+router.post('/adhoc-charges/:id/cancel', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: charge, error: chErr } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (chErr) throw chErr;
+    if (!charge) return res.status(404).json({ error: 'charge not found' });
+    if (charge.status === 'charged') {
+      return res.status(400).json({ error: 'already charged - cannot remove. Refund must be handled separately.' });
+    }
+    if (charge.status === 'canceled') {
+      return res.json({ ok: true, adhoc_charge: charge, info: 'already canceled' });
+    }
+
+    // If it had an invoice item, try to delete it from Stripe
+    if (charge.stripe_invoice_item_id) {
+      try {
+        await stripe.invoiceItems.del(charge.stripe_invoice_item_id);
+      } catch (stripeErr) {
+        return res.status(400).json({
+          error: 'cannot cancel: invoice item already billed or not removable',
+          reason: stripeErr.message,
+        });
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .update({
+        status: 'canceled',
+        notes: (charge.notes ? charge.notes + '\n' : '') + 'Canceled on ' + today,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    res.json({ ok: true, adhoc_charge: updated });
+  } catch (err) {
+    console.error('[generator-care] adhoc-charges cancel error:', err);
     res.status(500).json({ error: err.message });
   }
 });
