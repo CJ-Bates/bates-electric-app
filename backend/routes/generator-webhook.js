@@ -63,6 +63,10 @@ router.post('/', async (req, res) => {
   try {
     if (event.type === 'customer.subscription.created') {
       await handleSubscriptionCreated(event.data.object);
+    } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
+      await handleInvoicePaid(event.data.object);
+    } else if (event.type === 'invoice.payment_failed') {
+      await handleInvoicePaymentFailed(event.data.object);
     }
     return res.json({ received: true });
   } catch (err) {
@@ -171,6 +175,54 @@ async function handleSubscriptionCreated(subscription) {
   }
 
   console.log(`[generator-webhook] created subscription ${sub.id} for customer ${customer.id}`);
+}
+
+
+async function handleInvoicePaid(invoice) {
+  if (!invoice || !invoice.lines || !invoice.lines.data) return;
+  const paymentIntentId = invoice.payment_intent || null;
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const line of invoice.lines.data) {
+    const meta = (line.metadata || {});
+    const addonId = meta.addon_id;
+    if (!addonId) continue;
+    const { error } = await supabase
+      .from('generator_pending_addons')
+      .update({
+        status: 'charged',
+        date_charged: today,
+        stripe_payment_intent_id: paymentIntentId,
+      })
+      .eq('id', addonId);
+    if (error) {
+      console.error('[generator-webhook] failed to mark addon charged:', addonId, error.message);
+    }
+  }
+}
+
+async function handleInvoicePaymentFailed(invoice) {
+  if (!invoice || !invoice.lines || !invoice.lines.data) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const reason = (invoice.last_finalization_error && invoice.last_finalization_error.message)
+    || (invoice.charge && invoice.charge.failure_message)
+    || 'Payment failed at renewal';
+
+  for (const line of invoice.lines.data) {
+    const meta = (line.metadata || {});
+    const addonId = meta.addon_id;
+    if (!addonId) continue;
+    const { error } = await supabase
+      .from('generator_pending_addons')
+      .update({
+        status: 'failed',
+        notes: 'Renewal charge failed on ' + today + ': ' + reason,
+      })
+      .eq('id', addonId);
+    if (error) {
+      console.error('[generator-webhook] failed to mark addon failed:', addonId, error.message);
+    }
+  }
 }
 
 module.exports = router;
