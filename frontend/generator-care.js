@@ -321,12 +321,17 @@
         if (pending_addons.length === 0) {
           html += `<div style="color: #6b7280; font-size: 0.85rem; padding: 0.5rem 0;">No add-ons yet. Click "+ Add Add-on" to add one.</div>`;
         }
-        for (const a of pending_addons) {
+        const visibleAddons = pending_addons.filter(a => a.status !== 'canceled');
+        for (const a of visibleAddons) {
           const amt = a.amount_cents ? `${(a.amount_cents/100).toFixed(2)}` : '';
           let action = '';
           let badgeColor = '#6b7280';
           if (a.status === 'pending') {
-            action = `<button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#0F766E;">Mark Performed</button>`;
+            action = `
+              <div style="display:flex;gap:0.3rem;align-items:center;">
+                <button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#0F766E;">Mark Performed</button>
+                <button class="gc-mark-done" data-remove-addon="${a.id}" data-label="${escapeHtml(addonLabel(a.addon_type))}" title="Remove this add-on" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">&times;</button>
+              </div>`;
           } else if (a.status === 'performed') {
             badgeColor = '#D97706';
             action = `
@@ -376,6 +381,9 @@
 
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
+      });
+      body.querySelectorAll('[data-remove-addon]').forEach(btn => {
+        btn.addEventListener('click', () => removeAddon(btn.dataset.removeAddon, btn.dataset.label, id));
       });
       body.querySelectorAll('[data-unmark]').forEach(btn => {
         btn.addEventListener('click', () => unmarkPerformed(btn.dataset.unmark, id));
@@ -428,6 +436,29 @@
       coolant_topoff: 'Coolant Top-Off',
       ats_inspection: 'ATS Inspection',
     })[t] || t;
+  }
+
+  async function removeAddon(addonId, label, subscriptionId) {
+    if (!confirm(`Remove "${label}" from this subscription?\n\nThe add-on will be marked canceled. You can always add it back via "+ Add Add-on".`)) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/remove`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.hint || data.error || `HTTP ${r.status}`;
+        showStatus(`Could not remove: ${reason}`, 'error');
+      } else {
+        showStatus(`Removed ${label}.`, 'success');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Remove addon failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
   }
 
   async function markPerformed(addonId, amount, label, subscriptionId) {
