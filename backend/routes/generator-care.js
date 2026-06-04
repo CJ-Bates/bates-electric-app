@@ -411,10 +411,6 @@ const ADDON_CATALOG = {
     label: 'Exterior Wash & Interior Blow-Out',
     prices: { all: { price_id: 'price_1TdcRZBbX7QhpMgbJxnGgkBp', amount_cents: 8500 } },
   },
-  outage_test: {
-    label: 'Simulated Power Outage Test',
-    prices: { all: { price_id: 'price_1TdcRZBbX7QhpMgbj4pU8wA9', amount_cents: 7500 } },
-  },
   coolant_flush: {
     label: 'Coolant System Flush',
     prices: {
@@ -422,9 +418,9 @@ const ADDON_CATALOG = {
       liquid_48_150: { price_id: 'price_1TdcRbBbX7QhpMgbfeEKybBk', amount_cents: 69500 },
     },
   },
-  ats_inspection: {
-    label: 'Automatic Transfer Switch Inspection',
-    prices: { all: { price_id: 'price_1TdysDBbX7QhpMgb3nlOtlLn', amount_cents: 7500 } },
+  ats_outage_combined: {
+    label: 'Transfer Switch Inspection & Simulated Outage Test',
+    prices: { all: { price_id: 'price_1TejJPBbX7QhpMgbHGnp1V2U', amount_cents: 11000 } },
   },
 };
 
