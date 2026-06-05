@@ -129,7 +129,7 @@
   function renderWeather(els, loc, weather) {
     const w = weatherFromCode(weather.code);
     els.iconEl.innerHTML = WEATHER_ICONS[w.icon] || WEATHER_ICONS.cloud;
-    els.tempEl.textContent = `${weather.t}Â°`;
+    els.tempEl.textContent = `${weather.t}°`;
     els.locEl.textContent = loc.city || '';
     els.wrap.title = w.label;
     els.wrap.hidden = false;
@@ -205,7 +205,7 @@
         tempEl: document.getElementById('hero-weather-temp'),
         locEl: document.getElementById('hero-weather-loc'),
       };
-      els.locEl.textContent = 'Locatingâ¦';
+      els.locEl.textContent = 'Locating…';
       await requestFreshLocation(els, { silent: false });
     };
     wrap.addEventListener('click', handler);
