@@ -361,11 +361,11 @@ async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annu
       '<tr><td style="padding:6px 0;color:#6B7280;">Annual billing</td><td style="padding:6px 0;font-weight:600;">' + escHtml(fmtMoney(annualPriceCents)) + '/year</td></tr>' +
       (fleetMonitoring ? '<tr><td style="padding:6px 0;color:#6B7280;">Add-on</td><td style="padding:6px 0;font-weight:600;">Fleet Monitoring (Mobile Link)</td></tr>' : '') +
       '</table>' +
-      '<p style="margin:28px 0 0;line-height:1.55;color:#374151;">Have questions, need to reschedule, or want to update your card? Just reply to this email or give us a call at <strong>(314) 814-1414</strong>.</p>' +
+      '<p style="margin:28px 0 0;line-height:1.55;color:#374151;">Have questions, need to reschedule, or want to update your card? Just reply to this email or give us a call at <strong>(636) 464-3939</strong>.</p>' +
       '<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">\u2014 The Bates Electric team</p>' +
       '</div>' +
       '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
-      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (314) 814-1414</p>' +
+      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (636) 464-3939</p>' +
       '</div>' +
       '</div></body></html>';
 
@@ -381,7 +381,7 @@ async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annu
       (nextVisitDate ? 'First visit: ' + fmtDate(nextVisitDate) + ' (we will confirm time)\n' : '') +
       'Annual billing: ' + fmtMoney(annualPriceCents) + '/year\n' +
       (fleetMonitoring ? 'Add-on: Fleet Monitoring (Mobile Link)\n' : '') +
-      '\nQuestions? Reply here or call (314) 814-1414.\n\n\u2014 Bates Electric';
+      '\nQuestions? Reply here or call (636) 464-3939.\n\n\u2014 Bates Electric';
 
     sgMail.setApiKey(SENDGRID_KEY);
     await sgMail.send({
@@ -435,18 +435,18 @@ async function sendCardFailedEmail({ customer, amountCents, description }) {
       '<a href="' + portalUrl + '" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;font-size:15px;">Update your card</a>' +
       '</p>' +
       '<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for a few days. While you\'re in there you can also see your invoice history or update your contact info.</p>' +
-      '<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">If you\'d rather handle it over the phone or have any questions, just call us at <strong>(314) 814-1414</strong>.</p>' +
+      '<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">If you\'d rather handle it over the phone or have any questions, just call us at <strong>(636) 464-3939</strong>.</p>' +
       '<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">\u2014 The Bates Electric team</p>' +
       '</div>' +
       '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
-      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (314) 814-1414</p>' +
+      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (636) 464-3939</p>' +
       '</div>' +
       '</div></body></html>';
 
     const text = 'Hi ' + (customer.name || 'there') + ',\n\n' +
       'We tried to charge your card on file' + amountLine + descLine + ' and it didn\'t go through. Usually it\'s something simple \u2014 expired card, daily limit, or the bank flagging the charge.\n\n' +
       'You can update your card here:\n' + portalUrl + '\n\n' +
-      'If you\'d rather handle it over the phone, just call (314) 814-1414.\n\n' +
+      'If you\'d rather handle it over the phone, just call (636) 464-3939.\n\n' +
       '\u2014 Bates Electric';
 
     sgMail.setApiKey(SENDGRID_KEY);
