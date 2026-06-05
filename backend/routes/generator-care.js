@@ -836,4 +836,39 @@ router.get('/accounting/transactions', async (req, res) => {
   }
 });
 
+// === CUSTOMER PORTAL ===
+
+// POST /subscriptions/:id/portal-session
+// Creates a Stripe Customer Portal session for the subscription's customer.
+// Returns a one-time URL that the customer can use to update their card,
+// see invoice history, or change their email/phone/address.
+router.post('/subscriptions/:id/portal-session', async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('stripe_customer_id, customer:generator_customers(name, email)')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub || !sub.stripe_customer_id) {
+      return res.status(404).json({ error: 'Subscription or Stripe customer not found' });
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: sub.stripe_customer_id,
+      return_url: 'https://app.bates-electric.com/generator-care.html'
+    });
+
+    res.json({
+      url: session.url,
+      customer_email: sub.customer && sub.customer.email,
+      customer_name: sub.customer && sub.customer.name,
+      expires_at: session.expires_at
+    });
+  } catch (err) {
+    console.error('[portal-session] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
