@@ -245,7 +245,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  <div style="margin-top:24px;padding:16px 24px;text-align:center;color:#9ca3af;font-size:11px;line-height:1.6;">
    <div style="font-weight:600;color:#6b7280;letter-spacing:0.5px;">BATES ELECTRIC, INC.</div>
    <div>Commercial &middot; Residential &middot; Industrial &middot; Restorative</div>
-   <div style="margin-top:6px;">(314) 814-1414 &middot; bates-electric.com</div>
+   <div style="margin-top:6px;">(636) 464-3939 &middot; bates-electric.com</div>
  </div>
  </div>
 </body></html>`;
