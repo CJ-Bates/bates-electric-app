@@ -276,7 +276,7 @@
               This subscription is canceled. Customer keeps service through their paid-through date; auto-renewal is off.
             </div>`
           : `<div style="margin-top: 0.75rem; text-align: right;">
-              <button class="gc-mark-done" id="gc-portal-btn" style="background: #1F3A5F; font-size: 0.75rem; padding: 0.3rem 0.7rem; margin-right: 6px;">Send Card-Update Link</button><button class="gc-mark-done" id="gc-cancel-sub-btn" style="background: #DC2626; font-size: 0.75rem; padding: 0.3rem 0.7rem;">Cancel Subscription</button>
+              <button class="gc-mark-done" id="gc-resend-welcome-btn" style="background: #1F3A5F; font-size: 0.75rem; padding: 0.3rem 0.7rem; margin-right: 6px;">Resend Welcome Email</button><button class="gc-mark-done" id="gc-portal-btn" style="background: #1F3A5F; font-size: 0.75rem; padding: 0.3rem 0.7rem; margin-right: 6px;">Send Card-Update Link</button><button class="gc-mark-done" id="gc-cancel-sub-btn" style="background: #DC2626; font-size: 0.75rem; padding: 0.3rem 0.7rem;">Cancel Subscription</button>
             </div>`}
       </div>`;
 
@@ -447,6 +447,10 @@
       const portalBtn = body.querySelector('#gc-portal-btn');
       if (portalBtn) {
         portalBtn.addEventListener('click', () => sendPortalLink(id));
+      }
+      const resendWelcomeBtn = body.querySelector('#gc-resend-welcome-btn');
+      if (resendWelcomeBtn) {
+        resendWelcomeBtn.addEventListener('click', () => resendWelcomeEmail(id, resendWelcomeBtn));
       }
 
       if (saveNvBtn) {
@@ -832,6 +836,32 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
   loadSubscriptions();
+
+  // ---- Resend Welcome Email ----
+  async function resendWelcomeEmail(subscriptionId, btn) {
+    const originalText = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-welcome`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json();
+      if (!r.ok || !data.sent) {
+        const reason = data.error || data.email_status || `HTTP ${r.status}`;
+        alert(`Couldn't resend welcome email: ${reason}`);
+        return;
+      }
+      const who = data.customer_name ? ` to ${data.customer_name}` : '';
+      const emailAddr = data.customer_email ? ` (${data.customer_email})` : '';
+      alert(`Welcome email re-sent${who}${emailAddr}.`);
+    } catch (err) {
+      console.error('Resend welcome failed:', err);
+      alert(`Failed: ${err.message}`);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+  }
 
   // ---- Send Customer Portal link ----
   async function sendPortalLink(subscriptionId) {

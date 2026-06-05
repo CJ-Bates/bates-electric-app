@@ -896,6 +896,81 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
 });
 
 
+// POST /subscriptions/:id/resend-welcome
+// Re-renders the welcome email from the subscription's current data and sends
+// it to the customer on file. Same template that fires from
+// customer.subscription.created. Useful when a customer says they never got
+// the original or accidentally deleted it.
+router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select(`
+        id, plan, annual_price_cents, next_visit_due, fleet_monitoring,
+        gen_class, gen_type_label, gen_model, gen_serial,
+        raw_metadata,
+        customer:generator_customers(name, email, install_address, install_city, install_state, install_zip)
+      `)
+      .eq('id', req.params.id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+
+    const customer = sub.customer || {};
+    if (!customer.email) {
+      return res.status(400).json({
+        ok: false,
+        error: 'No email on file for this customer',
+        customer_name: customer.name || null,
+      });
+    }
+
+    // Prefer raw_metadata (what Stripe sent at signup); fall back to the
+    // denormalized columns on the subscription/customer rows for older subs.
+    const rawMeta = sub.raw_metadata || {};
+    const meta = {
+      gen_class: rawMeta.gen_class || sub.gen_class || '',
+      gen_type: rawMeta.gen_type || sub.gen_type_label || '',
+      gen_model: rawMeta.gen_model || sub.gen_model || '',
+      gen_serial: rawMeta.gen_serial || sub.gen_serial || '',
+      install_address: rawMeta.install_address || customer.install_address || '',
+      install_city: rawMeta.install_city || customer.install_city || '',
+      install_state: rawMeta.install_state || customer.install_state || '',
+      install_zip: rawMeta.install_zip || customer.install_zip || '',
+    };
+    const planLabel = sub.plan === 'semi_annual' ? 'Semi-Annual' : (sub.plan === 'annual' ? 'Annual' : sub.plan);
+
+    const { subject, html, text } = buildWelcomeEmail({
+      customer,
+      meta,
+      planLabel,
+      nextVisitDate: sub.next_visit_due,
+      annualPriceCents: sub.annual_price_cents,
+      fleetMonitoring: sub.fleet_monitoring,
+    });
+
+    const result = await sendEmail({
+      to: customer.email,
+      subject,
+      html,
+      text,
+      logTag: '[resend-welcome]',
+    });
+
+    return res.json({
+      ok: result.sent,
+      sent: result.sent,
+      customer_name: customer.name || null,
+      customer_email: customer.email,
+      email_status: result.reason || (result.sent ? 'sent' : 'failed'),
+    });
+  } catch (err) {
+    console.error('[resend-welcome] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // ---- Send "manage your account" email with portal link ----
 async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
   const { subject, html, text } = buildCardUpdateLinkEmail({ name, portalUrl });
