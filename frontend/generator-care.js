@@ -845,10 +845,17 @@
         showStatus(`Portal link failed: ${data.error || 'HTTP ' + r.status}`, 'error');
         return;
       }
-      try { await navigator.clipboard.writeText(data.url); } catch (_) {}
-      const who = data.customer_name ? ` for ${data.customer_name}` : '';
-      const emailLine = data.customer_email ? `\n\nText or email it to: ${data.customer_email}` : '';
-      alert(`Card-update link${who} (copied to clipboard):\n\n${data.url}${emailLine}\n\nLink expires in about an hour. Customer can use it to update their card, see invoices, or change contact info.`);
+      const who = data.customer_name ? ` to ${data.customer_name}` : '';
+      const emailAddr = data.customer_email ? ` (${data.customer_email})` : '';
+      if (data.email_sent) {
+        alert(`Card-update link emailed${who}${emailAddr}.\n\nThe customer can use it to update their card, see invoices, or change contact info. Link expires in about an hour.`);
+      } else {
+        // Fallback if SendGrid is down or the customer has no email on file
+        try { await navigator.clipboard.writeText(data.url); } catch (_) {}
+        const reason = data.email_status ? ' (' + data.email_status + ')' : '';
+        const target = data.customer_email || 'the customer';
+        alert(`Couldn't auto-send the email${reason}.\n\nLink copied to clipboard \u2014 text or email it to ${target}:\n\n${data.url}\n\nLink expires in about an hour.`);
+      }
     } catch (err) {
       console.error('Portal link failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
