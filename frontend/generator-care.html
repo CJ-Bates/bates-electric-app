@@ -52,6 +52,21 @@
       .gc-card-due { font-size: 0.85rem; font-weight: 600; margin-top: 8px; }
       .gc-card-due.overdue { color: #991b1b; }
       .gc-card-due.soon { color: #92400e; }
+    
+      /* Mobile tap target improvements */
+      .gc-mark-done { padding: 12px 16px; font-size: 0.95rem; min-height: 44px; border-radius: 6px; }
+      .gc-mark-done.gc-mark-done-sm { padding: 10px 14px; font-size: 0.88rem; min-height: 40px; }
+      .gc-tab { padding: 10px 14px; font-size: 0.95rem; }
+      .dashboard-header-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+      .dashboard-header-actions .btn-secondary { padding: 8px 12px; font-size: 0.85rem; min-height: 36px; }
+      /* Detail modal: stack action buttons + give them room */
+      .modal-content { width: 95% !important; max-width: 95% !important; max-height: 92vh !important; }
+      .modal-body { padding: 16px !important; }
+      .gc-detail-section { margin-bottom: 18px; }
+      .gc-visit-row { flex-wrap: wrap; gap: 8px; padding: 12px 0; }
+      .gc-visit-row .gc-mark-done { width: 100%; }
+      /* Inputs at least 16px to prevent iOS zoom */
+      .modal-body input, .modal-body select, .modal-body textarea { font-size: 16px !important; }
     }
     /* Detail modal styles */
     .gc-detail-section { margin-bottom: 24px; }
