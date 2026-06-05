@@ -913,11 +913,11 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
       '<a href="' + portalUrl + '" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;font-size:15px;">Manage my account</a>' +
       '</p>' +
       '<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for about an hour. If it expires before you click it, just reply to this email and we will send a fresh one.</p>' +
-      '<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions? Reply to this email or call us at <strong>(314) 814-1414</strong>.</p>' +
+      '<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions? Reply to this email or call us at <strong>(636) 464-3939</strong>.</p>' +
       '<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">\u2014 The Bates Electric team</p>' +
       '</div>' +
       '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
-      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (314) 814-1414</p>' +
+      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (636) 464-3939</p>' +
       '</div>' +
       '</div></body></html>';
 
@@ -925,7 +925,7 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
       'Here is a secure link to your Bates Electric generator care account. You can use it to update your card on file, view your invoice history, or change your contact info.\n\n' +
       portalUrl + '\n\n' +
       'The link is good for about an hour. If it expires, just reply to this email and we will send a fresh one.\n\n' +
-      'Questions? Reply here or call (314) 814-1414.\n\n\u2014 Bates Electric';
+      'Questions? Reply here or call (636) 464-3939.\n\n\u2014 Bates Electric';
 
     sgMail.setApiKey(SENDGRID_KEY);
     await sgMail.send({
