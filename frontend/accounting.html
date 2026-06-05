@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="styles.css" rel="stylesheet" />
+  <title>Bates Electric — Accounting</title>
+  <style>
+    .acc-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+    .acc-control { display: flex; flex-direction: column; }
+    .acc-control label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .acc-control input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: #fff; color: #1F3A5F; }
+    .acc-control input:focus { outline: none; border-color: #1F3A5F; }
+    .acc-summary { background: #f3f4f6; padding: 18px 22px; border-radius: 10px; margin-bottom: 16px; display: flex; gap: 36px; flex-wrap: wrap; }
+    .acc-summary-item .label { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .acc-summary-item .value { font-size: 1.5rem; font-weight: 700; color: #1F3A5F; font-variant-numeric: tabular-nums; }
+    .acc-summary-item.fee .value { color: #b45309; }
+    .acc-summary-item.net .value { color: #047857; }
+    .acc-table-wrap { background: #fff; border-radius: 8px; overflow: auto; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    .acc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .acc-table th { background: #f3f4f6; padding: 10px 14px; text-align: left; font-weight: 600; color: #374151; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    .acc-table td { padding: 12px 14px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+    .acc-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .acc-table tbody tr:hover { background: #fafbfc; }
+    .acc-table tfoot td { background: #f9fafb; font-weight: 700; color: #1F3A5F; }
+    .acc-stripe-id { font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; color: #6b7280; }
+    .acc-mobile-cards { display: none; }
+    .acc-card { background: #fff; padding: 14px 16px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid #1F3A5F; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    .acc-card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+    .acc-card-name { font-weight: 600; color: #1F3A5F; }
+    .acc-card-amount { font-weight: 700; color: #1F3A5F; font-variant-numeric: tabular-nums; }
+    .acc-card-meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 8px; }
+    .acc-card-footer { display: flex; justify-content: space-between; font-size: 0.78rem; color: #6b7280; padding-top: 8px; border-top: 1px solid #f3f4f6; }
+    .acc-card-footer .fee { color: #b45309; }
+    .acc-card-footer .net { color: #047857; }
+    @media (max-width: 768px) {
+      .acc-table-wrap { display: none; }
+      .acc-mobile-cards { display: block; }
+      .acc-summary { gap: 20px; padding: 14px 16px; }
+      .acc-summary-item .value { font-size: 1.2rem; }
+    }
+  </style>
+</head>
+<body class="hub-body dashboard-body">
+  <main class="dashboard-main">
+    <div class="dashboard-header">
+      <a href="home.html" class="btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Back</a><h1 style="display:inline-block;">Accounting</h1>
+      <div class="dashboard-header-actions">
+        <button type="button" id="export-csv-btn" class="btn-secondary btn-sm">Download CSV</button>
+        <button type="button" id="refresh-btn" class="btn-secondary btn-sm">Refresh</button>
+      </div>
+    </div>
+
+    <p style="color:#6b7280;font-size:0.9rem;margin-bottom:18px;max-width:680px;">
+      Every customer charge processed through Stripe, with our 2.9% + 30&cent; processing fee broken out so you can record the gross amount in Jonas and the fee as a separate expense line. Use the date range to pick your reconciliation period.
+    </p>
+
+    <div class="acc-controls">
+      <div class="acc-control">
+        <label for="from-date">From</label>
+        <input type="date" id="from-date" />
+      </div>
+      <div class="acc-control">
+        <label for="to-date">To</label>
+        <input type="date" id="to-date" />
+      </div>
+      <button type="button" id="apply-btn" class="btn-primary btn-sm" style="height:38px;">Apply</button>
+    </div>
+
+    <div class="acc-summary" id="summary-row" hidden>
+      <div class="acc-summary-item">
+        <div class="label">Gross Charged</div>
+        <div class="value" id="total-gross">$0.00</div>
+      </div>
+      <div class="acc-summary-item fee">
+        <div class="label">Stripe Fees</div>
+        <div class="value" id="total-fee">$0.00</div>
+      </div>
+      <div class="acc-summary-item net">
+        <div class="label">Net to Bank</div>
+        <div class="value" id="total-net">$0.00</div>
+      </div>
+      <div class="acc-summary-item">
+        <div class="label">Transactions</div>
+        <div class="value" id="total-count">0</div>
+      </div>
+    </div>
+
+    <div id="loading" class="loading-state"><p>Loading transactions&hellip;</p></div>
+    <div id="empty" class="gc-empty" hidden>
+      <p style="font-size:1.1rem;">No transactions in this date range.</p>
+      <p style="font-size:0.85rem;margin-top:8px;">Try a wider window or check back after Stripe processes a charge.</p>
+    </div>
+
+    <div class="acc-table-wrap" id="table-wrap" hidden>
+      <table class="acc-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Customer</th>
+            <th>Address</th>
+            <th>Description</th>
+            <th class="num">Gross</th>
+            <th class="num">Fee</th>
+            <th class="num">Net</th>
+            <th>Stripe ID</th>
+          </tr>
+        </thead>
+        <tbody id="acc-tbody"></tbody>
+        <tfoot id="acc-tfoot"></tfoot>
+      </table>
+    </div>
+
+    <div class="acc-mobile-cards" id="acc-cards"></div>
+
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <script src="shared-nav.js"></script>
+  <script src="accounting.js"></script>
+</body>
+</html>
