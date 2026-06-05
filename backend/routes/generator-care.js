@@ -741,4 +741,99 @@ router.post('/adhoc-charges/:id/cancel', async (req, res) => {
   }
 });
 
+
+// === ACCOUNTING ENDPOINTS ===
+
+// GET /accounting/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Pulls succeeded charges from Stripe in the date range, joins with our DB
+// for customer name + install address, and returns per-charge gross / Stripe fee / net.
+router.get('/accounting/transactions', async (req, res) => {
+  try {
+    const today = new Date();
+    const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const fromDate = req.query.from ? new Date(req.query.from + 'T00:00:00Z') : defaultFrom;
+    const toDate = req.query.to ? new Date(req.query.to + 'T23:59:59Z') : today;
+    const fromTs = Math.floor(fromDate.getTime() / 1000);
+    const toTs = Math.floor(toDate.getTime() / 1000);
+
+    // Page through all charges in the range
+    let allCharges = [];
+    let starting_after = undefined;
+    let safety = 0;
+    do {
+      const page = await stripe.charges.list({
+        created: { gte: fromTs, lte: toTs },
+        limit: 100,
+        starting_after,
+        expand: ['data.balance_transaction', 'data.invoice']
+      });
+      allCharges = allCharges.concat(page.data);
+      starting_after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+      safety++;
+      if (safety > 20) break;
+    } while (starting_after);
+
+    // Look up customer info for all stripe customers in the result set
+    const customerIds = [...new Set(allCharges.map(c => c.customer).filter(Boolean))];
+    let customerMap = {};
+    if (customerIds.length > 0) {
+      const { data: subs, error: subErr } = await supabaseAdmin
+        .from('generator_subscriptions')
+        .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
+        .in('stripe_customer_id', customerIds);
+      if (subErr) throw subErr;
+      (subs || []).forEach(s => {
+        if (s.customer) customerMap[s.stripe_customer_id] = s.customer;
+      });
+    }
+
+    const transactions = allCharges
+      .filter(c => c.status === 'succeeded')
+      .map(c => {
+        const bt = c.balance_transaction;
+        const cust = customerMap[c.customer] || {};
+        const address = [cust.install_address, cust.install_city, cust.install_state, cust.install_zip].filter(Boolean).join(', ');
+        let description = '';
+        if (c.invoice && typeof c.invoice === 'object') {
+          if (c.invoice.description) description = c.invoice.description;
+          else if (c.invoice.subscription) description = 'Subscription renewal';
+          else description = 'Invoice payment';
+        } else if (c.description) {
+          description = c.description;
+        } else if (c.metadata && c.metadata.adhoc_charge_id) {
+          description = 'Ad-hoc charge';
+        } else {
+          description = 'Card charge';
+        }
+        return {
+          date: new Date(c.created * 1000).toISOString().slice(0, 10),
+          customer_name: cust.name || '(unmatched)',
+          address,
+          description,
+          gross_cents: c.amount,
+          fee_cents: bt ? bt.fee : 0,
+          net_cents: bt ? bt.net : c.amount,
+          stripe_charge_id: c.id,
+          stripe_customer_id: c.customer
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    res.json({
+      from: fromDate.toISOString().slice(0, 10),
+      to: toDate.toISOString().slice(0, 10),
+      transactions,
+      totals: {
+        count: transactions.length,
+        gross_cents: transactions.reduce((s, t) => s + t.gross_cents, 0),
+        fee_cents: transactions.reduce((s, t) => s + t.fee_cents, 0),
+        net_cents: transactions.reduce((s, t) => s + t.net_cents, 0)
+      }
+    });
+  } catch (err) {
+    console.error('[accounting] transactions error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
