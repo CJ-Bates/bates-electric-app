@@ -7,6 +7,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const sgMail = require('@sendgrid/mail');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
 
 const router = express.Router();
@@ -174,6 +175,16 @@ async function handleSubscriptionCreated(subscription) {
     });
   }
 
+  // Welcome email (non-blocking — failures shouldn't break the webhook).
+  sendWelcomeEmail({
+    customer,
+    meta,
+    planLabel: meta.plan === 'semi_annual' ? 'Semi-Annual' : (meta.plan === 'annual' ? 'Annual' : meta.plan),
+    nextVisitDate: nextStr,
+    annualPriceCents,
+    fleetMonitoring,
+  }).catch((e) => console.error('[welcome-email] unexpected:', e && e.message));
+
   console.log(`[generator-webhook] created subscription ${sub.id} for customer ${customer.id}`);
 }
 
@@ -251,6 +262,96 @@ async function handleInvoicePaymentFailed(invoice) {
         console.error('[generator-webhook] failed to mark adhoc failed:', adhocId, error.message);
       }
     }
+  }
+}
+
+
+// ---- Welcome email ----
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring }) {
+  const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
+  if (!SENDGRID_KEY) {
+    console.log('[welcome-email] SENDGRID_API_KEY not set, skipping');
+    return;
+  }
+  if (!customer || !customer.email) {
+    console.log('[welcome-email] no email on file, skipping');
+    return;
+  }
+  try {
+    const fmtMoney = (c) => '$' + ((c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtDate = (s) => {
+      if (!s) return '';
+      const d = new Date(s + 'T12:00:00');
+      return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    };
+    const genClass = meta.gen_class === 'air_cooled' ? 'Air cooled' : (meta.gen_class && meta.gen_class.startsWith('liquid') ? 'Liquid cooled' : '');
+    const genLine = [genClass, meta.gen_type, meta.gen_model, meta.gen_serial && ('s/n ' + meta.gen_serial)].filter(Boolean).join(' \u2022 ');
+    const addr = [meta.install_address, meta.install_city, meta.install_state, meta.install_zip].filter(Boolean).join(', ');
+
+    const html = '<!DOCTYPE html>' +
+      '<html><body style="margin:0;padding:0;background:#F4F6F9;font-family:system-ui,-apple-system,sans-serif;color:#1F3A5F;">' +
+      '<div style="max-width:600px;margin:0 auto;background:#fff;">' +
+      '<div style="background:#1F3A5F;padding:24px 28px;text-align:center;">' +
+      '<h1 style="color:#fff;margin:0;font-size:22px;letter-spacing:0.5px;">Bates Electric</h1>' +
+      '<p style="color:#DFE6F0;margin:6px 0 0;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Generator Care</p>' +
+      '</div>' +
+      '<div style="padding:28px;">' +
+      '<h2 style="margin:0 0 14px;font-size:20px;color:#1F3A5F;">Welcome aboard, ' + escHtml(customer.name || 'there') + '!</h2>' +
+      '<p style="margin:0 0 18px;line-height:1.55;color:#374151;">Thanks for signing up for Bates Electric\'s Generator Care program. We\'ve got everything we need on our end and your subscription is active.</p>' +
+      '<h3 style="margin:24px 0 10px;font-size:13px;color:#6B7280;text-transform:uppercase;letter-spacing:0.08em;">What happens next</h3>' +
+      '<ol style="margin:0;padding-left:20px;color:#374151;line-height:1.7;">' +
+      '<li>One of our team will reach out within the next few business days to schedule your first maintenance visit.</li>' +
+      '<li>Our technicians will perform a full inspection and any included services per your plan.</li>' +
+      '<li>From there, we\'ll auto-schedule your recurring visits based on your plan.</li>' +
+      '</ol>' +
+      '<h3 style="margin:28px 0 10px;font-size:13px;color:#6B7280;text-transform:uppercase;letter-spacing:0.08em;">Your plan</h3>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151;">' +
+      '<tr><td style="padding:6px 0;color:#6B7280;width:40%;">Plan</td><td style="padding:6px 0;font-weight:600;">' + escHtml(planLabel) + '</td></tr>' +
+      (genLine ? '<tr><td style="padding:6px 0;color:#6B7280;">Generator</td><td style="padding:6px 0;font-weight:600;">' + escHtml(genLine) + '</td></tr>' : '') +
+      (addr ? '<tr><td style="padding:6px 0;color:#6B7280;vertical-align:top;">Service address</td><td style="padding:6px 0;font-weight:600;">' + escHtml(addr) + '</td></tr>' : '') +
+      (nextVisitDate ? '<tr><td style="padding:6px 0;color:#6B7280;vertical-align:top;">First visit</td><td style="padding:6px 0;font-weight:600;">' + escHtml(fmtDate(nextVisitDate)) + '<br><span style="color:#6B7280;font-weight:400;font-size:12px;">We\'ll confirm the exact time when we call.</span></td></tr>' : '') +
+      '<tr><td style="padding:6px 0;color:#6B7280;">Annual billing</td><td style="padding:6px 0;font-weight:600;">' + escHtml(fmtMoney(annualPriceCents)) + '/year</td></tr>' +
+      (fleetMonitoring ? '<tr><td style="padding:6px 0;color:#6B7280;">Add-on</td><td style="padding:6px 0;font-weight:600;">Fleet Monitoring (Mobile Link)</td></tr>' : '') +
+      '</table>' +
+      '<p style="margin:28px 0 0;line-height:1.55;color:#374151;">Have questions, need to reschedule, or want to update your card? Just reply to this email or give us a call at <strong>(314) 814-1414</strong>.</p>' +
+      '<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">\u2014 The Bates Electric team</p>' +
+      '</div>' +
+      '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
+      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (314) 814-1414</p>' +
+      '</div>' +
+      '</div></body></html>';
+
+    const text = 'Welcome to Bates Electric Generator Care, ' + (customer.name || 'there') + '!\n\n' +
+      'Thanks for signing up. Your subscription is active and we\'ve got everything we need on our end.\n\n' +
+      'What happens next:\n' +
+      '1. We\'ll reach out within the next few business days to schedule your first visit.\n' +
+      '2. Our technicians will perform a full inspection and any included services per your plan.\n' +
+      '3. From there, we\'ll auto-schedule your recurring visits.\n\n' +
+      'Your plan: ' + planLabel + '\n' +
+      (genLine ? 'Generator: ' + genLine + '\n' : '') +
+      (addr ? 'Service address: ' + addr + '\n' : '') +
+      (nextVisitDate ? 'First visit: ' + fmtDate(nextVisitDate) + ' (we will confirm time)\n' : '') +
+      'Annual billing: ' + fmtMoney(annualPriceCents) + '/year\n' +
+      (fleetMonitoring ? 'Add-on: Fleet Monitoring (Mobile Link)\n' : '') +
+      '\nQuestions? Reply here or call (314) 814-1414.\n\n\u2014 Bates Electric';
+
+    sgMail.setApiKey(SENDGRID_KEY);
+    await sgMail.send({
+      to: customer.email,
+      from: { email: process.env.GENERATOR_DIGEST_FROM || 'no-reply@bates-electric.com', name: 'Bates Electric Generator Care' },
+      subject: 'Welcome to Bates Electric Generator Care!',
+      text: text,
+      html: html,
+    });
+    console.log('[welcome-email] sent to ' + customer.email);
+  } catch (err) {
+    console.error('[welcome-email] error:', err && err.message);
   }
 }
 
