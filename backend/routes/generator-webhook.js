@@ -42,6 +42,23 @@ async function stripeGet(path) {
   return r.json();
 }
 
+async function stripePost(path, params) {
+  const body = new URLSearchParams(params).toString();
+  const r = await fetch('https://api.stripe.com/v1' + path, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + STRIPE_SECRET,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+  if (!r.ok) {
+    const errBody = await r.text();
+    throw new Error(`stripe POST ${path}: ${r.status} ${errBody.substring(0, 200)}`);
+  }
+  return r.json();
+}
+
 // POST /webhooks/stripe â Stripe sends events here
 router.post('/', async (req, res) => {
   const payload = req.body.toString('utf8');
@@ -263,6 +280,31 @@ async function handleInvoicePaymentFailed(invoice) {
       }
     }
   }
+
+  // Auto-email the customer a Customer Portal link so they can update their card.
+  try {
+    const stripeCustomerId = invoice.customer;
+    if (stripeCustomerId) {
+      const { data: cust } = await supabase
+        .from('generator_customers')
+        .select('id, name, email, stripe_customer_id')
+        .eq('stripe_customer_id', stripeCustomerId)
+        .maybeSingle();
+      if (cust && cust.email) {
+        const firstLine = (invoice.lines && invoice.lines.data && invoice.lines.data[0]) || null;
+        const description = (firstLine && firstLine.description) || 'a charge on your account';
+        sendCardFailedEmail({
+          customer: cust,
+          amountCents: invoice.amount_due,
+          description,
+        }).catch((e) => console.error('[card-failed-email] unexpected:', e && e.message));
+      } else {
+        console.log('[card-failed-email] no matching customer or email, skipping');
+      }
+    }
+  } catch (e) {
+    console.error('[card-failed-email] lookup error:', e && e.message);
+  }
 }
 
 
@@ -352,6 +394,72 @@ async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annu
     console.log('[welcome-email] sent to ' + customer.email);
   } catch (err) {
     console.error('[welcome-email] error:', err && err.message);
+  }
+}
+
+
+async function sendCardFailedEmail({ customer, amountCents, description }) {
+  const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
+  if (!SENDGRID_KEY) {
+    console.log('[card-failed-email] SENDGRID_API_KEY not set, skipping');
+    return;
+  }
+  if (!customer || !customer.email || !customer.stripe_customer_id) {
+    console.log('[card-failed-email] missing email or stripe_customer_id, skipping');
+    return;
+  }
+  try {
+    const portalSession = await stripePost('/billing_portal/sessions', {
+      customer: customer.stripe_customer_id,
+      return_url: 'https://app.bates-electric.com/home.html',
+    });
+    const portalUrl = portalSession.url;
+
+    const fmtMoney = (c) => '$' + ((c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const amountLine = amountCents ? ' of ' + fmtMoney(amountCents) : '';
+    const descLine = description ? ' for ' + description : '';
+
+    const html = '<!DOCTYPE html>' +
+      '<html><body style="margin:0;padding:0;background:#F4F6F9;font-family:system-ui,-apple-system,sans-serif;color:#1F3A5F;">' +
+      '<div style="max-width:600px;margin:0 auto;background:#fff;">' +
+      '<div style="background:#1F3A5F;padding:24px 28px;text-align:center;">' +
+      '<h1 style="color:#fff;margin:0;font-size:22px;letter-spacing:0.5px;">Bates Electric</h1>' +
+      '<p style="color:#DFE6F0;margin:6px 0 0;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Generator Care</p>' +
+      '</div>' +
+      '<div style="padding:28px;">' +
+      '<h2 style="margin:0 0 14px;font-size:20px;color:#1F3A5F;">Quick favor \u2014 your card didn\'t go through</h2>' +
+      '<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ' + escHtml(customer.name || 'there') + ',</p>' +
+      '<p style="margin:0 0 14px;line-height:1.55;color:#374151;">We tried to charge your card on file' + escHtml(amountLine) + escHtml(descLine) + ' and it didn\'t go through. Usually it\'s something simple \u2014 an expired card, a daily limit, or the bank flagging the charge.</p>' +
+      '<p style="margin:0 0 14px;line-height:1.55;color:#374151;">You can update your card on file with one click:</p>' +
+      '<p style="text-align:center;margin:24px 0;">' +
+      '<a href="' + portalUrl + '" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;font-size:15px;">Update your card</a>' +
+      '</p>' +
+      '<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for a few days. While you\'re in there you can also see your invoice history or update your contact info.</p>' +
+      '<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">If you\'d rather handle it over the phone or have any questions, just call us at <strong>(314) 814-1414</strong>.</p>' +
+      '<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">\u2014 The Bates Electric team</p>' +
+      '</div>' +
+      '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
+      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (314) 814-1414</p>' +
+      '</div>' +
+      '</div></body></html>';
+
+    const text = 'Hi ' + (customer.name || 'there') + ',\n\n' +
+      'We tried to charge your card on file' + amountLine + descLine + ' and it didn\'t go through. Usually it\'s something simple \u2014 expired card, daily limit, or the bank flagging the charge.\n\n' +
+      'You can update your card here:\n' + portalUrl + '\n\n' +
+      'If you\'d rather handle it over the phone, just call (314) 814-1414.\n\n' +
+      '\u2014 Bates Electric';
+
+    sgMail.setApiKey(SENDGRID_KEY);
+    await sgMail.send({
+      to: customer.email,
+      from: { email: process.env.GENERATOR_DIGEST_FROM || 'no-reply@bates-electric.com', name: 'Bates Electric Generator Care' },
+      subject: 'Your card on file needs an update',
+      text,
+      html,
+    });
+    console.log('[card-failed-email] sent to ' + customer.email);
+  } catch (err) {
+    console.error('[card-failed-email] error:', err && err.message);
   }
 }
 
