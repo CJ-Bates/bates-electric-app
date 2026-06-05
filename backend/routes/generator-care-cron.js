@@ -10,7 +10,7 @@ const router = express.Router();
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
-const FROM_EMAIL = process.env.GENERATOR_DIGEST_FROM || 'inspections.bateselectric@gmail.com';
+const FROM_EMAIL = process.env.GENERATOR_DIGEST_FROM || 'no-reply@bates-electric.com';
 const TO_EMAILS = (process.env.GENERATOR_DIGEST_TO || 'amyp@bates-electric.com,cjbates@bates-electric.com')
  .split(',').map(s => s.trim()).filter(Boolean);
 

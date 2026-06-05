@@ -59,7 +59,7 @@ async function stripePost(path, params) {
   return r.json();
 }
 
-// POST /webhooks/stripe â Stripe sends events here
+// POST /webhooks/stripe - Stripe sends events here
 router.post('/', async (req, res) => {
   const payload = req.body.toString('utf8');
   const sig = req.headers['stripe-signature'];
@@ -97,7 +97,7 @@ async function handleSubscriptionCreated(subscription) {
   const meta = subscription.metadata || {};
   // Only handle generator-program subscriptions (identified by gen_class metadata)
   if (!meta.gen_class) {
-    console.log('[generator-webhook] subscription has no gen_class metadata â skipping');
+    console.log('[generator-webhook] subscription has no gen_class metadata - skipping');
     return;
   }
 

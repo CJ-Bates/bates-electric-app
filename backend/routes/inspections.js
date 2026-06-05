@@ -69,9 +69,10 @@ router.post('/', requireAuth, async (req, res) => {
       const custEmail = data.job_email || '';
       const custName = data.job_cust || 'Customer';
       const date = data.job_date || new Date().toLocaleDateString();
-      const officeEmail = process.env.OFFICE_EMAIL || 'office@bates-electric.com';
+      const officeRecipients = (process.env.OFFICE_EMAIL || 'amyp@bates-electric.com,cjbates@bates-electric.com')
+        .split(',').map(s => s.trim()).filter(Boolean);
 
-      const toAddresses = [officeEmail];
+      const toAddresses = [...officeRecipients];
       if (custEmail && custEmail.trim()) {
         toAddresses.push(custEmail.trim());
       }
