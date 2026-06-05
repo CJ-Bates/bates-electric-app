@@ -11,7 +11,12 @@ const router = express.Router();
 // All routes require office role
 const Stripe = require('stripe');
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const { sendEmail, buildCardUpdateLinkEmail } = require('../lib/emails');
+const {
+  sendEmail,
+  buildCardUpdateLinkEmail,
+  buildWelcomeEmail,
+  buildCardFailedEmail,
+} = require('../lib/emails');
 
 router.use(requireAuth, requireRole('office'));
 
@@ -902,5 +907,82 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
     logTag: '[card-update-link]',
   });
 }
+
+
+// POST /api/generator-care/admin/send-test-email
+// Renders one of the customer-facing templates with fixture data and sends
+// it to the supplied address. Lets us visually verify templates before
+// flipping Stripe to live mode without triggering real customer events.
+// Body: { template: 'welcome' | 'failed_charge' | 'portal_link', to: '...' }
+const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link'];
+const FAKE_PORTAL_URL = 'https://billing.stripe.com/p/session/test_PLACEHOLDER';
+
+function buildTestTemplate(template) {
+  if (template === 'welcome') {
+    return buildWelcomeEmail({
+      customer: { name: 'Sample Customer', email: 'sample@example.com' },
+      meta: {
+        gen_class: 'air_cooled',
+        gen_type: 'Standby',
+        gen_model: 'Generac Guardian 22kW',
+        gen_serial: 'TEST-12345',
+        install_address: '123 Main St',
+        install_city: 'Imperial',
+        install_state: 'MO',
+        install_zip: '63052',
+      },
+      planLabel: 'Annual Care',
+      nextVisitDate: '2026-08-15',
+      annualPriceCents: 49900,
+      fleetMonitoring: true,
+    });
+  }
+  if (template === 'failed_charge') {
+    return buildCardFailedEmail({
+      customer: { name: 'Sample Customer' },
+      amountCents: 11000,
+      description: 'Transfer Switch Inspection & Simulated Outage Test',
+      portalUrl: FAKE_PORTAL_URL,
+    });
+  }
+  if (template === 'portal_link') {
+    return buildCardUpdateLinkEmail({
+      name: 'Sample Customer',
+      portalUrl: FAKE_PORTAL_URL,
+    });
+  }
+  return null;
+}
+
+router.post('/admin/send-test-email', async (req, res) => {
+  try {
+    const { template, to } = req.body || {};
+    if (!template || !TEST_EMAIL_TEMPLATES.includes(template)) {
+      return res.status(400).json({ error: `template must be one of: ${TEST_EMAIL_TEMPLATES.join(', ')}` });
+    }
+    if (!to || typeof to !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to.trim())) {
+      return res.status(400).json({ error: 'to must be a valid email address' });
+    }
+    const built = buildTestTemplate(template);
+    if (!built) {
+      return res.status(400).json({ error: 'unknown template' });
+    }
+    const subjectWithPrefix = `[TEST] ${built.subject}`;
+    const result = await sendEmail({
+      to: to.trim(),
+      subject: subjectWithPrefix,
+      html: built.html,
+      text: built.text,
+      logTag: `[test-email:${template}]`,
+    });
+    if (!result.sent) {
+      return res.status(502).json({ ok: false, template, to: to.trim(), error: result.reason });
+    }
+    return res.json({ ok: true, sent: true, template, to: to.trim(), subject: subjectWithPrefix });
+  } catch (err) {
+    console.error('[admin/send-test-email] error:', err);
+    return res.status(500).json({ error: err.message || 'unknown error' });
+  }
+});
 
 module.exports = router;
