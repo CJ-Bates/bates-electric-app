@@ -276,7 +276,7 @@
               This subscription is canceled. Customer keeps service through their paid-through date; auto-renewal is off.
             </div>`
           : `<div style="margin-top: 0.75rem; text-align: right;">
-              <button class="gc-mark-done" id="gc-cancel-sub-btn" style="background: #DC2626; font-size: 0.75rem; padding: 0.3rem 0.7rem;">Cancel Subscription</button>
+              <button class="gc-mark-done" id="gc-portal-btn" style="background: #1F3A5F; font-size: 0.75rem; padding: 0.3rem 0.7rem; margin-right: 6px;">Send Card-Update Link</button><button class="gc-mark-done" id="gc-cancel-sub-btn" style="background: #DC2626; font-size: 0.75rem; padding: 0.3rem 0.7rem;">Cancel Subscription</button>
             </div>`}
       </div>`;
 
@@ -443,6 +443,10 @@
       const cancelBtn = body.querySelector('#gc-cancel-sub-btn');
       if (cancelBtn) {
         cancelBtn.addEventListener('click', () => cancelSubscription(id));
+      }
+      const portalBtn = body.querySelector('#gc-portal-btn');
+      if (portalBtn) {
+        portalBtn.addEventListener('click', () => sendPortalLink(id));
       }
 
       if (saveNvBtn) {
@@ -828,4 +832,27 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
   loadSubscriptions();
+
+  // ---- Send Customer Portal link ----
+  async function sendPortalLink(subscriptionId) {
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/portal-session`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showStatus(`Portal link failed: ${data.error || 'HTTP ' + r.status}`, 'error');
+        return;
+      }
+      try { await navigator.clipboard.writeText(data.url); } catch (_) {}
+      const who = data.customer_name ? ` for ${data.customer_name}` : '';
+      const emailLine = data.customer_email ? `\n\nText or email it to: ${data.customer_email}` : '';
+      alert(`Card-update link${who} (copied to clipboard):\n\n${data.url}${emailLine}\n\nLink expires in about an hour. Customer can use it to update their card, see invoices, or change contact info.`);
+    } catch (err) {
+      console.error('Portal link failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
 })();
