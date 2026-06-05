@@ -11,6 +11,7 @@ const router = express.Router();
 // All routes require office role
 const Stripe = require('stripe');
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const sgMail = require('@sendgrid/mail');
 
 router.use(requireAuth, requireRole('office'));
 
@@ -859,16 +860,87 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
       return_url: 'https://app.bates-electric.com/generator-care.html'
     });
 
+    const customerName = (sub.customer && sub.customer.name) || null;
+    const customerEmail = (sub.customer && sub.customer.email) || null;
+
+    // Auto-send the link to the customer (so Amy doesn't have to copy/paste).
+    let emailSent = false;
+    let emailReason = 'no email on file';
+    if (customerEmail) {
+      const r = await sendCardUpdateLinkEmail({
+        name: customerName,
+        email: customerEmail,
+        portalUrl: session.url,
+      });
+      emailSent = r.sent;
+      emailReason = r.reason || (r.sent ? 'sent' : 'failed');
+    }
+
     res.json({
       url: session.url,
-      customer_email: sub.customer && sub.customer.email,
-      customer_name: sub.customer && sub.customer.name,
-      expires_at: session.expires_at
+      customer_email: customerEmail,
+      customer_name: customerName,
+      expires_at: session.expires_at,
+      email_sent: emailSent,
+      email_status: emailReason,
     });
   } catch (err) {
     console.error('[portal-session] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
+
+// ---- Send "manage your account" email with portal link ----
+async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
+  const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
+  if (!SENDGRID_KEY) {
+    return { sent: false, reason: 'SENDGRID_API_KEY not set' };
+  }
+  try {
+    const html = '<!DOCTYPE html>' +
+      '<html><body style="margin:0;padding:0;background:#F4F6F9;font-family:system-ui,-apple-system,sans-serif;color:#1F3A5F;">' +
+      '<div style="max-width:600px;margin:0 auto;background:#fff;">' +
+      '<div style="background:#1F3A5F;padding:24px 28px;text-align:center;">' +
+      '<h1 style="color:#fff;margin:0;font-size:22px;letter-spacing:0.5px;">Bates Electric</h1>' +
+      '<p style="color:#DFE6F0;margin:6px 0 0;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Generator Care</p>' +
+      '</div>' +
+      '<div style="padding:28px;">' +
+      '<h2 style="margin:0 0 14px;font-size:20px;color:#1F3A5F;">Manage your generator care account</h2>' +
+      '<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ' + (name || 'there') + ',</p>' +
+      '<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Here is a secure link to your generator care account. You can use it to update your card on file, view your invoice history, or change your contact info \u2014 all in one place.</p>' +
+      '<p style="text-align:center;margin:24px 0;">' +
+      '<a href="' + portalUrl + '" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;font-size:15px;">Manage my account</a>' +
+      '</p>' +
+      '<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for about an hour. If it expires before you click it, just reply to this email and we will send a fresh one.</p>' +
+      '<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions? Reply to this email or call us at <strong>(314) 814-1414</strong>.</p>' +
+      '<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">\u2014 The Bates Electric team</p>' +
+      '</div>' +
+      '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
+      '<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. \u00b7 (314) 814-1414</p>' +
+      '</div>' +
+      '</div></body></html>';
+
+    const text = 'Hi ' + (name || 'there') + ',\n\n' +
+      'Here is a secure link to your Bates Electric generator care account. You can use it to update your card on file, view your invoice history, or change your contact info.\n\n' +
+      portalUrl + '\n\n' +
+      'The link is good for about an hour. If it expires, just reply to this email and we will send a fresh one.\n\n' +
+      'Questions? Reply here or call (314) 814-1414.\n\n\u2014 Bates Electric';
+
+    sgMail.setApiKey(SENDGRID_KEY);
+    await sgMail.send({
+      to: email,
+      from: { email: process.env.GENERATOR_DIGEST_FROM || 'no-reply@bates-electric.com', name: 'Bates Electric Generator Care' },
+      subject: 'Manage your Bates Electric generator care account',
+      text: text,
+      html: html,
+    });
+    console.log('[card-update-link] sent to ' + email);
+    return { sent: true };
+  } catch (err) {
+    console.error('[card-update-link] error:', err && err.message);
+    return { sent: false, reason: (err && err.message) || 'unknown' };
+  }
+}
 
 module.exports = router;
