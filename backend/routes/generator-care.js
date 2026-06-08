@@ -16,7 +16,13 @@ const {
   buildCardUpdateLinkEmail,
   buildWelcomeEmail,
   buildCardFailedEmail,
+  buildVisitScheduledEmail,
+  buildVisitCompletedEmail,
 } = require('../lib/emails');
+
+function planLabelFor(plan) {
+  return plan === 'semi_annual' ? 'Semi-Annual' : (plan === 'annual' ? 'Annual' : plan);
+}
 
 router.use(requireAuth, requireRole('office'));
 
@@ -104,17 +110,18 @@ router.post('/visits/:id/complete', async (req, res) => {
         technician_id: technician_id || req.user.id,
       })
       .eq('id', id)
-      .select('*, subscription:generator_subscriptions(id, plan)')
+      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email))')
       .single();
     if (updErr) throw updErr;
 
     // 2. Roll the subscription forward + schedule the NEXT visit
     const sub = updated.subscription;
+    let nextStr = null;
     if (sub) {
       const monthsAhead = sub.plan === 'semi_annual' ? 6 : 12;
       const next = new Date(today);
       next.setMonth(next.getMonth() + monthsAhead);
-      const nextStr = next.toISOString().slice(0, 10);
+      nextStr = next.toISOString().slice(0, 10);
 
       await supabaseAdmin
         .from('generator_subscriptions')
@@ -127,6 +134,25 @@ router.post('/visits/:id/complete', async (req, res) => {
         scheduled_date: nextStr,
         status: 'tentative',
       });
+    }
+
+    // 3. Email the customer a completion confirmation (fire-and-forget).
+    const customer = sub && sub.customer;
+    if (customer && customer.email) {
+      const { subject, html, text } = buildVisitCompletedEmail({
+        customer,
+        completedDate: today,
+        nextVisitDate: nextStr,
+        planLabel: planLabelFor(sub.plan),
+        notes,
+      });
+      sendEmail({
+        to: customer.email,
+        subject,
+        html,
+        text,
+        logTag: '[visit-complete-email]',
+      }).catch((e) => console.error('[visit-complete-email] unexpected:', e && e.message));
     }
 
     res.json({ ok: true, visit: updated });
@@ -194,7 +220,7 @@ router.post('/visits/:id/confirm', async (req, res) => {
       .from('generator_service_visits')
       .update(updates)
       .eq('id', id)
-      .select('*, subscription:generator_subscriptions(id)')
+      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email))')
       .single();
     if (vErr) throw vErr;
 
@@ -204,6 +230,24 @@ router.post('/visits/:id/confirm', async (req, res) => {
         .from('generator_subscriptions')
         .update({ next_visit_due: scheduled_date })
         .eq('id', updated.subscription.id);
+    }
+
+    // Email the customer a confirmation (fire-and-forget).
+    const sub = updated.subscription;
+    const customer = sub && sub.customer;
+    if (customer && customer.email) {
+      const { subject, html, text } = buildVisitScheduledEmail({
+        customer,
+        scheduledDate: updated.scheduled_date,
+        planLabel: planLabelFor(sub && sub.plan),
+      });
+      sendEmail({
+        to: customer.email,
+        subject,
+        html,
+        text,
+        logTag: '[visit-scheduled-email]',
+      }).catch((e) => console.error('[visit-scheduled-email] unexpected:', e && e.message));
     }
 
     res.json({ ok: true, visit: updated });
@@ -994,7 +1038,7 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
 // it to the supplied address. Lets us visually verify templates before
 // flipping Stripe to live mode without triggering real customer events.
 // Body: { template: 'welcome' | 'failed_charge' | 'portal_link', to: '...' }
-const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link'];
+const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link', 'visit_scheduled', 'visit_complete'];
 const FAKE_PORTAL_URL = 'https://billing.stripe.com/p/session/test_PLACEHOLDER';
 
 function buildTestTemplate(template) {
@@ -1029,6 +1073,22 @@ function buildTestTemplate(template) {
     return buildCardUpdateLinkEmail({
       name: 'Sample Customer',
       portalUrl: FAKE_PORTAL_URL,
+    });
+  }
+  if (template === 'visit_scheduled') {
+    return buildVisitScheduledEmail({
+      customer: { name: 'Sample Customer' },
+      scheduledDate: '2026-08-15',
+      planLabel: 'Annual',
+    });
+  }
+  if (template === 'visit_complete') {
+    return buildVisitCompletedEmail({
+      customer: { name: 'Sample Customer' },
+      completedDate: '2026-06-08',
+      nextVisitDate: '2027-06-08',
+      planLabel: 'Annual',
+      notes: 'Replaced battery. Tested generator under load — ran cleanly for 15 minutes. Topped off coolant.',
     });
   }
   return null;

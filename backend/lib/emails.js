@@ -215,6 +215,79 @@ function buildCardUpdateLinkEmail({ name, portalUrl }) {
   return { subject: 'Manage your Bates Electric generator care account', html, text };
 }
 
+function fmtFriendlyDate(s) {
+  if (!s) return '';
+  const d = new Date(s + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
+  const name = (customer && customer.name) || 'there';
+  const dateStr = fmtFriendlyDate(scheduledDate);
+  const planText = planLabel ? `${planLabel} ` : '';
+
+  const bodyHtml =
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Our technician will be on-site to perform a full inspection and any services included in your plan. You don&rsquo;t need to be there as long as the generator is accessible &mdash; though we&rsquo;re happy to walk you through what we did if you are.</p>` +
+    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Need to reschedule or have a question? Just reply to this email or call us at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+
+  const html = renderEmail({
+    heading: 'Your service visit is confirmed',
+    bodyHtml,
+  });
+
+  const text = `Hi ${name},\n\n` +
+    `Your ${planText}generator service visit is confirmed for ${dateStr}.\n\n` +
+    `Our technician will perform a full inspection and any included services. You don't need to be there as long as the generator is accessible.\n\n` +
+    `Need to reschedule? Reply here or call ${COMPANY_PHONE}.\n\n— Bates Electric`;
+
+  return { subject: 'Your generator service visit is confirmed', html, text };
+}
+
+function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, planLabel, notes }) {
+  const name = (customer && customer.name) || 'there';
+  const completedStr = fmtFriendlyDate(completedDate);
+  const planText = planLabel ? `${planLabel} ` : '';
+
+  const notesSection = (typeof notes === 'string' && notes.trim().length > 0)
+    ? `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;"><strong>Notes from the visit:</strong><br>${escHtml(notes.trim())}</p>`
+    : '';
+
+  const nextVisitSection = nextVisitDate
+    ? `<p style="margin:16px 0 0;line-height:1.55;color:#374151;">Your next ${escHtml(planText)}service is tentatively scheduled for <strong>${escHtml(fmtFriendlyDate(nextVisitDate))}</strong>. We&rsquo;ll confirm the exact date with you closer to the time.</p>`
+    : '';
+
+  const bodyHtml =
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a Bates Electric Generator Care customer.</p>` +
+    notesSection +
+    nextVisitSection +
+    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions about the work, or noticed something we missed? Reply to this email or call us at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+
+  const html = renderEmail({
+    heading: 'Service visit complete',
+    bodyHtml,
+  });
+
+  const notesText = (typeof notes === 'string' && notes.trim().length > 0)
+    ? `\nNotes from the visit: ${notes.trim()}\n`
+    : '';
+  const nextVisitText = nextVisitDate
+    ? `\nYour next ${planText}service is tentatively scheduled for ${fmtFriendlyDate(nextVisitDate)}. We'll confirm closer to the time.\n`
+    : '';
+
+  const text = `Hi ${name},\n\n` +
+    `Your generator service visit on ${completedStr} is complete. Thanks for being a Bates Electric Generator Care customer.\n` +
+    notesText +
+    nextVisitText +
+    `\nQuestions? Reply here or call ${COMPANY_PHONE}.\n\n— Bates Electric`;
+
+  return { subject: 'Your generator service visit is complete', html, text };
+}
+
 module.exports = {
   COMPANY_PHONE,
   SENDER_NAME,
@@ -226,4 +299,6 @@ module.exports = {
   buildWelcomeEmail,
   buildCardFailedEmail,
   buildCardUpdateLinkEmail,
+  buildVisitScheduledEmail,
+  buildVisitCompletedEmail,
 };
