@@ -469,6 +469,16 @@ const ADDON_CATALOG = {
       liquid_48_150: { price_id: 'price_1Tg78DBbX7QhpMgb7VtP2hGx', amount_cents: 69500 },
     },
   },
+  coolant_topoff: {
+    label: 'Coolant Top-Off Service',
+    prices: {
+      // Same Stripe price reused for both liquid tiers; service cost
+      // doesn't vary by size. No air_cooled entry: air-cooled units
+      // don't get coolant service.
+      liquid_22_38:  { price_id: 'price_1Tg78CBbX7QhpMgbXptyAaje', amount_cents: 9500 },
+      liquid_48_150: { price_id: 'price_1Tg78CBbX7QhpMgbXptyAaje', amount_cents: 9500 },
+    },
+  },
   ats_outage_combined: {
     label: 'Transfer Switch Inspection & Simulated Outage Test',
     prices: { all: { price_id: 'price_1Tg78DBbX7QhpMgby14G5PiY', amount_cents: 11000 } },
