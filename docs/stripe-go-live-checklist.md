@@ -38,7 +38,7 @@ roll back without partial-refund / cancellation cleanup. Pre-flight every step.
 
 ## 1. Pre-flight in test mode (verify everything works BEFORE flipping)
 
-### 1a. All five customer-facing emails render correctly
+### 1a. All six customer-facing emails render correctly
 
 Fire each from the dashboard Admin Tools panel
 (generator-care.html → "Admin tools" → "Send test email"). Visually verify in
@@ -47,6 +47,7 @@ both Gmail and Outlook if possible.
 - [ ] `welcome`
 - [ ] `visit_scheduled`
 - [ ] `visit_complete`
+- [ ] `renewal_upcoming` (added 2026-06-08; fires ~7 days before each renewal)
 - [ ] `failed_charge` (CTA link will 404 — expected, it's a placeholder
       Stripe session ID for previews)
 - [ ] `portal_link` (same — CTA link will 404 by design)
@@ -309,3 +310,72 @@ move is **fix forward**:
 Not touched during cutover (verify untouched after):
 - `SENDGRID_API_KEY`, `GENERATOR_DIGEST_FROM`, `GENERATOR_DIGEST_TO`,
   `CRON_SECRET`, `SUPABASE_*`, `OFFICE_EMAIL`, `GMAIL_USER`.
+
+---
+
+## 8. Stripe Dashboard receipt branding (5-min config, no code)
+
+Stripe sends an automatic charge receipt to the customer on every successful
+charge — separate from our Bates-branded transactional emails. The default
+receipt is unbranded. Customizing it costs nothing and means customers see
+"Bates Electric" rather than a generic Stripe receipt.
+
+In Stripe Dashboard (Live mode), one-time setup:
+
+- [ ] **Branding** (Settings → Branding):
+  - Upload Bates Electric logo (the navy-B-with-bolt mark; transparent PNG
+    around 512×512 works well)
+  - Set brand color: **#1F3A5F** (the navy used throughout the app)
+  - Set accent color (optional): a complementary gold for buttons; falls back
+    to brand color if unset
+- [ ] **Customer emails** (Settings → Emails):
+  - Enable **"Successful payments"** (this is the receipt — usually on by default)
+  - Enable **"Failed payments"** (Stripe's email; complements our own
+    failed_charge template)
+  - Optionally enable **"Refunds"** so customers see Stripe's refund
+    notification when Amy triggers a refund from our dashboard
+  - **"Customer portal"** can also be enabled (the email Stripe sends when a
+    customer is granted portal access — usually we mint these via our own
+    portal_link email, so leaving Stripe's disabled avoids duplicate emails)
+- [ ] **Public business info** (Settings → Public details):
+  - Display name on receipts: "Bates Electric" (not the legal entity name)
+  - Support phone: (636) 464-3939
+  - Support email: leave blank or set to a *monitored* mailbox — do NOT use
+    `no-reply@bates-electric.com` because Stripe's receipts use this as a
+    reply-to and customers do hit reply on receipts
+
+Verify by sending yourself a test charge in live mode (you can do this as
+part of the §5 smoke test). The receipt that lands in your inbox alongside
+the welcome email should now show the Bates logo and brand color.
+
+---
+
+## 9. Post-launch features added 2026-06-08 (after this checklist's first draft)
+
+These all landed after the original cutover playbook was written. Listing
+them here so you remember to test them in §5 / §1 and so the Quick Reference
+table above stays accurate.
+
+- **Webhook event additions** — added handlers for:
+  - `customer.subscription.updated` / `.deleted` (portal cancellations now sync to DB)
+  - `customer.updated` (email / name / phone sync from portal)
+  - `invoice.upcoming` (drives the renewal_upcoming email)
+  - → **Action required:** add `invoice.upcoming` to the live webhook
+    endpoint's event list (Stripe Dashboard → Developers → Webhooks → that
+    endpoint → "Add events"). The other handlers' events were already in
+    the original 7-event registration.
+- **New visit emails** (visit_scheduled, visit_complete) fire automatically
+  when Amy confirms / completes a visit. Verify by clicking those buttons on
+  a test customer.
+- **Renewal-upcoming email** (renewal_upcoming) fires automatically when
+  Stripe sends invoice.upcoming. Hard to verify without waiting for a real
+  renewal cycle — easier to admin-test the template's rendering and trust
+  the handler.
+- **Refund flow** — every charged addon and adhoc charge in the customer
+  detail modal now has a Refund button. Supports full or partial refunds.
+  Verify on a real charged item during §5 smoke (refund yourself $1 of the
+  test signup).
+- **`coolant_topoff` in backend ADDON_CATALOG** — Amy can now add it
+  mid-cycle via the Add Addon flow on a liquid-cooled customer.
+- **CLAUDE.md note** documenting that portal address changes do NOT sync to
+  install_address by design.
