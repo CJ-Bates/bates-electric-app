@@ -74,7 +74,10 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
     const upcomingConfirmed = upcoming.filter(s => statusBySubId[s.id] !== 'tentative');
 
  // Also pull any failed addon charges + failed adhoc charges so we can surface them.
-    const [failedAddonsR, failedAdhocR] = await Promise.all([
+ // AND any past_due subscriptions (renewal charge failed; Stripe is retrying or
+ // has given up). Without surfacing these here they disappear from Amy's view
+ // entirely because the upcoming/overdue queries above filter status='active'.
+    const [failedAddonsR, failedAdhocR, pastDueR] = await Promise.all([
       supabaseAdmin
         .from('generator_pending_addons')
         .select('id, addon_type, amount_cents, notes, subscription:generator_subscriptions(customer:generator_customers(name, phone))')
@@ -85,17 +88,23 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
         .select('id, description, amount_cents, notes, subscription:generator_subscriptions(customer:generator_customers(name, phone))')
         .eq('status', 'failed')
         .order('created_at', { ascending: false }),
+      supabaseAdmin
+        .from('generator_subscriptions')
+        .select('id, plan, gen_class, gen_model, annual_price_cents, customer:generator_customers(name, phone, email)')
+        .eq('status', 'past_due')
+        .order('next_visit_due', { ascending: true }),
     ]);
     const failedAddons = failedAddonsR.data || [];
     const failedAdhoc = failedAdhocR.data || [];
+    const pastDue = pastDueR.data || [];
     const failedTotal = failedAddons.length + failedAdhoc.length;
 
-    if (overdue.length === 0 && upcoming.length === 0 && failedTotal === 0) {
+    if (overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0) {
  // Quiet morning  -  no email
- return res.json({ ok: true, sent: false, reason: 'No visits or failed charges', overdue: 0, upcoming: 0, failed: 0 });
+ return res.json({ ok: true, sent: false, reason: 'No visits, failed charges, or past-due subs', overdue: 0, upcoming: 0, failed: 0, past_due: 0 });
  }
 
- const { subject, html, text } = buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, todayStr });
+ const { subject, html, text } = buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, pastDue, todayStr });
 
  if (!SENDGRID_KEY) {
  return res.status(500).json({ error: 'SENDGRID_API_KEY not configured', preview: { subject, text } });
@@ -109,7 +118,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  html,
  });
 
- res.json({ ok: true, sent: true, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length });
+ res.json({ ok: true, sent: true, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
  } catch (err) {
  console.error('[gc-cron] daily-email error:', err && (err.response?.body || err.message));
  res.status(500).json({ error: err.message });
@@ -118,10 +127,12 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 
 // Helpers --------------------------------------------------
 
-function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirmed = [], failedAddons = [], failedAdhoc = [], todayStr }) {
+function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirmed = [], failedAddons = [], failedAdhoc = [], pastDue = [], todayStr }) {
  const total = overdue.length + upcoming.length;
  const failedTotalForSubject = failedAddons.length + failedAdhoc.length;
-      const subject = failedTotalForSubject > 0
+      const subject = pastDue.length > 0
+        ? 'Generator Care: ' + pastDue.length + ' PAST DUE' + (failedTotalForSubject ? ', ' + failedTotalForSubject + ' failed charge' + (failedTotalForSubject === 1 ? '' : 's') : '') + ', ' + overdue.length + ' overdue, ' + upcoming.length + ' due soon'
+        : failedTotalForSubject > 0
         ? 'Generator Care: ' + failedTotalForSubject + ' FAILED CHARGE' + (failedTotalForSubject === 1 ? '' : 'S') + ', ' + overdue.length + ' overdue, ' + upcoming.length + ' due soon'
         : overdue.length
  ? `Generator Care: ${overdue.length} OVERDUE, ${upcoming.length} due soon`
@@ -167,6 +178,25 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  </tr>
  `;
  };
+
+ function renderPastDueSection(subs) {
+        if (!subs.length) return '';
+        const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        let h = '<div style="margin-top:1.5rem;">';
+        h += '<h2 style="color:#7c2d12;font-size:1rem;margin-bottom:0.5rem;border-bottom:2px solid #7c2d12;padding-bottom:0.25rem;">';
+        h += 'Past-due renewals (' + subs.length + ') - card update needed</h2>';
+        h += '<p style="margin:0 0 0.5rem;color:#6b7280;font-size:0.85rem;">Stripe is retrying the renewal charge. Customer was auto-emailed a card-update link. Follow up by phone if it stays past-due more than a few days.</p>';
+        for (const s of subs) {
+          const c = s.customer || {};
+          h += '<div style="padding:0.5rem 0;border-bottom:1px solid #eee;font-size:0.9rem;">';
+          h += '<strong>' + esc(c.name || 'Unknown') + '</strong> - ' + esc(genClassLabel(s.gen_class)) + ' ' + esc(s.gen_model || 'model n/a') + ' - ' + esc(planLabel(s.plan));
+          if (c.phone) h += '<div style="color:#6b7280;font-size:0.8rem;">' + esc(c.phone) + (c.email ? ' &middot; ' + esc(c.email) : '') + '</div>';
+          else if (c.email) h += '<div style="color:#6b7280;font-size:0.8rem;">' + esc(c.email) + '</div>';
+          h += '</div>';
+        }
+        h += '</div>';
+        return h;
+      }
 
  function renderFailedSection(addons, adhoc) {
         if (!addons.length && !adhoc.length) return '';
@@ -230,6 +260,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  ${total} customer${total === 1 ? '' : 's'} need attention in the next 14 days.
  ${overdue.length ? `<strong style="color:#b91c1c;">${overdue.length} overdue.</strong>` : ''}
  </p>
+ ${renderPastDueSection(pastDue)}
  ${section('Overdue', overdue, '#b91c1c')}
  ${section('Tentative - please confirm with customer', upcomingTentative, '#D97706')}
           ${section('Confirmed visits - due in next 14 days', upcomingConfirmed, '#1F3A5F')}
@@ -254,6 +285,14 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  const textLines = [];
  textLines.push(`Generator Care  -  daily digest`);
  textLines.push(`${total} customer${total === 1 ? '' : 's'} need attention in next 14 days.`);
+ if (pastDue.length) {
+ textLines.push('');
+ textLines.push(`PAST DUE (${pastDue.length}) - card update needed:`);
+ for (const s of pastDue) {
+ const c = s.customer || {};
+ textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)} ${s.gen_model || ''}  -  ${planLabel(s.plan)}  -  ${c.phone || c.email || ''}`);
+ }
+ }
  if (overdue.length) {
  textLines.push('');
  textLines.push(`OVERDUE (${overdue.length}):`);

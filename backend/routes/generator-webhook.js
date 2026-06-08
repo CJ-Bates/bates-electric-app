@@ -81,6 +81,12 @@ router.post('/', async (req, res) => {
   try {
     if (event.type === 'customer.subscription.created') {
       await handleSubscriptionCreated(event.data.object);
+    } else if (event.type === 'customer.subscription.updated') {
+      await handleSubscriptionUpdated(event.data.object);
+    } else if (event.type === 'customer.subscription.deleted') {
+      await handleSubscriptionDeleted(event.data.object);
+    } else if (event.type === 'customer.updated') {
+      await handleCustomerUpdated(event.data.object);
     } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
       await handleInvoicePaid(event.data.object);
     } else if (event.type === 'invoice.payment_failed') {
@@ -203,6 +209,100 @@ async function handleSubscriptionCreated(subscription) {
   }).catch((e) => console.error('[welcome-email] unexpected:', e && e.message));
 
   console.log(`[generator-webhook] created subscription ${sub.id} for customer ${customer.id}`);
+}
+
+
+// Map a Stripe subscription status to one of our DB-allowed values.
+// Our schema allows: active, past_due, incomplete, canceled (see migration 004).
+// Returns null when the status doesn't need to be synced (unknown / unhandled).
+function mapStripeStatusToDbStatus(stripeStatus, cancelAtPeriodEnd) {
+  if (stripeStatus === 'active' || stripeStatus === 'trialing') {
+    // Treat "cancel at period end" as already-canceled in our DB; matches the
+    // behavior of the office-dashboard cancel endpoint, which immediately sets
+    // status='canceled' even though Stripe keeps the sub active until period end.
+    return cancelAtPeriodEnd ? 'canceled' : 'active';
+  }
+  if (stripeStatus === 'past_due' || stripeStatus === 'unpaid') return 'past_due';
+  if (stripeStatus === 'canceled' || stripeStatus === 'incomplete_expired') return 'canceled';
+  if (stripeStatus === 'incomplete') return 'incomplete';
+  return null;
+}
+
+async function handleSubscriptionUpdated(subscription) {
+  const dbStatus = mapStripeStatusToDbStatus(
+    subscription.status,
+    subscription.cancel_at_period_end === true,
+  );
+  if (!dbStatus) {
+    console.log(`[generator-webhook] subscription.updated: unhandled status ${subscription.status}, ignoring`);
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('generator_subscriptions')
+    .update({ status: dbStatus })
+    .eq('stripe_subscription_id', subscription.id)
+    .select('id, status')
+    .maybeSingle();
+  if (error) {
+    console.error('[generator-webhook] subscription.updated update error:', error.message);
+    return;
+  }
+  if (!data) {
+    console.log(`[generator-webhook] subscription.updated: no matching DB row for ${subscription.id}`);
+    return;
+  }
+  console.log(`[generator-webhook] subscription ${data.id} status -> ${dbStatus} (stripe: ${subscription.status}, cancel_at_period_end: ${subscription.cancel_at_period_end})`);
+}
+
+async function handleSubscriptionDeleted(subscription) {
+  // Final terminal event from Stripe — sub is fully gone. Mark canceled if
+  // not already (the dashboard cancel + the updated handler usually beat us
+  // here, but this is the backstop).
+  const { data, error } = await supabase
+    .from('generator_subscriptions')
+    .update({ status: 'canceled' })
+    .eq('stripe_subscription_id', subscription.id)
+    .neq('status', 'canceled')
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    console.error('[generator-webhook] subscription.deleted update error:', error.message);
+    return;
+  }
+  if (data) {
+    console.log(`[generator-webhook] subscription ${data.id} -> canceled (via subscription.deleted)`);
+  }
+}
+
+async function handleCustomerUpdated(customer) {
+  // Sync customer email/name from Stripe portal edits back to our DB.
+  // Intentionally NOT syncing phone or address: Stripe holds BILLING info,
+  // our generator_customers has SERVICE-site info. They can legitimately
+  // differ (e.g. owner billed at home, generator installed at a vacation
+  // property). Owner can update site contact info via Amy.
+  const updates = {};
+  if (typeof customer.email === 'string' && customer.email.length > 0) {
+    updates.email = customer.email;
+  }
+  if (typeof customer.name === 'string' && customer.name.length > 0) {
+    updates.name = customer.name;
+  }
+  if (Object.keys(updates).length === 0) return;
+
+  const { data, error } = await supabase
+    .from('generator_customers')
+    .update(updates)
+    .eq('stripe_customer_id', customer.id)
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    console.error('[generator-webhook] customer.updated update error:', error.message);
+    return;
+  }
+  if (data) {
+    console.log(`[generator-webhook] customer ${data.id} synced fields: ${Object.keys(updates).join(', ')}`);
+  }
 }
 
 
