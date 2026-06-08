@@ -136,7 +136,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     `<tr><td style="padding:6px 0;color:#6B7280;">Annual billing</td><td style="padding:6px 0;font-weight:600;">${escHtml(fmtMoney(annualPriceCents))}/year</td></tr>` +
     (fleetMonitoring ? `<tr><td style="padding:6px 0;color:#6B7280;">Add-on</td><td style="padding:6px 0;font-weight:600;">Fleet Monitoring (Mobile Link)</td></tr>` : '') +
     `</table>` +
-    `<p style="margin:28px 0 0;line-height:1.55;color:#374151;">Have questions, need to reschedule, or want to update your card? Just reply to this email or give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:28px 0 0;line-height:1.55;color:#374151;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
     `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
 
   const html = renderEmail({
@@ -156,7 +156,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     (nextVisitDate ? `First visit: ${fmtDate(nextVisitDate)} (we will confirm time)\n` : '') +
     `Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
     (fleetMonitoring ? `Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
-    `\nQuestions? Reply here or call ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `\nQuestions? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
 
   return { subject: 'Welcome to Bates Electric Generator Care!', html, text };
 }
@@ -197,8 +197,8 @@ function buildCardUpdateLinkEmail({ name, portalUrl }) {
     `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(safeName)},</p>` +
     `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Here is a secure link to your generator care account. You can use it to update your card on file, view your invoice history, or change your contact info — all in one place.</p>` +
     ctaButton('Manage my account', portalUrl) +
-    `<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for about an hour. If it expires before you click it, just reply to this email and we will send a fresh one.</p>` +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions? Reply to this email or call us at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for about an hour. If it expires before you click it, give us a call at <strong>${COMPANY_PHONE}</strong> and we&rsquo;ll get you a fresh one.</p>` +
+    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
     `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
 
   const html = renderEmail({
@@ -209,8 +209,8 @@ function buildCardUpdateLinkEmail({ name, portalUrl }) {
   const text = `Hi ${safeName},\n\n` +
     `Here is a secure link to your Bates Electric generator care account. You can use it to update your card on file, view your invoice history, or change your contact info.\n\n` +
     `${portalUrl}\n\n` +
-    `The link is good for about an hour. If it expires, just reply to this email and we will send a fresh one.\n\n` +
-    `Questions? Reply here or call ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `The link is good for about an hour. If it expires, give us a call at ${COMPANY_PHONE} and we'll get you a fresh one.\n\n` +
+    `Questions? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
 
   return { subject: 'Manage your Bates Electric generator care account', html, text };
 }
@@ -230,7 +230,7 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
     `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
     `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
     `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Our technician will be on-site to perform a full inspection and any services included in your plan. You don&rsquo;t need to be there as long as the generator is accessible &mdash; though we&rsquo;re happy to walk you through what we did if you are.</p>` +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Need to reschedule or have a question? Just reply to this email or call us at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Need to reschedule or have a question? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
     `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
 
   const html = renderEmail({
@@ -241,7 +241,7 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
   const text = `Hi ${name},\n\n` +
     `Your ${planText}generator service visit is confirmed for ${dateStr}.\n\n` +
     `Our technician will perform a full inspection and any included services. You don't need to be there as long as the generator is accessible.\n\n` +
-    `Need to reschedule? Reply here or call ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `Need to reschedule? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
 
   return { subject: 'Your generator service visit is confirmed', html, text };
 }
@@ -264,7 +264,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a Bates Electric Generator Care customer.</p>` +
     notesSection +
     nextVisitSection +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions about the work, or noticed something we missed? Reply to this email or call us at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions about the work, or noticed something we missed? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
     `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
 
   const html = renderEmail({
@@ -283,7 +283,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     `Your generator service visit on ${completedStr} is complete. Thanks for being a Bates Electric Generator Care customer.\n` +
     notesText +
     nextVisitText +
-    `\nQuestions? Reply here or call ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `\nQuestions? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
 
   return { subject: 'Your generator service visit is complete', html, text };
 }
