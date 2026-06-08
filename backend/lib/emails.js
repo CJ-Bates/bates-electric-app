@@ -288,6 +288,52 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
   return { subject: 'Your generator service visit is complete', html, text };
 }
 
+function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLabel, lineItems }) {
+  const name = (customer && customer.name) || 'there';
+  const dateStr = fmtFriendlyDate(renewalDate);
+  const amountStr = '$' + ((amountCents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const planText = planLabel ? `${planLabel} ` : '';
+
+  // Render a line-item breakdown only if there's more than one item (e.g.
+  // base sub plus a performed addon being billed at renewal).
+  const items = Array.isArray(lineItems) ? lineItems.filter(x => x && x.amount_cents) : [];
+  let lineItemSection = '';
+  let lineItemTextSection = '';
+  if (items.length > 1) {
+    const fmtItem = (it) => '$' + ((it.amount_cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    lineItemSection =
+      `<h3 style="margin:20px 0 8px;font-size:13px;color:#6B7280;text-transform:uppercase;letter-spacing:0.08em;">This includes</h3>` +
+      `<table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151;">` +
+      items.map(it =>
+        `<tr><td style="padding:4px 0;">${escHtml(it.description || 'Service')}</td><td style="padding:4px 0;text-align:right;font-weight:600;">${escHtml(fmtItem(it))}</td></tr>`
+      ).join('') +
+      `</table>`;
+    lineItemTextSection = '\nThis includes:\n' +
+      items.map(it => `  - ${it.description || 'Service'}: ${fmtItem(it)}`).join('\n') + '\n';
+  }
+
+  const bodyHtml =
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
+    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Just a heads up &mdash; your ${escHtml(planText)}generator care subscription renews on <strong>${escHtml(dateStr)}</strong>. We&rsquo;ll charge <strong>${escHtml(amountStr)}</strong> to your card on file.</p>` +
+    lineItemSection +
+    `<p style="margin:20px 0 0;line-height:1.55;color:#374151;">No action needed if everything looks right. If you need to update your card or have any questions, give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
+    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+
+  const html = renderEmail({
+    heading: 'Your subscription renews soon',
+    bodyHtml,
+  });
+
+  const text = `Hi ${name},\n\n` +
+    `Just a heads up — your ${planText}generator care subscription renews on ${dateStr}. ` +
+    `We'll charge ${amountStr} to your card on file.\n` +
+    lineItemTextSection +
+    `\nNo action needed if everything looks right. If you need to update your card or have any questions, give us a call at ${COMPANY_PHONE}.\n\n` +
+    `— Bates Electric`;
+
+  return { subject: 'Your Bates Electric subscription renews soon', html, text };
+}
+
 module.exports = {
   COMPANY_PHONE,
   SENDER_NAME,
@@ -301,4 +347,5 @@ module.exports = {
   buildCardUpdateLinkEmail,
   buildVisitScheduledEmail,
   buildVisitCompletedEmail,
+  buildRenewalUpcomingEmail,
 };

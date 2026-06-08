@@ -18,6 +18,7 @@ const {
   buildCardFailedEmail,
   buildVisitScheduledEmail,
   buildVisitCompletedEmail,
+  buildRenewalUpcomingEmail,
 } = require('../lib/emails');
 
 function planLabelFor(plan) {
@@ -1049,7 +1050,7 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
 // it to the supplied address. Lets us visually verify templates before
 // flipping Stripe to live mode without triggering real customer events.
 // Body: { template: 'welcome' | 'failed_charge' | 'portal_link', to: '...' }
-const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link', 'visit_scheduled', 'visit_complete'];
+const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link', 'visit_scheduled', 'visit_complete', 'renewal_upcoming'];
 const FAKE_PORTAL_URL = 'https://billing.stripe.com/p/session/test_PLACEHOLDER';
 
 function buildTestTemplate(template) {
@@ -1100,6 +1101,18 @@ function buildTestTemplate(template) {
       nextVisitDate: '2027-06-08',
       planLabel: 'Annual',
       notes: 'Replaced battery. Tested generator under load — ran cleanly for 15 minutes. Topped off coolant.',
+    });
+  }
+  if (template === 'renewal_upcoming') {
+    return buildRenewalUpcomingEmail({
+      customer: { name: 'Sample Customer' },
+      renewalDate: '2026-08-15',
+      amountCents: 50500,
+      planLabel: 'Annual',
+      lineItems: [
+        { amount_cents: 39500, description: 'Air Cooled Generator Care -- Annual' },
+        { amount_cents: 11000, description: 'Transfer Switch Inspection & Simulated Outage Test' },
+      ],
     });
   }
   return null;

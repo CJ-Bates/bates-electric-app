@@ -8,7 +8,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
-const { sendEmail, buildWelcomeEmail, buildCardFailedEmail } = require('../lib/emails');
+const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail } = require('../lib/emails');
 
 const router = express.Router();
 
@@ -91,6 +91,8 @@ router.post('/', async (req, res) => {
       await handleInvoicePaid(event.data.object);
     } else if (event.type === 'invoice.payment_failed') {
       await handleInvoicePaymentFailed(event.data.object);
+    } else if (event.type === 'invoice.upcoming') {
+      await handleInvoiceUpcoming(event.data.object);
     }
     return res.json({ received: true });
   } catch (err) {
@@ -348,6 +350,69 @@ async function handleInvoicePaid(invoice) {
     }
   }
 }
+
+// Stripe fires invoice.upcoming ahead of every renewal (default 7 days; configurable
+// per Stripe account in Subscriptions settings). Wire this up by adding
+// `invoice.upcoming` to the live webhook endpoint's event list in the Stripe Dashboard.
+async function handleInvoiceUpcoming(invoice) {
+  if (!invoice || !invoice.customer || !invoice.subscription) {
+    console.log('[generator-webhook] invoice.upcoming: missing customer or subscription, skipping');
+    return;
+  }
+
+  // Look up our customer + subscription rows.
+  const stripeCustomerId = invoice.customer;
+  const stripeSubId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription.id;
+
+  const { data: sub } = await supabase
+    .from('generator_subscriptions')
+    .select('id, plan, status, customer:generator_customers(name, email)')
+    .eq('stripe_subscription_id', stripeSubId)
+    .maybeSingle();
+  if (!sub) {
+    console.log(`[renewal-upcoming] no matching DB subscription for ${stripeSubId}, skipping`);
+    return;
+  }
+  if (sub.status === 'canceled') {
+    console.log(`[renewal-upcoming] subscription ${sub.id} is canceled, skipping`);
+    return;
+  }
+  const customer = sub.customer || {};
+  if (!customer.email) {
+    console.log(`[renewal-upcoming] subscription ${sub.id} has no customer email, skipping`);
+    return;
+  }
+
+  // Stripe period_end is a Unix seconds timestamp; convert to YYYY-MM-DD.
+  const periodEndDate = invoice.period_end
+    ? new Date(invoice.period_end * 1000).toISOString().slice(0, 10)
+    : null;
+
+  // Line items: each invoice.lines.data entry has { amount, description, ... }
+  const lineItems = ((invoice.lines && invoice.lines.data) || []).map((line) => ({
+    amount_cents: line.amount || 0,
+    description: line.description || '',
+  }));
+
+  const planLabel = sub.plan === 'semi_annual' ? 'Semi-Annual' : (sub.plan === 'annual' ? 'Annual' : sub.plan);
+
+  const { subject, html, text } = buildRenewalUpcomingEmail({
+    customer,
+    renewalDate: periodEndDate,
+    amountCents: invoice.amount_due || 0,
+    planLabel,
+    lineItems,
+  });
+
+  await sendEmail({
+    to: customer.email,
+    subject,
+    html,
+    text,
+    logTag: '[renewal-upcoming]',
+  });
+}
+
 
 async function handleInvoicePaymentFailed(invoice) {
   if (!invoice || !invoice.lines || !invoice.lines.data) return;
