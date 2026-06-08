@@ -448,29 +448,30 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
 
 // Hardcoded catalog of one-time add-ons by gen class.
 // Mirrors the catalog in bates-generator/netlify/functions/create-checkout.js.
+// Live-mode price IDs as of the 2026-06-08 Stripe cutover.
 const ADDON_CATALOG = {
   battery_replacement: {
     label: 'Battery Replacement',
     prices: {
-      air_cooled:    { price_id: 'price_1TdcRZBbX7QhpMgba4u78SyS', amount_cents: 16500 },
-      liquid_22_38:  { price_id: 'price_1TdcRaBbX7QhpMgbpgDY7xUh', amount_cents: 23500 },
-      liquid_48_150: { price_id: 'price_1TdcRaBbX7QhpMgbtb0YgpLt', amount_cents: 26500 },
+      air_cooled:    { price_id: 'price_1Tg78FBbX7QhpMgbGVRxRJNo', amount_cents: 16500 },
+      liquid_22_38:  { price_id: 'price_1Tg78EBbX7QhpMgbFvIrYuD1', amount_cents: 23500 },
+      liquid_48_150: { price_id: 'price_1Tg78EBbX7QhpMgbOhRdCUUe', amount_cents: 26500 },
     },
   },
   exterior_wash: {
     label: 'Exterior Wash & Interior Blow-Out',
-    prices: { all: { price_id: 'price_1TdcRZBbX7QhpMgbJxnGgkBp', amount_cents: 8500 } },
+    prices: { all: { price_id: 'price_1Tg78FBbX7QhpMgbzrM2AE2n', amount_cents: 8500 } },
   },
   coolant_flush: {
     label: 'Coolant System Flush',
     prices: {
-      liquid_22_38:  { price_id: 'price_1TdcRaBbX7QhpMgbDUyQKlCh', amount_cents: 59500 },
-      liquid_48_150: { price_id: 'price_1TdcRbBbX7QhpMgbfeEKybBk', amount_cents: 69500 },
+      liquid_22_38:  { price_id: 'price_1Tg78DBbX7QhpMgbhESS9Wyp', amount_cents: 59500 },
+      liquid_48_150: { price_id: 'price_1Tg78DBbX7QhpMgb7VtP2hGx', amount_cents: 69500 },
     },
   },
   ats_outage_combined: {
     label: 'Transfer Switch Inspection & Simulated Outage Test',
-    prices: { all: { price_id: 'price_1TejJPBbX7QhpMgbHGnp1V2U', amount_cents: 11000 } },
+    prices: { all: { price_id: 'price_1Tg78DBbX7QhpMgby14G5PiY', amount_cents: 11000 } },
   },
 };
 
