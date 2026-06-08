@@ -21,6 +21,7 @@
   let allSubs = [];
   let activeFilter = 'all';
   let searchQuery = '';
+  let currentUserEmail = null;
 
   // ---- Role check (must be office) ----
   async function checkRole() {
@@ -33,6 +34,13 @@
       if (profile.role !== 'office') {
         showStatus('Access denied. Office role required.', 'error');
         setTimeout(() => window.location.replace('home.html'), 1500);
+        return;
+      }
+      currentUserEmail = profile.email || null;
+      // Prefill the admin test-email "Send to" with the logged-in user's email
+      const adminEmailInput = document.getElementById('gc-test-email');
+      if (adminEmailInput && currentUserEmail && !adminEmailInput.value) {
+        adminEmailInput.value = currentUserEmail;
       }
     } catch (err) {
       console.error('Role check failed:', err);
@@ -891,5 +899,52 @@
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
+
+  // ---- Admin: Send test email ----
+  function wireAdminTools() {
+    const btn = document.getElementById('gc-test-send-btn');
+    const templateSel = document.getElementById('gc-test-template');
+    const emailInput = document.getElementById('gc-test-email');
+    const resultEl = document.getElementById('gc-test-result');
+    if (!btn || !templateSel || !emailInput || !resultEl) return;
+
+    btn.addEventListener('click', async () => {
+      const template = templateSel.value;
+      const to = (emailInput.value || '').trim();
+      if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+        resultEl.textContent = 'Please enter a valid email address.';
+        resultEl.style.color = '#991b1b';
+        return;
+      }
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = 'Sending...';
+      resultEl.textContent = '';
+      try {
+        const r = await fetch(`${API_BASE}/api/generator-care/admin/send-test-email`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template, to }),
+        });
+        const data = await r.json();
+        if (!r.ok || !data.sent) {
+          const reason = data.error || `HTTP ${r.status}`;
+          resultEl.textContent = `Failed: ${reason}`;
+          resultEl.style.color = '#991b1b';
+          return;
+        }
+        resultEl.textContent = `Sent to ${to} (check your inbox).`;
+        resultEl.style.color = '#065f46';
+      } catch (err) {
+        console.error('Test email send failed:', err);
+        resultEl.textContent = `Failed: ${err.message}`;
+        resultEl.style.color = '#991b1b';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+  }
+  wireAdminTools();
 
 })();

@@ -135,6 +135,34 @@
     </section>
 
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+
+    <details id="gc-admin-tools" style="margin-top: 32px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb;">
+      <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; color: #6b7280; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;">
+        Admin tools
+      </summary>
+      <div style="padding: 16px 16px 20px; border-top: 1px solid #e5e7eb;">
+        <h3 style="margin: 0 0 6px; font-size: 0.95rem; color: #1F3A5F;">Send test email</h3>
+        <p style="margin: 0 0 14px; font-size: 0.82rem; color: #6b7280; line-height: 1.5;">
+          Renders a customer-facing template with sample data and sends it to the address below. Subject is prefixed with <code>[TEST]</code>. Useful for previewing rendering before flipping Stripe to live.
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+          <div>
+            <label for="gc-test-template" style="display:block; font-size: 0.78rem; color: #6b7280; margin-bottom: 4px;">Template</label>
+            <select id="gc-test-template" style="padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9rem; font-family: inherit; min-width: 200px; background: #fff;">
+              <option value="welcome">Welcome</option>
+              <option value="failed_charge">Failed charge</option>
+              <option value="portal_link">Manage account link</option>
+            </select>
+          </div>
+          <div style="flex: 1; min-width: 220px;">
+            <label for="gc-test-email" style="display:block; font-size: 0.78rem; color: #6b7280; margin-bottom: 4px;">Send to</label>
+            <input type="email" id="gc-test-email" placeholder="you@example.com" style="width: 100%; padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9rem; font-family: inherit; box-sizing: border-box;" />
+          </div>
+          <button type="button" id="gc-test-send-btn" class="gc-mark-done" style="background:#1F3A5F; font-size: 0.85rem; padding: 8px 16px;">Send test</button>
+        </div>
+        <p id="gc-test-result" style="margin: 12px 0 0; font-size: 0.82rem; min-height: 1.2em;" aria-live="polite"></p>
+      </div>
+    </details>
   </main>
 
   <!-- Detail modal -->
