@@ -381,6 +381,88 @@ router.post('/addons/:id/unmark-performed', async (req, res) => {
 });
 
 
+// ===== REFUND HELPERS (shared by /addons/:id/refund + /adhoc-charges/:id/refund) =====
+
+async function executeStripeRefund({ paymentIntentId, originalAmountCents, requestedAmountCents, reason }) {
+  const refundAmount = requestedAmountCents || originalAmountCents;
+  if (!Number.isInteger(refundAmount) || refundAmount <= 0 || refundAmount > originalAmountCents) {
+    throw new Error(`refund amount must be between 1 cent and the original charge ($${(originalAmountCents/100).toFixed(2)})`);
+  }
+  const refund = await stripe.refunds.create({
+    payment_intent: paymentIntentId,
+    amount: refundAmount,
+    reason: 'requested_by_customer',
+    metadata: reason ? { bates_reason: String(reason).slice(0, 500) } : {},
+  });
+  return { refund, refundAmount };
+}
+
+// Structured marker the frontend parses to render "Refunded" / "Partial refund" badges.
+function buildRefundNote(refundAmountCents, originalAmountCents, reason, stripeRefundId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const isPartial = refundAmountCents < originalAmountCents;
+  const amtPart = isPartial
+    ? `$${(refundAmountCents/100).toFixed(2)} of $${(originalAmountCents/100).toFixed(2)}`
+    : `$${(refundAmountCents/100).toFixed(2)}`;
+  let note = `REFUNDED ${amtPart} on ${today}`;
+  if (reason) note += `: ${reason}`;
+  note += ` (stripe_refund_id: ${stripeRefundId})`;
+  return note;
+}
+
+
+// POST /api/generator-care/addons/:id/refund
+// Body: { amount_cents?, reason? }
+// amount_cents omitted = full refund. Stripe supports multiple partial refunds
+// up to the original total; we don't enforce that here -- Stripe will reject.
+router.post('/addons/:id/refund', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount_cents, reason } = req.body || {};
+
+    const { data: addon, error: addonErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (addonErr) throw addonErr;
+    if (!addon) return res.status(404).json({ error: 'addon not found' });
+    if (addon.status !== 'charged') {
+      return res.status(400).json({ error: `cannot refund addon with status '${addon.status}' (must be 'charged')` });
+    }
+    if (!addon.stripe_payment_intent_id) {
+      return res.status(400).json({ error: 'addon has no stripe_payment_intent_id; refund must be issued from Stripe Dashboard' });
+    }
+
+    let result;
+    try {
+      result = await executeStripeRefund({
+        paymentIntentId: addon.stripe_payment_intent_id,
+        originalAmountCents: addon.amount_cents,
+        requestedAmountCents: amount_cents,
+        reason,
+      });
+    } catch (refundErr) {
+      return res.status(400).json({ error: refundErr.message });
+    }
+
+    const refundNote = buildRefundNote(result.refundAmount, addon.amount_cents, reason, result.refund.id);
+    const newNotes = (addon.notes ? addon.notes + '\n' : '') + refundNote;
+    await supabaseAdmin.from('generator_pending_addons').update({ notes: newNotes }).eq('id', id);
+
+    res.json({
+      ok: true,
+      refund_id: result.refund.id,
+      amount_cents: result.refundAmount,
+      stripe_status: result.refund.status,
+    });
+  } catch (err) {
+    console.error('[generator-care] addon refund error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // POST /api/generator-care/subscriptions/:id/cancel
 // Cancel subscription at the end of the current billing period.
 // Customer keeps service through paid-through date; Stripe stops auto-renewal.
@@ -799,6 +881,57 @@ router.post('/adhoc-charges/:id/cancel', async (req, res) => {
     res.json({ ok: true, adhoc_charge: updated });
   } catch (err) {
     console.error('[generator-care] adhoc-charges cancel error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// POST /api/generator-care/adhoc-charges/:id/refund
+// Body: { amount_cents?, reason? }
+// amount_cents omitted = full refund.
+router.post('/adhoc-charges/:id/refund', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount_cents, reason } = req.body || {};
+
+    const { data: charge, error: chErr } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (chErr) throw chErr;
+    if (!charge) return res.status(404).json({ error: 'charge not found' });
+    if (charge.status !== 'charged') {
+      return res.status(400).json({ error: `cannot refund charge with status '${charge.status}' (must be 'charged')` });
+    }
+    if (!charge.stripe_payment_intent_id) {
+      return res.status(400).json({ error: 'charge has no stripe_payment_intent_id; refund must be issued from Stripe Dashboard' });
+    }
+
+    let result;
+    try {
+      result = await executeStripeRefund({
+        paymentIntentId: charge.stripe_payment_intent_id,
+        originalAmountCents: charge.amount_cents,
+        requestedAmountCents: amount_cents,
+        reason,
+      });
+    } catch (refundErr) {
+      return res.status(400).json({ error: refundErr.message });
+    }
+
+    const refundNote = buildRefundNote(result.refundAmount, charge.amount_cents, reason, result.refund.id);
+    const newNotes = (charge.notes ? charge.notes + '\n' : '') + refundNote;
+    await supabaseAdmin.from('generator_adhoc_charges').update({ notes: newNotes }).eq('id', id);
+
+    res.json({
+      ok: true,
+      refund_id: result.refund.id,
+      amount_cents: result.refundAmount,
+      stripe_status: result.refund.status,
+    });
+  } catch (err) {
+    console.error('[generator-care] adhoc-charges refund error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -348,15 +348,33 @@
                 <button class="gc-mark-done" data-unmark="${a.id}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Undo</button>
               </div>`;
           } else if (a.status === 'charged') {
-            badgeColor = '#059669';
-            action = `<span class="gc-badge" style="background:#D1FAE5;color:#065F46;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Charged</span>`;
+            const refunded = parseTotalRefundedCents(a.notes);
+            if (refunded >= a.amount_cents) {
+              badgeColor = '#6B7280';
+              action = `<span class="gc-badge" style="background:#F3F4F6;color:#374151;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Refunded</span>`;
+            } else if (refunded > 0) {
+              badgeColor = '#92400E';
+              action = `
+                <div style="display:flex;flex-direction:column;gap:0.25rem;align-items:flex-end;">
+                  <span class="gc-badge" style="background:#FEF3C7;color:#92400E;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Partial refund: $${(refunded/100).toFixed(2)}</span>
+                  <button class="gc-mark-done" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund more</button>
+                </div>`;
+            } else {
+              badgeColor = '#059669';
+              action = `
+                <div style="display:flex;flex-direction:column;gap:0.25rem;align-items:flex-end;">
+                  <span class="gc-badge" style="background:#D1FAE5;color:#065F46;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Charged</span>
+                  <button class="gc-mark-done" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund</button>
+                </div>`;
+            }
           } else if (a.status === 'failed') {
             badgeColor = '#DC2626';
             action = `<button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#DC2626;">Retry</button>`;
           } else {
             action = `<span class="gc-badge gc-badge-active" style="font-size:0.7rem;">${escapeHtml(a.status)}</span>`;
           }
-          const noteHtml = a.notes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(a.notes)}</div>` : '';
+          const visibleNotes = stripRefundLines(a.notes);
+          const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(visibleNotes)}</div>` : '';
           html += `<div class="gc-visit-row">
             <div>
               <div>${escapeHtml(addonLabel(a.addon_type))}</div>
@@ -388,8 +406,19 @@
             badge = c.billing_method === 'renewal' ? 'Pending - will bill at renewal' : 'Pending';
             action = `<button class="gc-mark-done" data-cancel-charge="${c.id}" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">&times;</button>`;
           } else if (c.status === 'charged') {
-            badgeColor = '#059669';
-            badge = c.date_charged ? `Charged ${c.date_charged}` : 'Charged';
+            const refunded = parseTotalRefundedCents(c.notes);
+            if (refunded >= c.amount_cents) {
+              badgeColor = '#6B7280';
+              badge = 'Refunded';
+            } else if (refunded > 0) {
+              badgeColor = '#92400E';
+              badge = `Charged · partial refund $${(refunded/100).toFixed(2)}`;
+              action = `<button class="gc-mark-done" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="${refunded}" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund more</button>`;
+            } else {
+              badgeColor = '#059669';
+              badge = c.date_charged ? `Charged ${c.date_charged}` : 'Charged';
+              action = `<button class="gc-mark-done" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund</button>`;
+            }
           } else if (c.status === 'failed') {
             badgeColor = '#DC2626';
             badge = 'Failed';
@@ -397,7 +426,8 @@
             badgeColor = '#6b7280';
             badge = c.status;
           }
-          const noteHtml = c.notes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(c.notes)}</div>` : '';
+          const visibleChargeNotes = stripRefundLines(c.notes);
+          const noteHtml = visibleChargeNotes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(visibleChargeNotes)}</div>` : '';
           html += `<div class="gc-visit-row">
             <div>
               <div>${escapeHtml(c.description)}</div>
@@ -444,6 +474,12 @@
       });
       body.querySelectorAll('[data-unmark]').forEach(btn => {
         btn.addEventListener('click', () => unmarkPerformed(btn.dataset.unmark, id));
+      });
+      body.querySelectorAll('[data-refund-addon]').forEach(btn => {
+        btn.addEventListener('click', () => refundCharge('addon', btn.dataset.refundAddon, parseInt(btn.dataset.amount, 10), parseInt(btn.dataset.refunded, 10), btn.dataset.label, id));
+      });
+      body.querySelectorAll('[data-refund-charge]').forEach(btn => {
+        btn.addEventListener('click', () => refundCharge('adhoc', btn.dataset.refundCharge, parseInt(btn.dataset.amount, 10), parseInt(btn.dataset.refunded, 10), btn.dataset.desc, id));
       });
 
       // Wire up "Save next visit due" button
@@ -953,5 +989,80 @@
     });
   }
   wireAdminTools();
+
+  // ---- Refund helpers ----
+  // Parses the structured "REFUNDED $X.XX [of $Y.YY] on YYYY-MM-DD ..." markers
+  // that the backend appends to notes on every refund. Returns total cents refunded.
+  function parseTotalRefundedCents(notes) {
+    if (!notes) return 0;
+    const matches = String(notes).matchAll(/REFUNDED \$(\d+(?:\.\d+)?)/g);
+    let total = 0;
+    for (const m of matches) total += Math.round(parseFloat(m[1]) * 100);
+    return total;
+  }
+
+  // Removes REFUNDED... lines from notes for display purposes (refunds are
+  // rendered as badges, not as red failure-style notes).
+  function stripRefundLines(notes) {
+    if (!notes) return '';
+    return String(notes).split('\n').filter(line => !line.trim().startsWith('REFUNDED ')).join('\n').trim();
+  }
+
+  async function refundCharge(rowType, rowId, originalAmountCents, alreadyRefundedCents, label, subscriptionId) {
+    const remaining = originalAmountCents - alreadyRefundedCents;
+    if (remaining <= 0) {
+      alert('Already fully refunded.');
+      return;
+    }
+    const remainingDollars = (remaining / 100).toFixed(2);
+    const origDollars = (originalAmountCents / 100).toFixed(2);
+
+    const promptMsg = alreadyRefundedCents > 0
+      ? `Refund "${label}".\n\nOriginal: $${origDollars}\nAlready refunded: $${(alreadyRefundedCents/100).toFixed(2)}\nMax additional refund: $${remainingDollars}\n\nAmount (blank = full $${remainingDollars}):`
+      : `Refund "${label}".\n\nOriginal charge: $${origDollars}\n\nAmount (blank = full $${origDollars}):`;
+
+    const amtStr = prompt(promptMsg, '');
+    if (amtStr === null) return;
+
+    let amount_cents = null;
+    const trimmed = (amtStr || '').trim();
+    if (trimmed) {
+      const num = parseFloat(trimmed);
+      if (!Number.isFinite(num) || num <= 0 || Math.round(num * 100) > remaining) {
+        alert(`Invalid amount. Must be between 0.01 and ${remainingDollars}.`);
+        return;
+      }
+      amount_cents = Math.round(num * 100);
+    }
+
+    const reasonStr = prompt('Optional reason for refund (or leave blank):', '');
+    if (reasonStr === null) return;
+
+    const confirmAmt = amount_cents ? (amount_cents / 100).toFixed(2) : remainingDollars;
+    if (!confirm(`Refund $${confirmAmt} via Stripe?\n\nThis posts to the customer's card within a few business days. Cannot be undone (you would have to recharge them).`)) return;
+
+    const endpoint = rowType === 'addon'
+      ? `${API_BASE}/api/generator-care/addons/${rowId}/refund`
+      : `${API_BASE}/api/generator-care/adhoc-charges/${rowId}/refund`;
+
+    try {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount_cents, reason: (reasonStr || '').trim() || null }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showStatus(`Refund failed: ${data.error || `HTTP ${r.status}`}`, 'error');
+        return;
+      }
+      showStatus(`Refunded $${(data.amount_cents / 100).toFixed(2)}.`, 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Refund failed:', err);
+      showStatus(`Refund failed: ${err.message}`, 'error');
+    }
+  }
 
 })();
