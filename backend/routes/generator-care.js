@@ -906,7 +906,7 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
       .select(`
-        id, plan, annual_price_cents, next_visit_due, fleet_monitoring,
+        id, plan, annual_price_cents, next_visit_due, last_visit_date, fleet_monitoring,
         gen_class, gen_type_label, gen_model, gen_serial,
         raw_metadata,
         customer:generator_customers(name, email, install_address, install_city, install_state, install_zip)
@@ -940,11 +940,16 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
     };
     const planLabel = sub.plan === 'semi_annual' ? 'Semi-Annual' : (sub.plan === 'annual' ? 'Annual' : sub.plan);
 
+    // If the first service visit has already happened, suppress the "First
+    // visit:" row in the welcome email — showing a future date when there's
+    // a prior last_visit_date would just confuse the customer.
+    const nextVisitForEmail = sub.last_visit_date ? null : sub.next_visit_due;
+
     const { subject, html, text } = buildWelcomeEmail({
       customer,
       meta,
       planLabel,
-      nextVisitDate: sub.next_visit_due,
+      nextVisitDate: nextVisitForEmail,
       annualPriceCents: sub.annual_price_cents,
       fleetMonitoring: sub.fleet_monitoring,
     });
