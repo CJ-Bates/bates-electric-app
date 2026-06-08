@@ -787,11 +787,18 @@
       alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-02).');
       return;
     }
+    // Optional notes — included in the customer's "visit complete" email if provided.
+    const notesInput = prompt(
+      'Notes for the customer (optional).\n\nWhat we did, anything they should know about, etc. Will appear in the visit-complete email under "Notes from the visit." Leave blank to skip.',
+      ''
+    );
+    if (notesInput === null) return; // user cancelled
+    const notes = (notesInput || '').trim() || null;
     try {
       const r = await fetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ completed_date }),
+        body: JSON.stringify({ completed_date, notes }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       showStatus('Visit marked complete. Next visit scheduled.', 'success');
