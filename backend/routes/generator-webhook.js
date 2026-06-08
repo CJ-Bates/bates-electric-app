@@ -276,17 +276,22 @@ async function handleSubscriptionDeleted(subscription) {
 }
 
 async function handleCustomerUpdated(customer) {
-  // Sync customer email/name from Stripe portal edits back to our DB.
-  // Intentionally NOT syncing phone or address: Stripe holds BILLING info,
-  // our generator_customers has SERVICE-site info. They can legitimately
-  // differ (e.g. owner billed at home, generator installed at a vacation
-  // property). Owner can update site contact info via Amy.
+  // Sync customer email/name/phone from Stripe portal edits back to our DB.
+  //
+  // Intentionally NOT syncing install_address: Stripe holds BILLING address,
+  // our generator_customers.install_address holds the SERVICE-site address.
+  // They can legitimately differ (e.g. owner billed at home, generator at
+  // a vacation property). If a customer wants their service address updated,
+  // they have to call Amy. Document this in CLAUDE.md for staff awareness.
   const updates = {};
   if (typeof customer.email === 'string' && customer.email.length > 0) {
     updates.email = customer.email;
   }
   if (typeof customer.name === 'string' && customer.name.length > 0) {
     updates.name = customer.name;
+  }
+  if (typeof customer.phone === 'string' && customer.phone.length > 0) {
+    updates.phone = customer.phone;
   }
   if (Object.keys(updates).length === 0) return;
 

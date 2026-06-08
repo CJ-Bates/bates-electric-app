@@ -74,3 +74,9 @@ When changing any permission behavior, update the SQL file and re-run it; don't 
 ### Server mounts `/auth` twice
 
 `server.js` mounts `authRoutes` at both `/auth` and `/` so `GET /me` works without the `/auth` prefix. This is intentional — don't consolidate.
+
+### Generator Care: Stripe Portal sync is partial by design
+
+The `customer.updated` webhook handler in `backend/routes/generator-webhook.js` syncs email, name, and phone from Stripe's Customer Portal back to `generator_customers`. It does **NOT** sync the address. Reason: Stripe holds billing address; our `install_address` column is the generator's physical location. Owner at one address, generator at another (vacation home, rental property, parents' house) is common.
+
+Operational implication for office staff: if a customer changes their address in the Stripe Portal expecting their service-visit address to update, it won't. Only Amy can update `install_address`, via the dashboard. Worth mentioning if a customer reports their portal info isn't reflected.
