@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "@sendgrid/mail": "^8.1.0",
+    "@sentry/node": "^10.57.0",
     "@supabase/supabase-js": "^2.103.0",
     "archiver": "^7.0.1",
     "cors": "^2.8.6",

@@ -9,6 +9,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail } = require('../lib/emails');
+const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -96,7 +97,14 @@ router.post('/', async (req, res) => {
     }
     return res.json({ received: true });
   } catch (err) {
+    // Webhook failures are the highest-stakes place to lose visibility --
+    // route them through the shared reporter (Sentry + alert email) too.
     console.error('[generator-webhook] handler error:', err);
+    reportError(err, {
+      route: `/webhooks/stripe (${event && event.type})`,
+      method: 'POST',
+      user: 'stripe-webhook',
+    }).catch(() => {});
     return res.status(500).json({ error: err.message });
   }
 });
