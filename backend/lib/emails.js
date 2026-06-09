@@ -112,18 +112,43 @@ function fmtMoney(cents) {
 // Rendering primitives -- branded shell + CTA button
 // ============================================================================
 
-// Renders the navy CTA button. Inline-block + bgcolor + border-radius covers
-// modern clients; Outlook for Windows degrades gracefully (square corners,
-// flat fill). Same button is used everywhere -- 8px radius, 14x32 padding,
-// 15px / 600 weight font.
+// Renders the navy CTA pill button using the "bulletproof email button"
+// pattern: a VML <v:roundrect> rendered only by Outlook desktop (which
+// ignores CSS border-radius on <a>), and a standard inline-block <a> for
+// every other client. End result: a true pill in every major email client
+// including Outlook 2007-2019.
+//
+// VML width is fixed (260px) since Outlook can't auto-size a <v:roundrect>
+// around its text. Fits "Manage my account" with comfortable margins;
+// re-tune if a future button label needs more.
 function ctaButton(text, url) {
   if (!text || !url) return '';
+  const safeText = escHtml(text);
+  const vmlWidth = 260;
+  const vmlHeight = 48;
   return (
-    `<p style="text-align:center;margin:28px 0 8px;">` +
-      `<a href="${url}" style="display:inline-block;padding:14px 32px;background:${BRAND.navy};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:15px;font-family:${FONT_STACK};letter-spacing:0.2px;border-radius:8px;">` +
-        `${escHtml(text)}` +
+    `<div style="text-align:center;margin:32px 0 12px;">` +
+      // ----- Outlook desktop only: VML pill -----
+      `<!--[if mso]>` +
+      `<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" ` +
+        `href="${url}" ` +
+        `style="height:${vmlHeight}px;v-text-anchor:middle;width:${vmlWidth}px;" ` +
+        `arcsize="50%" stroke="f" fillcolor="${BRAND.navy}">` +
+        `<w:anchorlock/>` +
+        `<center style="color:#FFFFFF;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${safeText}</center>` +
+      `</v:roundrect>` +
+      `<![endif]-->` +
+      // ----- All other clients: standard inline-block pill -----
+      `<!--[if !mso]><!-- -->` +
+      `<a href="${url}" ` +
+        `style="background-color:${BRAND.navy};color:#FFFFFF;text-decoration:none;` +
+        `padding:14px 32px;border-radius:999px;font-weight:600;font-size:15px;` +
+        `font-family:${FONT_STACK};letter-spacing:0.2px;display:inline-block;` +
+        `mso-padding-alt:0;line-height:1.2;">` +
+        `${safeText}` +
       `</a>` +
-    `</p>`
+      `<!--<![endif]-->` +
+    `</div>`
   );
 }
 
