@@ -855,8 +855,13 @@
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      showStatus('Visit confirmed.', 'success');
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Could not confirm visit: ${reason}`, 'error');
+      } else {
+        showStatus('Visit confirmed.', 'success');
+      }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
@@ -890,8 +895,13 @@
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed_date, notes }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      showStatus('Visit marked complete. Next visit scheduled.', 'success');
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const reason = data.reason || data.error || `HTTP ${r.status}`;
+        showStatus(`Could not mark complete: ${reason}`, 'error');
+      } else {
+        showStatus('Visit marked complete. Next visit scheduled.', 'success');
+      }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
