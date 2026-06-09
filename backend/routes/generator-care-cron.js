@@ -16,6 +16,20 @@ const TO_EMAILS = (process.env.GENERATOR_DIGEST_TO || 'amyp@bates-electric.com,c
 
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
+// Healthchecks.io dead-man's-switch ping. Fire-and-forget: never awaited, never
+// throws, never affects the cron response. If HEALTHCHECKS_URL is unset it's a
+// no-op. Hitting the base URL signals success; "<url>/fail" signals a crash so
+// Healthchecks alerts CJ. Set HEALTHCHECKS_URL in Render after creating the check.
+function pingHealthcheck(suffix = '') {
+  const base = process.env.HEALTHCHECKS_URL;
+  if (!base) return;
+  const url = base.replace(/\/$/, '') + suffix;
+  // Node 18+ global fetch. Swallow everything -- this is a pure side channel.
+  Promise.resolve()
+    .then(() => fetch(url, { method: 'GET' }))
+    .catch((e) => console.error('[gc-cron] healthcheck ping failed:', e && e.message));
+}
+
 // Bearer-token auth for cron endpoints
 function requireCronSecret(req, res, next) {
  if (!CRON_SECRET) return res.status(500).json({ error: 'CRON_SECRET not configured on server' });
@@ -100,7 +114,9 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
     const failedTotal = failedAddons.length + failedAdhoc.length;
 
     if (overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0) {
- // Quiet morning  -  no email
+ // Quiet morning  -  no email. Still a successful cron run, so ping the
+ // healthcheck; otherwise Healthchecks would false-alarm on no-news days.
+ pingHealthcheck();
  return res.json({ ok: true, sent: false, reason: 'No visits, failed charges, or past-due subs', overdue: 0, upcoming: 0, failed: 0, past_due: 0 });
  }
 
@@ -118,8 +134,13 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  html,
  });
 
+ // Digest sent successfully -- signal the dead-man's switch.
+ pingHealthcheck();
+
  res.json({ ok: true, sent: true, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
  } catch (err) {
+ // Signal failure to Healthchecks first so we hear about a crashed cron.
+ pingHealthcheck('/fail');
  console.error('[gc-cron] daily-email error:', err && (err.response?.body || err.message));
  res.status(500).json({ error: err.message });
  }
