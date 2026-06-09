@@ -1,19 +1,52 @@
 // backend/lib/emails.js
 // Shared email scaffolding for the Generator Care program.
 // All customer-facing transactional emails (welcome, card-failed, portal link,
-// resend-welcome, admin test-sends) go through this module so the brand
-// header/footer, phone number, and SendGrid config live in one place.
+// visit-scheduled, visit-complete, renewal-upcoming, resend-welcome, admin
+// test-sends) go through this module so the brand header/logo/footer, phone
+// number, sender identity, and SendGrid config live in ONE place.
+//
+// When you want to change the phone number, brand color, logo URL, or any
+// other surface detail: edit the BRAND object below. Don't hunt through
+// template files.
 
 const sgMail = require('@sendgrid/mail');
 
-// Single source of truth for branding details surfaced inside email bodies.
-const COMPANY_PHONE = '(636) 464-3939';
-const SENDER_NAME = 'Bates Electric Generator Care';
+// ============================================================================
+// Brand constants -- single source of truth for everything visible
+// ============================================================================
+const BRAND = {
+  name: 'Bates Electric',
+  tagline: 'Generator Care',
+  phone: '(636) 464-3939',
+  logoUrl: 'https://app.bates-electric.com/logo-icon-192.png',
+  navy: '#1F3A5F',          // primary brand color (header, CTA, headings)
+  accent: '#5B95C9',        // links, secondary accents (rarely used)
+  bgPage: '#F4F6F9',        // soft gray page background behind the card
+  bgCard: '#FFFFFF',        // card body
+  bgFooter: '#F9FAFB',      // slightly different gray for footer band
+  textBody: '#374151',      // main paragraph text
+  textMuted: '#6B7280',     // sign-off, fine print
+  textFine: '#9CA3AF',      // bottom-of-footer fine print
+  borderLight: '#E5E7EB',   // hairline separator between body + footer
+  eyebrow: '#DFE6F0',       // pale blue eyebrow text on navy header
+  fromEmail: 'no-reply@bates-electric.com',
+  fromName: 'Bates Electric Generator Care',
+};
+
+// Legacy exports -- kept for any callers that still reach in for these directly.
+const COMPANY_PHONE = BRAND.phone;
+const SENDER_NAME = BRAND.fromName;
 
 function getFromEmail() {
-  return process.env.GENERATOR_DIGEST_FROM || 'no-reply@bates-electric.com';
+  return process.env.GENERATOR_DIGEST_FROM || BRAND.fromEmail;
 }
 
+// Font stack used in every email; defined once so the brand stays consistent.
+const FONT_STACK = `system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`;
+
+// ============================================================================
+// SendGrid plumbing
+// ============================================================================
 let _keyConfigured = false;
 function ensureSendGridKey() {
   const key = process.env.SENDGRID_API_KEY;
@@ -25,49 +58,8 @@ function ensureSendGridKey() {
   return true;
 }
 
-function escHtml(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c]));
-}
-
-// Renders the centered navy CTA button as a standalone <p>...</p> block.
-// Use inside bodyHtml when the button is not the last visual element.
-function ctaButton(text, url) {
-  if (!text || !url) return '';
-  return `<p style="text-align:center;margin:24px 0;">` +
-    `<a href="${url}" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;font-size:15px;">${escHtml(text)}</a>` +
-    `</p>`;
-}
-
-// Wraps a body in the branded navy-header/light-footer shell.
-// heading and bodyHtml are inserted verbatim as HTML — caller must
-// escape any user-provided values (use escHtml).
-// ctaText/ctaUrl are optional; when both present, renders a centered
-// navy CTA button between the body and the footer (use ctaButton()
-// directly inside bodyHtml if the button needs to appear elsewhere).
-function renderEmail({ heading, bodyHtml, ctaText, ctaUrl }) {
-  const ctaBlock = ctaButton(ctaText, ctaUrl);
-  return '<!DOCTYPE html>' +
-    '<html><body style="margin:0;padding:0;background:#F4F6F9;font-family:system-ui,-apple-system,sans-serif;color:#1F3A5F;">' +
-    '<div style="max-width:600px;margin:0 auto;background:#fff;">' +
-    '<div style="background:#1F3A5F;padding:24px 28px;text-align:center;">' +
-    '<h1 style="color:#fff;margin:0;font-size:22px;letter-spacing:0.5px;">Bates Electric</h1>' +
-    '<p style="color:#DFE6F0;margin:6px 0 0;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Generator Care</p>' +
-    '</div>' +
-    `<div style="padding:28px;">` +
-    `<h2 style="margin:0 0 14px;font-size:20px;color:#1F3A5F;">${heading}</h2>` +
-    bodyHtml +
-    ctaBlock +
-    '</div>' +
-    '<div style="background:#F4F6F9;padding:18px 28px;text-align:center;border-top:1px solid #E5E7EB;">' +
-    `<p style="margin:0;font-size:12px;color:#6B7280;">Bates Electric, Inc. · ${COMPANY_PHONE}</p>` +
-    '</div>' +
-    '</div></body></html>';
-}
-
 // Sends an email via SendGrid. Returns { sent: boolean, reason?: string }.
-// Never throws — webhook callers must not surface failures as 500s
+// Never throws -- webhook callers must not surface failures as 500s
 // (Stripe would retry on 500).
 async function sendEmail({ to, subject, html, text, logTag }) {
   const tag = logTag || '[email]';
@@ -82,7 +74,7 @@ async function sendEmail({ to, subject, html, text, logTag }) {
   try {
     const response = await sgMail.send({
       to,
-      from: { email: getFromEmail(), name: SENDER_NAME },
+      from: { email: getFromEmail(), name: BRAND.fromName },
       subject,
       text,
       html,
@@ -97,18 +89,153 @@ async function sendEmail({ to, subject, html, text, logTag }) {
   }
 }
 
-// ---- Template builders (pure functions) ----
+// ============================================================================
+// Utility helpers
+// ============================================================================
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function fmtFriendlyDate(s) {
+  if (!s) return '';
+  const d = new Date(s + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function fmtMoney(cents) {
+  return '$' + ((cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ============================================================================
+// Rendering primitives -- branded shell + CTA button
+// ============================================================================
+
+// Renders the navy CTA button. Inline-block + bgcolor + border-radius covers
+// modern clients; Outlook for Windows degrades gracefully (square corners,
+// flat fill). Same button is used everywhere -- 8px radius, 14x32 padding,
+// 15px / 600 weight font.
+function ctaButton(text, url) {
+  if (!text || !url) return '';
+  return (
+    `<p style="text-align:center;margin:28px 0 8px;">` +
+      `<a href="${url}" style="display:inline-block;padding:14px 32px;background:${BRAND.navy};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:15px;font-family:${FONT_STACK};letter-spacing:0.2px;border-radius:8px;">` +
+        `${escHtml(text)}` +
+      `</a>` +
+    `</p>`
+  );
+}
+
+// Default sign-off appears at the bottom of the body (above the footer band).
+// Callers can pass their own `signoff` HTML to override (e.g. to add a
+// contextual reminder paragraph above the tagline).
+const DEFAULT_SIGNOFF = (
+  `<p style="margin:28px 0 0;color:${BRAND.textMuted};font-size:14px;line-height:1.6;">` +
+    `&mdash; The Bates Electric team` +
+  `</p>`
+);
+
+// Build the navy header band (logo + "Bates Electric" + "GENERATOR CARE" eyebrow).
+function renderHeader() {
+  return (
+    `<tr><td align="center" style="background:${BRAND.navy};padding:30px 28px 24px;">` +
+      `<img src="${BRAND.logoUrl}" alt="${escHtml(BRAND.name)}" width="56" height="56" ` +
+        `style="display:block;margin:0 auto 12px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">` +
+      `<div style="color:#FFFFFF;font-family:${FONT_STACK};font-size:20px;font-weight:700;letter-spacing:0.4px;line-height:1.2;">${escHtml(BRAND.name)}</div>` +
+      `<div style="color:${BRAND.eyebrow};font-family:${FONT_STACK};font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-top:6px;">${escHtml(BRAND.tagline)}</div>` +
+    `</td></tr>`
+  );
+}
+
+// Footer band: company name + phone, restrained.
+function renderFooter() {
+  return (
+    `<tr><td align="center" style="background:${BRAND.bgFooter};padding:22px 28px;border-top:1px solid ${BRAND.borderLight};">` +
+      `<div style="font-family:${FONT_STACK};font-size:13px;color:${BRAND.textBody};font-weight:600;">${escHtml(BRAND.name)}, Inc.</div>` +
+      `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Call us anytime: <a href="tel:${BRAND.phone.replace(/[^0-9+]/g, '')}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.phone)}</a></div>` +
+    `</td></tr>`
+  );
+}
+
+// Wraps a body in the branded shell.
+//   heading  -- bold h1 at top of body (REQUIRED)
+//   intro    -- optional opener paragraph (e.g. "Hi Jane,")
+//   body     -- main HTML body (REQUIRED, inserted verbatim)
+//   ctaText  -- optional button label
+//   ctaUrl   -- optional button URL
+//   signoff  -- optional HTML below the body (defaults to "-- The Bates Electric team")
+//
+// All caller-provided strings inserted as HTML -- caller must escape any
+// user-supplied values (use escHtml).
+function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff }) {
+  const introHtml = intro
+    ? `<p style="margin:0 0 14px;font-family:${FONT_STACK};line-height:1.6;color:${BRAND.textBody};font-size:15px;">${intro}</p>`
+    : '';
+  const bodyHtml = body || '';
+  const ctaHtml = ctaButton(ctaText, ctaUrl);
+  const signoffHtml = (signoff != null) ? signoff : DEFAULT_SIGNOFF;
+
+  return (
+    `<!DOCTYPE html>` +
+    `<html lang="en"><head>` +
+    `<meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<meta name="x-apple-disable-message-reformatting">` +
+    `<title>${escHtml(BRAND.name)} &mdash; ${escHtml(BRAND.tagline)}</title>` +
+    `</head>` +
+    `<body style="margin:0;padding:0;background:${BRAND.bgPage};font-family:${FONT_STACK};color:${BRAND.navy};-webkit-font-smoothing:antialiased;">` +
+
+    // Outer page padding
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="background:${BRAND.bgPage};">` +
+    `<tr><td align="center" style="padding:24px 12px;">` +
+
+    // Card
+    `<table cellpadding="0" cellspacing="0" border="0" width="600" role="presentation" style="max-width:600px;width:100%;background:${BRAND.bgCard};border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,31,61,0.08);">` +
+
+    renderHeader() +
+
+    // Body cell
+    `<tr><td style="padding:36px 32px 28px;font-family:${FONT_STACK};">` +
+      `<h1 style="margin:0 0 18px;font-family:${FONT_STACK};font-size:22px;color:${BRAND.navy};font-weight:700;line-height:1.3;">${heading}</h1>` +
+      introHtml +
+      bodyHtml +
+      ctaHtml +
+      signoffHtml +
+    `</td></tr>` +
+
+    renderFooter() +
+
+    `</table>` +
+    `</td></tr></table>` +
+
+    `</body></html>`
+  );
+}
+
+// Alias for back-compat -- earlier code called this renderEmail with a slightly
+// different signature. New callers should use renderBrandedEmail directly.
+function renderEmail({ heading, bodyHtml, ctaText, ctaUrl }) {
+  return renderBrandedEmail({ heading, body: bodyHtml, ctaText, ctaUrl });
+}
+
+// ============================================================================
+// Template builders (pure functions)
 // Each returns { subject, html, text } from primitive inputs so the templates
-// can be rendered by the webhook handlers, the resend-welcome endpoint, and
-// the admin test-send endpoint without duplication.
+// can be rendered by webhook handlers, the resend-welcome endpoint, and the
+// admin test-send endpoint without duplication.
+// ============================================================================
+
+// Common body-paragraph style used inside template bodies.
+const P = `margin:0 0 14px;font-family:${FONT_STACK};line-height:1.6;color:${BRAND.textBody};font-size:15px;`;
+const P_LAST = `margin:0;font-family:${FONT_STACK};line-height:1.6;color:${BRAND.textBody};font-size:15px;`;
+const H3 = `margin:28px 0 10px;font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};text-transform:uppercase;letter-spacing:0.1em;font-weight:600;`;
+const TABLE_LABEL = `padding:8px 0;color:${BRAND.textMuted};font-size:14px;vertical-align:top;`;
+const TABLE_VALUE = `padding:8px 0;font-weight:600;color:${BRAND.textBody};font-size:14px;`;
+
+// --- 1. Welcome -------------------------------------------------------------
 
 function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring }) {
-  const fmtMoney = (c) => '$' + ((c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtDate = (s) => {
-    if (!s) return '';
-    const d = new Date(s + 'T12:00:00');
-    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  };
   const safeMeta = meta || {};
   const genClass = safeMeta.gen_class === 'air_cooled'
     ? 'Air cooled'
@@ -119,132 +246,150 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     .filter(Boolean).join(', ');
   const name = (customer && customer.name) || 'there';
 
-  const bodyHtml =
-    `<p style="margin:0 0 18px;line-height:1.55;color:#374151;">Thanks for signing up for Bates Electric&rsquo;s Generator Care program. We&rsquo;ve got everything we need on our end and your subscription is active.</p>` +
-    `<h3 style="margin:24px 0 10px;font-size:13px;color:#6B7280;text-transform:uppercase;letter-spacing:0.08em;">What happens next</h3>` +
-    `<ol style="margin:0;padding-left:20px;color:#374151;line-height:1.7;">` +
-    `<li>One of our team will reach out within the next few business days to schedule your first maintenance visit.</li>` +
-    `<li>Our technicians will perform a full inspection and any included services per your plan.</li>` +
-    `<li>From there, we&rsquo;ll auto-schedule your recurring visits based on your plan.</li>` +
-    `</ol>` +
-    `<h3 style="margin:28px 0 10px;font-size:13px;color:#6B7280;text-transform:uppercase;letter-spacing:0.08em;">Your plan</h3>` +
-    `<table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151;">` +
-    `<tr><td style="padding:6px 0;color:#6B7280;width:40%;">Plan</td><td style="padding:6px 0;font-weight:600;">${escHtml(planLabel)}</td></tr>` +
-    (genLine ? `<tr><td style="padding:6px 0;color:#6B7280;">Generator</td><td style="padding:6px 0;font-weight:600;">${escHtml(genLine)}</td></tr>` : '') +
-    (addr ? `<tr><td style="padding:6px 0;color:#6B7280;vertical-align:top;">Service address</td><td style="padding:6px 0;font-weight:600;">${escHtml(addr)}</td></tr>` : '') +
-    (nextVisitDate ? `<tr><td style="padding:6px 0;color:#6B7280;vertical-align:top;">First visit</td><td style="padding:6px 0;font-weight:600;">${escHtml(fmtDate(nextVisitDate))}<br><span style="color:#6B7280;font-weight:400;font-size:12px;">We&rsquo;ll confirm the exact time when we call.</span></td></tr>` : '') +
-    `<tr><td style="padding:6px 0;color:#6B7280;">Annual billing</td><td style="padding:6px 0;font-weight:600;">${escHtml(fmtMoney(annualPriceCents))}/year</td></tr>` +
-    (fleetMonitoring ? `<tr><td style="padding:6px 0;color:#6B7280;">Add-on</td><td style="padding:6px 0;font-weight:600;">Fleet Monitoring (Mobile Link)</td></tr>` : '') +
-    `</table>` +
-    `<p style="margin:28px 0 0;line-height:1.55;color:#374151;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
-    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+  const body =
+    `<p style="${P}">Thanks for signing up for Bates Electric&rsquo;s Generator Care program. We&rsquo;ve got everything we need on our end and your subscription is active.</p>` +
 
-  const html = renderEmail({
+    `<h3 style="${H3}">What happens next</h3>` +
+    `<ol style="margin:0;padding-left:20px;color:${BRAND.textBody};font-family:${FONT_STACK};font-size:15px;line-height:1.7;">` +
+      `<li>One of our team will reach out within the next few business days to schedule your first maintenance visit.</li>` +
+      `<li>Our technicians will perform a full inspection and any included services per your plan.</li>` +
+      `<li>From there, we&rsquo;ll auto-schedule your recurring visits based on your plan.</li>` +
+    `</ol>` +
+
+    `<h3 style="${H3}">Your plan</h3>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;">` +
+      `<tr><td style="${TABLE_LABEL};width:40%;">Plan</td><td style="${TABLE_VALUE}">${escHtml(planLabel)}</td></tr>` +
+      (genLine ? `<tr><td style="${TABLE_LABEL}">Generator</td><td style="${TABLE_VALUE}">${escHtml(genLine)}</td></tr>` : '') +
+      (addr ? `<tr><td style="${TABLE_LABEL}">Service address</td><td style="${TABLE_VALUE}">${escHtml(addr)}</td></tr>` : '') +
+      (nextVisitDate ? `<tr><td style="${TABLE_LABEL}">First visit</td><td style="${TABLE_VALUE}">${escHtml(fmtFriendlyDate(nextVisitDate))}<br><span style="color:${BRAND.textMuted};font-weight:400;font-size:13px;">We&rsquo;ll confirm the exact time when we call.</span></td></tr>` : '') +
+      `<tr><td style="${TABLE_LABEL}">Annual billing</td><td style="${TABLE_VALUE}">${escHtml(fmtMoney(annualPriceCents))}/year</td></tr>` +
+      (fleetMonitoring ? `<tr><td style="${TABLE_LABEL}">Add-on</td><td style="${TABLE_VALUE}">Fleet Monitoring (Mobile Link)</td></tr>` : '') +
+    `</table>` +
+
+    `<p style="${P}margin-top:28px;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${BRAND.phone}</strong>.</p>`;
+
+  const html = renderBrandedEmail({
     heading: `Welcome aboard, ${escHtml(name)}!`,
-    bodyHtml,
+    body,
   });
 
-  const text = `Welcome to Bates Electric Generator Care, ${name}!\n\n` +
-    `Thanks for signing up. Your subscription is active and we’ve got everything we need on our end.\n\n` +
-    `What happens next:\n` +
-    `1. We’ll reach out within the next few business days to schedule your first visit.\n` +
-    `2. Our technicians will perform a full inspection and any included services per your plan.\n` +
-    `3. From there, we’ll auto-schedule your recurring visits.\n\n` +
-    `Your plan: ${planLabel}\n` +
-    (genLine ? `Generator: ${genLine}\n` : '') +
-    (addr ? `Service address: ${addr}\n` : '') +
-    (nextVisitDate ? `First visit: ${fmtDate(nextVisitDate)} (we will confirm time)\n` : '') +
-    `Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
-    (fleetMonitoring ? `Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
-    `\nQuestions? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
+  const text =
+    `Welcome to Bates Electric Generator Care, ${name}!\n\n` +
+    `Thanks for signing up. Your subscription is active and we've got everything we need on our end.\n\n` +
+    `WHAT HAPPENS NEXT\n` +
+    `  1. We'll reach out within the next few business days to schedule your first visit.\n` +
+    `  2. Our technicians will perform a full inspection and any included services per your plan.\n` +
+    `  3. From there, we'll auto-schedule your recurring visits.\n\n` +
+    `YOUR PLAN\n` +
+    `  Plan: ${planLabel}\n` +
+    (genLine ? `  Generator: ${genLine}\n` : '') +
+    (addr ? `  Service address: ${addr}\n` : '') +
+    (nextVisitDate ? `  First visit: ${fmtFriendlyDate(nextVisitDate)} (we will confirm time)\n` : '') +
+    `  Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
+    (fleetMonitoring ? `  Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
+    `\nQuestions? Give us a call at ${BRAND.phone}.\n\n` +
+    `-- Bates Electric`;
 
   return { subject: 'Welcome to Bates Electric Generator Care!', html, text };
 }
 
+// --- 2. Failed charge -------------------------------------------------------
+
 function buildCardFailedEmail({ customer, amountCents, description, portalUrl }) {
-  const fmtMoney = (c) => '$' + ((c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const amountLine = amountCents ? ' of ' + fmtMoney(amountCents) : '';
   const descLine = description ? ' for ' + description : '';
   const name = (customer && customer.name) || 'there';
 
-  const bodyHtml =
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">We tried to charge your card on file${escHtml(amountLine)}${escHtml(descLine)} and it didn&rsquo;t go through. Usually it&rsquo;s something simple — an expired card, a daily limit, or the bank flagging the charge.</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">You can update your card on file with one click:</p>` +
-    ctaButton('Update your card', portalUrl) +
-    `<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for a few days. While you&rsquo;re in there you can also see your invoice history or update your contact info.</p>` +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">If you&rsquo;d rather handle it over the phone or have any questions, just call us at <strong>${COMPANY_PHONE}</strong>.</p>` +
-    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+  const body =
+    `<p style="${P}">We tried to charge your card on file${escHtml(amountLine)}${escHtml(descLine)} and it didn&rsquo;t go through. Usually it&rsquo;s something simple &mdash; an expired card, a daily limit, or the bank flagging the charge.</p>` +
+    `<p style="${P}">Update your card on file with one click. The link is good for a few days:</p>`;
 
-  const html = renderEmail({
-    heading: `Quick favor — your card didn’t go through`,
-    bodyHtml,
+  const signoff =
+    `<p style="${P}margin-top:24px;">If you&rsquo;d rather handle it over the phone, give us a call at <strong>${BRAND.phone}</strong>.</p>` +
+    DEFAULT_SIGNOFF;
+
+  const html = renderBrandedEmail({
+    heading: `Quick favor &mdash; your card didn&rsquo;t go through`,
+    intro: `Hi ${escHtml(name)},`,
+    body,
+    ctaText: 'Update your card',
+    ctaUrl: portalUrl,
+    signoff,
   });
 
-  const text = `Hi ${name},\n\n` +
-    `We tried to charge your card on file${amountLine}${descLine} and it didn’t go through. Usually it’s something simple — expired card, daily limit, or the bank flagging the charge.\n\n` +
-    `You can update your card here:\n${portalUrl}\n\n` +
-    `If you’d rather handle it over the phone, just call ${COMPANY_PHONE}.\n\n` +
-    `— Bates Electric`;
+  const text =
+    `Hi ${name},\n\n` +
+    `We tried to charge your card on file${amountLine}${descLine} and it didn't go through. ` +
+    `Usually it's something simple -- expired card, daily limit, or the bank flagging the charge.\n\n` +
+    `Update your card here:\n${portalUrl}\n\n` +
+    `If you'd rather handle it over the phone, give us a call at ${BRAND.phone}.\n\n` +
+    `-- Bates Electric`;
 
   return { subject: 'Your card on file needs an update', html, text };
 }
 
+// --- 3. Card update link (Amy-triggered "Send Card-Update Link") ------------
+
 function buildCardUpdateLinkEmail({ name, portalUrl }) {
   const safeName = name || 'there';
 
-  const bodyHtml =
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(safeName)},</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Here is a secure link to your generator care account. You can use it to update your card on file, view your invoice history, or change your contact info — all in one place.</p>` +
-    ctaButton('Manage my account', portalUrl) +
-    `<p style="margin:0 0 10px;color:#6B7280;font-size:13px;line-height:1.5;">The link is good for about an hour. If it expires before you click it, give us a call at <strong>${COMPANY_PHONE}</strong> and we&rsquo;ll get you a fresh one.</p>` +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
-    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+  const body =
+    `<p style="${P}">Here is a secure link to your generator care account. You can use it to update your card on file, view your invoice history, or change your contact info &mdash; all in one place.</p>`;
 
-  const html = renderEmail({
+  const signoff =
+    `<p style="${P}margin-top:24px;">The link is good for about an hour. If it expires before you click it, give us a call at <strong>${BRAND.phone}</strong> and we&rsquo;ll get you a fresh one.</p>` +
+    DEFAULT_SIGNOFF;
+
+  const html = renderBrandedEmail({
     heading: 'Manage your generator care account',
-    bodyHtml,
+    intro: `Hi ${escHtml(safeName)},`,
+    body,
+    ctaText: 'Manage my account',
+    ctaUrl: portalUrl,
+    signoff,
   });
 
-  const text = `Hi ${safeName},\n\n` +
-    `Here is a secure link to your Bates Electric generator care account. You can use it to update your card on file, view your invoice history, or change your contact info.\n\n` +
+  const text =
+    `Hi ${safeName},\n\n` +
+    `Here is a secure link to your Bates Electric generator care account. ` +
+    `You can use it to update your card on file, view your invoice history, or change your contact info.\n\n` +
     `${portalUrl}\n\n` +
-    `The link is good for about an hour. If it expires, give us a call at ${COMPANY_PHONE} and we'll get you a fresh one.\n\n` +
-    `Questions? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `The link is good for about an hour. If it expires, give us a call at ${BRAND.phone} and we'll get you a fresh one.\n\n` +
+    `-- Bates Electric`;
 
   return { subject: 'Manage your Bates Electric generator care account', html, text };
 }
 
-function fmtFriendlyDate(s) {
-  if (!s) return '';
-  const d = new Date(s + 'T12:00:00');
-  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-}
+// --- 4. Visit scheduled -----------------------------------------------------
 
 function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
   const name = (customer && customer.name) || 'there';
   const dateStr = fmtFriendlyDate(scheduledDate);
   const planText = planLabel ? `${planLabel} ` : '';
 
-  const bodyHtml =
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Our technician will be on-site to perform a full inspection and any services included in your plan. You don&rsquo;t need to be there as long as the generator is accessible &mdash; though we&rsquo;re happy to walk you through what we did if you are.</p>` +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Need to reschedule or have a question? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
-    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+  const body =
+    `<p style="${P}">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
+    `<p style="${P}">Our technician will be on-site to perform a full inspection and any services included in your plan. You don&rsquo;t need to be there as long as the generator is accessible &mdash; though we&rsquo;re happy to walk you through what we did if you are.</p>` +
+    `<p style="${P_LAST}">Need to reschedule or have a question? Give us a call at <strong>${BRAND.phone}</strong>.</p>`;
 
-  const html = renderEmail({
+  const html = renderBrandedEmail({
     heading: 'Your service visit is confirmed',
-    bodyHtml,
+    intro: `Hi ${escHtml(name)},`,
+    body,
   });
 
-  const text = `Hi ${name},\n\n` +
+  const text =
+    `Hi ${name},\n\n` +
     `Your ${planText}generator service visit is confirmed for ${dateStr}.\n\n` +
-    `Our technician will perform a full inspection and any included services. You don't need to be there as long as the generator is accessible.\n\n` +
-    `Need to reschedule? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `Our technician will perform a full inspection and any included services. ` +
+    `You don't need to be there as long as the generator is accessible.\n\n` +
+    `Need to reschedule? Give us a call at ${BRAND.phone}.\n\n` +
+    `-- Bates Electric`;
 
   return { subject: 'Your generator service visit is confirmed', html, text };
 }
+
+// --- 5. Visit complete ------------------------------------------------------
 
 function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, planLabel, notes }) {
   const name = (customer && customer.name) || 'there';
@@ -252,46 +397,54 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
   const planText = planLabel ? `${planLabel} ` : '';
 
   const notesSection = (typeof notes === 'string' && notes.trim().length > 0)
-    ? `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;"><strong>Notes from the visit:</strong><br>${escHtml(notes.trim())}</p>`
+    ? (
+        `<div style="margin:20px 0 0;padding:16px 18px;background:${BRAND.bgPage};border-left:3px solid ${BRAND.navy};border-radius:4px;">` +
+          `<div style="${H3}margin:0 0 8px;">Notes from the visit</div>` +
+          `<div style="font-family:${FONT_STACK};color:${BRAND.textBody};font-size:14px;line-height:1.6;white-space:pre-wrap;">${escHtml(notes.trim())}</div>` +
+        `</div>`
+      )
     : '';
 
   const nextVisitSection = nextVisitDate
-    ? `<p style="margin:16px 0 0;line-height:1.55;color:#374151;">Your next ${escHtml(planText)}service is tentatively scheduled for <strong>${escHtml(fmtFriendlyDate(nextVisitDate))}</strong>. We&rsquo;ll confirm the exact date with you closer to the time.</p>`
+    ? `<p style="${P}margin-top:20px;">Your next ${escHtml(planText)}service is tentatively scheduled for <strong>${escHtml(fmtFriendlyDate(nextVisitDate))}</strong>. We&rsquo;ll confirm the exact date with you closer to the time.</p>`
     : '';
 
-  const bodyHtml =
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a Bates Electric Generator Care customer.</p>` +
+  const body =
+    `<p style="${P}">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a Bates Electric Generator Care customer.</p>` +
     notesSection +
     nextVisitSection +
-    `<p style="margin:16px 0 0;color:#374151;font-size:14px;line-height:1.55;">Questions about the work, or noticed something we missed? Give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
-    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+    `<p style="${P_LAST}margin-top:20px;">Questions about the work, or noticed something we missed? Give us a call at <strong>${BRAND.phone}</strong>.</p>`;
 
-  const html = renderEmail({
+  const html = renderBrandedEmail({
     heading: 'Service visit complete',
-    bodyHtml,
+    intro: `Hi ${escHtml(name)},`,
+    body,
   });
 
   const notesText = (typeof notes === 'string' && notes.trim().length > 0)
-    ? `\nNotes from the visit: ${notes.trim()}\n`
+    ? `\nNOTES FROM THE VISIT\n  ${notes.trim().replace(/\n/g, '\n  ')}\n`
     : '';
   const nextVisitText = nextVisitDate
     ? `\nYour next ${planText}service is tentatively scheduled for ${fmtFriendlyDate(nextVisitDate)}. We'll confirm closer to the time.\n`
     : '';
 
-  const text = `Hi ${name},\n\n` +
+  const text =
+    `Hi ${name},\n\n` +
     `Your generator service visit on ${completedStr} is complete. Thanks for being a Bates Electric Generator Care customer.\n` +
     notesText +
     nextVisitText +
-    `\nQuestions? Give us a call at ${COMPANY_PHONE}.\n\n— Bates Electric`;
+    `\nQuestions? Give us a call at ${BRAND.phone}.\n\n` +
+    `-- Bates Electric`;
 
   return { subject: 'Your generator service visit is complete', html, text };
 }
 
+// --- 6. Renewal upcoming ----------------------------------------------------
+
 function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLabel, lineItems }) {
   const name = (customer && customer.name) || 'there';
   const dateStr = fmtFriendlyDate(renewalDate);
-  const amountStr = '$' + ((amountCents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const amountStr = fmtMoney(amountCents);
   const planText = planLabel ? `${planLabel} ` : '';
 
   // Render a line-item breakdown only if there's more than one item (e.g.
@@ -300,48 +453,65 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
   let lineItemSection = '';
   let lineItemTextSection = '';
   if (items.length > 1) {
-    const fmtItem = (it) => '$' + ((it.amount_cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     lineItemSection =
-      `<h3 style="margin:20px 0 8px;font-size:13px;color:#6B7280;text-transform:uppercase;letter-spacing:0.08em;">This includes</h3>` +
-      `<table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151;">` +
+      `<h3 style="${H3}">This includes</h3>` +
+      `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;">` +
       items.map(it =>
-        `<tr><td style="padding:4px 0;">${escHtml(it.description || 'Service')}</td><td style="padding:4px 0;text-align:right;font-weight:600;">${escHtml(fmtItem(it))}</td></tr>`
+        `<tr>` +
+          `<td style="${TABLE_LABEL}color:${BRAND.textBody};">${escHtml(it.description || 'Service')}</td>` +
+          `<td style="${TABLE_VALUE}text-align:right;">${escHtml(fmtMoney(it.amount_cents))}</td>` +
+        `</tr>`
       ).join('') +
       `</table>`;
-    lineItemTextSection = '\nThis includes:\n' +
-      items.map(it => `  - ${it.description || 'Service'}: ${fmtItem(it)}`).join('\n') + '\n';
+    lineItemTextSection =
+      `\nTHIS INCLUDES\n` +
+      items.map(it => `  ${it.description || 'Service'}: ${fmtMoney(it.amount_cents)}`).join('\n') + '\n';
   }
 
-  const bodyHtml =
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Hi ${escHtml(name)},</p>` +
-    `<p style="margin:0 0 14px;line-height:1.55;color:#374151;">Just a heads up &mdash; your ${escHtml(planText)}generator care subscription renews on <strong>${escHtml(dateStr)}</strong>. We&rsquo;ll charge <strong>${escHtml(amountStr)}</strong> to your card on file.</p>` +
+  const body =
+    `<p style="${P}">Just a heads up &mdash; your ${escHtml(planText)}generator care subscription renews on <strong>${escHtml(dateStr)}</strong>. We&rsquo;ll charge <strong>${escHtml(amountStr)}</strong> to your card on file.</p>` +
     lineItemSection +
-    `<p style="margin:20px 0 0;line-height:1.55;color:#374151;">No action needed if everything looks right. If you need to update your card or have any questions, give us a call at <strong>${COMPANY_PHONE}</strong>.</p>` +
-    `<p style="margin:18px 0 0;color:#6B7280;font-size:14px;">— The Bates Electric team</p>`;
+    `<p style="${P_LAST}margin-top:24px;">No action needed if everything looks right. If you need to update your card or have any questions, give us a call at <strong>${BRAND.phone}</strong>.</p>`;
 
-  const html = renderEmail({
+  const html = renderBrandedEmail({
     heading: 'Your subscription renews soon',
-    bodyHtml,
+    intro: `Hi ${escHtml(name)},`,
+    body,
   });
 
-  const text = `Hi ${name},\n\n` +
-    `Just a heads up — your ${planText}generator care subscription renews on ${dateStr}. ` +
+  const text =
+    `Hi ${name},\n\n` +
+    `Just a heads up -- your ${planText}generator care subscription renews on ${dateStr}. ` +
     `We'll charge ${amountStr} to your card on file.\n` +
     lineItemTextSection +
-    `\nNo action needed if everything looks right. If you need to update your card or have any questions, give us a call at ${COMPANY_PHONE}.\n\n` +
-    `— Bates Electric`;
+    `\nNo action needed if everything looks right. If you need to update your card or have any questions, give us a call at ${BRAND.phone}.\n\n` +
+    `-- Bates Electric`;
 
   return { subject: 'Your Bates Electric subscription renews soon', html, text };
 }
 
+// ============================================================================
+// Module exports
+// ============================================================================
 module.exports = {
+  // Brand constants (single source of truth)
+  BRAND,
+
+  // Back-compat exports (derived from BRAND)
   COMPANY_PHONE,
   SENDER_NAME,
   getFromEmail,
+
+  // Rendering primitives
   escHtml,
+  fmtFriendlyDate,
+  fmtMoney,
   ctaButton,
-  renderEmail,
+  renderBrandedEmail,
+  renderEmail,        // alias for older callers
   sendEmail,
+
+  // Template builders
   buildWelcomeEmail,
   buildCardFailedEmail,
   buildCardUpdateLinkEmail,
