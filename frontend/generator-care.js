@@ -235,13 +235,252 @@
   }
 
   // ---- Detail modal ----
+  // ----------------------------------------------------------------
+  // Customer detail modal (v2: card-based layout, lazy-loaded Stripe data)
+  // ----------------------------------------------------------------
+
+  function renderInitialSkeleton() {
+    return [
+      `<div class="gc-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>`,
+      `<div class="gc-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span></div>`,
+    ].join('');
+  }
+
+  function statusPill(status) {
+    const cls = `gc-status-pill-${status || 'active'}`;
+    return `<span class="gc-status-pill ${cls}">${escapeHtml(status || 'active')}</span>`;
+  }
+
+  function renderHeaderBar(customer, subscription) {
+    const phone = customer.phone || '';
+    const email = customer.email || '';
+    const stripeId = subscription.stripe_customer_id;
+    const stripeLink = stripeId
+      ? `<a href="https://dashboard.stripe.com/customers/${encodeURIComponent(stripeId)}" target="_blank" rel="noopener noreferrer">Open in Stripe &#8599;</a>`
+      : '';
+    const contactBits = [
+      phone ? `<span>${escapeHtml(phone)}</span>` : '',
+      email ? `<span>&middot;</span><span>${escapeHtml(email)}</span>` : '',
+    ].filter(Boolean).join('');
+    return `
+      <div style="margin-bottom: 16px;">
+        <div class="gc-modal-header">${statusPill(subscription.status)}</div>
+        <div class="gc-modal-subhead">
+          ${contactBits}
+          ${stripeLink ? `<span style="margin-left:auto;">${stripeLink}</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function renderContactCard(customer) {
+    const addrLine = [customer.install_address, customer.install_city, customer.install_state, customer.install_zip].filter(Boolean).join(', ');
+    return `
+      <div class="gc-card">
+        <h3 class="gc-card-h">Contact &amp; Address</h3>
+        <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(customer.phone) || '&mdash;'}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
+        <div class="gc-note-editor">
+          <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Internal note (office only)</span>
+          <textarea id="gc-customer-note" data-customer-id="${customer.id}" placeholder="Anything Amy or Brenda should know about this customer.">${escapeHtml(customer.notes || '')}</textarea>
+          <div class="gc-note-editor-actions">
+            <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-save-note-btn">Save note</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderPlanCard(subscription, isCanceled) {
+    const annual = subscription.annual_price_cents ? `$${(subscription.annual_price_cents/100).toFixed(2)}/yr` : '&mdash;';
+    const lastVisitText = subscription.last_visit_date ? fmtDate(subscription.last_visit_date) : '&mdash; (none yet)';
+    const accountActions = isCanceled ? '' : `
+      <div class="gc-card-actions">
+        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-welcome-btn">Resend Welcome</button>
+        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
+      </div>`;
+    return `
+      <div class="gc-card">
+        <h3 class="gc-card-h">Plan &amp; Billing</h3>
+        <div class="gc-card-row"><span class="gc-meta-label">Plan</span><span class="gc-meta-value">${escapeHtml(planLabel(subscription.plan))}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Generator</span><span class="gc-meta-value">${escapeHtml(genClassLabel(subscription.gen_class))} &mdash; ${escapeHtml(subscription.gen_model || 'model n/a')}</span></div>
+        ${subscription.gen_serial ? `<div class="gc-card-row"><span class="gc-meta-label">Serial</span><span class="gc-meta-value">${escapeHtml(subscription.gen_serial)}</span></div>` : ''}
+        <div class="gc-card-row"><span class="gc-meta-label">Fleet Monitoring</span><span class="gc-meta-value">${subscription.fleet_monitoring ? 'Yes' : 'No'}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Annual price</span><span class="gc-meta-value">${annual}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Signed up</span><span class="gc-meta-value">${fmtDate(subscription.signup_date)}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Last visit</span><span class="gc-meta-value">${lastVisitText}</span></div>
+        <div class="gc-card-row">
+          <span class="gc-meta-label">Next visit due</span>
+          <span class="gc-meta-value">
+            <input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+            <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-next-visit-save" style="margin-left:6px;">Save</button>
+          </span>
+        </div>
+        <div class="gc-card-row" id="gc-payment-method-row"><span class="gc-meta-label">Payment method</span><span class="gc-meta-value" id="gc-payment-method-value"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span></span></div>
+        <div class="gc-card-row" id="gc-lifetime-row"><span class="gc-meta-label">Lifetime billed</span><span class="gc-meta-value" id="gc-lifetime-value"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></span></div>
+        ${accountActions}
+      </div>`;
+  }
+
+  function renderVisitsCard(visits) {
+    const rows = (visits || []).map(v => {
+      const date = v.completed_date
+        ? `Completed ${fmtDate(v.completed_date)}`
+        : v.status === 'tentative'
+          ? `Tentative &mdash; ${fmtDate(v.scheduled_date)} (needs confirmation)`
+          : `Scheduled ${fmtDate(v.scheduled_date)}`;
+      let action;
+      if (v.status === 'tentative') {
+        action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="gc-btn gc-btn-secondary gc-btn-sm" data-confirm-visit="${v.id}">Confirm</button>
+          <button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>
+        </div>`;
+      } else if (v.status === 'scheduled') {
+        action = `<button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>`;
+      } else if (v.status === 'completed') {
+        action = `<span class="gc-chip gc-chip-completed">Completed</span>`;
+      } else {
+        action = `<span class="gc-chip">${escapeHtml(v.status)}</span>`;
+      }
+      return `<div class="gc-card-row">
+        <div>
+          <div class="gc-meta-value">${escapeHtml(v.visit_type === 'regular_service' ? 'Regular service' : 'On-demand')}</div>
+          <div class="gc-meta-label" style="margin-top:2px;">${date}</div>
+        </div>
+        <div>${action}</div>
+      </div>`;
+    }).join('');
+    const body = rows || `<div class="gc-meta-label" style="padding:6px 0;">No visits on record.</div>`;
+    return `<div class="gc-card"><h3 class="gc-card-h">Service Visits<span class="gc-card-h-count">(${(visits || []).length})</span></h3>${body}</div>`;
+  }
+
+  function renderAddonsCard(pending_addons, isCanceled) {
+    const visible = (pending_addons || []).filter(a => a.status !== 'canceled');
+    const headerAction = isCanceled ? '' : `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
+    const header = `<h3 class="gc-card-h"><span>Add-ons<span class="gc-card-h-count">(${visible.length})</span></span>${headerAction}</h3>`;
+    if (visible.length === 0) {
+      const empty = `<div class="gc-meta-label" style="padding:6px 0;">No add-ons yet${isCanceled ? '.' : ' &mdash; click "+ Add Add-on" to add one.'}</div>`;
+      return `<div class="gc-card">${header}${empty}</div>`;
+    }
+    const rows = visible.map(a => {
+      const amtStr = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
+      const label = escapeHtml(addonLabel(a.addon_type));
+      let chip = '', action = '';
+      if (a.status === 'pending') {
+        chip = `<span class="gc-chip gc-chip-pending">Pending</span>`;
+        action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="gc-btn gc-btn-primary gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>
+          <button class="gc-btn gc-btn-icon gc-btn-sm" data-remove-addon="${a.id}" data-label="${label}" title="Remove">&times;</button>
+        </div>`;
+      } else if (a.status === 'performed') {
+        chip = `<span class="gc-chip gc-chip-performed">Performed &middot; bills at renewal</span>`;
+        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>`;
+      } else if (a.status === 'charged') {
+        const refunded = parseTotalRefundedCents(a.notes);
+        if (refunded >= a.amount_cents) {
+          chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
+        } else if (refunded > 0) {
+          chip = `<span class="gc-chip gc-chip-partial">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
+          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${label}">Refund more</button>`;
+        } else {
+          chip = `<span class="gc-chip gc-chip-charged">Charged</span>`;
+          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
+        }
+      } else if (a.status === 'failed') {
+        chip = `<span class="gc-chip gc-chip-failed">Failed</span>`;
+        action = `<button class="gc-btn gc-btn-destructive gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
+      } else {
+        chip = `<span class="gc-chip">${escapeHtml(a.status)}</span>`;
+      }
+      const visibleNotes = stripRefundLines(a.notes);
+      const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
+      return `<div class="gc-card-row">
+        <div>
+          <div class="gc-meta-value">${label} ${amtStr ? `<span style="color:#6b7280;font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
+          <div style="margin-top:4px;">${chip}</div>
+          ${noteHtml}
+        </div>
+        <div>${action}</div>
+      </div>`;
+    }).join('');
+    return `<div class="gc-card">${header}${rows}</div>`;
+  }
+
+  function renderChargesCard(adhoc_charges, isCanceled) {
+    const visible = (adhoc_charges || []).filter(c => c.status !== 'canceled');
+    const headerAction = isCanceled ? '' : `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-charge-btn">+ Add Charge</button>`;
+    const header = `<h3 class="gc-card-h"><span>Other Charges<span class="gc-card-h-count">(${visible.length})</span></span>${headerAction}</h3>`;
+    if (visible.length === 0) {
+      const empty = `<div class="gc-meta-label" style="padding:6px 0;">No ad-hoc charges. Use this for non-program work (parts, repairs, etc).</div>`;
+      return `<div class="gc-card">${header}${empty}</div>`;
+    }
+    const rows = visible.map(c => {
+      const amtStr = c.amount_cents ? `$${(c.amount_cents/100).toFixed(2)}` : '';
+      const desc = escapeHtml(c.description);
+      let chip = '', action = '';
+      if (c.status === 'pending') {
+        const label = c.billing_method === 'renewal' ? 'Pending &middot; bills at renewal' : 'Pending';
+        chip = `<span class="gc-chip gc-chip-pending">${label}</span>`;
+        action = `<button class="gc-btn gc-btn-icon gc-btn-sm" data-cancel-charge="${c.id}" data-desc="${desc}" title="Cancel">&times;</button>`;
+      } else if (c.status === 'charged') {
+        const refunded = parseTotalRefundedCents(c.notes);
+        if (refunded >= c.amount_cents) {
+          chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
+        } else if (refunded > 0) {
+          chip = `<span class="gc-chip gc-chip-partial">Charged &middot; partial refund $${(refunded/100).toFixed(2)}</span>`;
+          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="${refunded}" data-desc="${desc}">Refund more</button>`;
+        } else {
+          chip = `<span class="gc-chip gc-chip-charged">${c.date_charged ? 'Charged ' + escapeHtml(c.date_charged) : 'Charged'}</span>`;
+          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${desc}">Refund</button>`;
+        }
+      } else if (c.status === 'failed') {
+        chip = `<span class="gc-chip gc-chip-failed">Failed</span>`;
+      } else {
+        chip = `<span class="gc-chip">${escapeHtml(c.status)}</span>`;
+      }
+      const visibleNotes = stripRefundLines(c.notes);
+      const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
+      return `<div class="gc-card-row">
+        <div>
+          <div class="gc-meta-value">${desc} ${amtStr ? `<span style="color:#6b7280;font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
+          <div style="margin-top:4px;">${chip}</div>
+          ${noteHtml}
+        </div>
+        <div>${action}</div>
+      </div>`;
+    }).join('');
+    return `<div class="gc-card">${header}${rows}</div>`;
+  }
+
+  // Skeleton card; loadStripeData() replaces innerHTML once Stripe data lands.
+  function renderInvoicesCard() {
+    return `<div class="gc-card" id="gc-invoices-card">
+      <h3 class="gc-card-h">Recent Invoices</h3>
+      <div id="gc-invoices-body">
+        <div class="gc-skeleton-card-row"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+        <div class="gc-skeleton-card-row"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+      </div>
+    </div>`;
+  }
+
+  function renderDangerZone(isCanceled) {
+    if (isCanceled) {
+      return `<div class="gc-canceled-banner">
+        <strong>This subscription is canceled.</strong> Customer keeps service through their paid-through date; auto-renewal is off.
+      </div>`;
+    }
+    return `<div class="gc-danger-zone">
+      <span class="gc-danger-zone-text">Cancel ends the subscription at the period end. Customer keeps service through the paid-through date.</span>
+      <button class="gc-btn gc-btn-destructive gc-btn-sm" id="gc-cancel-sub-btn">Cancel Subscription</button>
+    </div>`;
+  }
+
   async function showDetail(id) {
     const modal = document.getElementById('detailsModal');
     const title = document.getElementById('modal-title');
     const body = document.getElementById('modal-body');
     modal.hidden = false;
     title.textContent = 'Loading…';
-    body.innerHTML = '<p>Loading customer detail…</p>';
+    body.innerHTML = renderInitialSkeleton();
 
     try {
       const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
@@ -251,221 +490,25 @@
       const { subscription, visits, pending_addons, adhoc_charges = [] } = await r.json();
       const c = subscription.customer || {};
       title.textContent = c.name || 'Customer';
+      const isCanceled = subscription.status === 'canceled';
 
-      const addrLine = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
-      const annual = subscription.annual_price_cents ? `$${(subscription.annual_price_cents/100).toFixed(2)}` : '—';
+      body.innerHTML =
+        renderHeaderBar(c, subscription) +
+        renderContactCard(c) +
+        renderPlanCard(subscription, isCanceled) +
+        renderVisitsCard(visits) +
+        renderAddonsCard(pending_addons, isCanceled) +
+        renderChargesCard(adhoc_charges, isCanceled) +
+        renderInvoicesCard() +
+        renderDangerZone(isCanceled);
 
-      let html = '';
-      // Customer info
-      html += `<div class="gc-detail-section">
-        <div class="gc-detail-h">Customer</div>
-        <dl class="gc-detail-grid">
-          <dt>Phone</dt><dd>${escapeHtml(c.phone) || '—'}</dd>
-          <dt>Email</dt><dd>${escapeHtml(c.email) || '—'}</dd>
-          <dt>Install address</dt><dd>${escapeHtml(addrLine) || '—'}</dd>
-        </dl>
-      </div>`;
-
-      // Subscription info
-      html += `<div class="gc-detail-section">
-        <div class="gc-detail-h">Subscription</div>
-        <dl class="gc-detail-grid">
-          <dt>Plan</dt><dd>${escapeHtml(planLabel(subscription.plan))}</dd>
-          <dt>Generator</dt><dd>${escapeHtml(genClassLabel(subscription.gen_class))} — ${escapeHtml(subscription.gen_model || 'model n/a')}</dd>
-          <dt>Serial</dt><dd>${escapeHtml(subscription.gen_serial) || '—'}</dd>
-          <dt>Fleet Monitoring</dt><dd>${subscription.fleet_monitoring ? 'Yes' : 'No'}</dd>
-          <dt>Annual price</dt><dd>${annual}</dd>
-          <dt>Signed up</dt><dd>${fmtDate(subscription.signup_date)}</dd>
-          <dt>Next visit due</dt><dd><input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.85rem;" /> <button id="gc-next-visit-save" class="gc-mark-done" style="font-size: 0.75rem; padding: 0.25rem 0.55rem; margin-left: 0.3rem;">Save</button></dd>
-          <dt>Status</dt><dd>${escapeHtml(subscription.status)}</dd>
-        </dl>
-        ${subscription.status === 'canceled'
-          ? `<div style="margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #FEF2F2; border-left: 3px solid #DC2626; color: #991B1B; font-size: 0.85rem;">
-              This subscription is canceled. Customer keeps service through their paid-through date; auto-renewal is off.
-            </div>`
-          : `<div style="margin-top: 0.75rem; text-align: right;">
-              <button class="gc-mark-done" id="gc-resend-welcome-btn" style="background: #1F3A5F; font-size: 0.75rem; padding: 0.3rem 0.7rem; margin-right: 6px;">Resend Welcome Email</button><button class="gc-mark-done" id="gc-portal-btn" style="background: #1F3A5F; font-size: 0.75rem; padding: 0.3rem 0.7rem; margin-right: 6px;">Send Card-Update Link</button><button class="gc-mark-done" id="gc-cancel-sub-btn" style="background: #DC2626; font-size: 0.75rem; padding: 0.3rem 0.7rem;">Cancel Subscription</button>
-            </div>`}
-      </div>`;
-
-      // Service visits
-      html += `<div class="gc-detail-section"><div class="gc-detail-h">Service Visits</div>`;
-      if (visits.length === 0) html += `<p style="color: #6b7280;">No visits on record.</p>`;
-      else {
-        for (const v of visits) {
-          const date = v.completed_date
-            ? `Completed ${fmtDate(v.completed_date)}`
-            : v.status === 'tentative'
-              ? `Tentative — ${fmtDate(v.scheduled_date)} (needs confirmation)`
-              : `Scheduled ${fmtDate(v.scheduled_date)}`;
-          let action;
-          if (v.status === 'tentative') {
-            action = `
-              <button class="gc-mark-done" data-confirm-visit="${v.id}" style="background:#F59E0B; margin-right:0.3rem;">Confirm</button>
-              <button class="gc-mark-done" data-complete-visit="${v.id}">Mark complete</button>`;
-          } else if (v.status === 'scheduled') {
-            action = `<button class="gc-mark-done" data-complete-visit="${v.id}">Mark complete</button>`;
-          } else {
-            action = `<span class="gc-badge gc-badge-active" style="font-size: 0.7rem;">${escapeHtml(v.status)}</span>`;
-          }
-          html += `<div class="gc-visit-row">
-            <div>
-              <div>${escapeHtml(v.visit_type === 'regular_service' ? 'Regular Service' : 'On-Demand')}</div>
-              <div style="color: #6b7280; font-size: 0.82rem;">${date}</div>
-            </div>
-            ${action}
-          </div>`;
-        }
-      }
-      html += `</div>`;
-
-      // Pending add-ons (always show this section, even if empty)
-      {
-        html += `<div class="gc-detail-section">
-          <div class="gc-detail-h" style="display:flex;justify-content:space-between;align-items:center;">
-            <span>Pre-authorized Add-ons</span>
-            ${subscription.status === 'canceled' ? '' : `<button class="gc-mark-done" id="gc-add-addon-btn" style="background:#0F766E;font-size:0.7rem;padding:0.25rem 0.6rem;">+ Add Add-on</button>`}
-          </div>`;
-        if (pending_addons.length === 0) {
-          html += `<div style="color: #6b7280; font-size: 0.85rem; padding: 0.5rem 0;">No add-ons yet. Click "+ Add Add-on" to add one.</div>`;
-        }
-        const visibleAddons = pending_addons.filter(a => a.status !== 'canceled');
-        for (const a of visibleAddons) {
-          const amt = a.amount_cents ? `${(a.amount_cents/100).toFixed(2)}` : '';
-          let action = '';
-          let badgeColor = '#6b7280';
-          if (a.status === 'pending') {
-            action = `
-              <div style="display:flex;gap:0.3rem;align-items:center;">
-                <button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#0F766E;">Mark Performed</button>
-                <button class="gc-mark-done" data-remove-addon="${a.id}" data-label="${escapeHtml(addonLabel(a.addon_type))}" title="Remove this add-on" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">&times;</button>
-              </div>`;
-          } else if (a.status === 'performed') {
-            badgeColor = '#D97706';
-            action = `
-              <div style="display:flex;flex-direction:column;gap:0.25rem;align-items:flex-end;">
-                <span class="gc-badge" style="background:#FEF3C7;color:#92400E;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Performed - will charge at renewal</span>
-                <button class="gc-mark-done" data-unmark="${a.id}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Undo</button>
-              </div>`;
-          } else if (a.status === 'charged') {
-            const refunded = parseTotalRefundedCents(a.notes);
-            if (refunded >= a.amount_cents) {
-              badgeColor = '#6B7280';
-              action = `<span class="gc-badge" style="background:#F3F4F6;color:#374151;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Refunded</span>`;
-            } else if (refunded > 0) {
-              badgeColor = '#92400E';
-              action = `
-                <div style="display:flex;flex-direction:column;gap:0.25rem;align-items:flex-end;">
-                  <span class="gc-badge" style="background:#FEF3C7;color:#92400E;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Partial refund: $${(refunded/100).toFixed(2)}</span>
-                  <button class="gc-mark-done" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund more</button>
-                </div>`;
-            } else {
-              badgeColor = '#059669';
-              action = `
-                <div style="display:flex;flex-direction:column;gap:0.25rem;align-items:flex-end;">
-                  <span class="gc-badge" style="background:#D1FAE5;color:#065F46;font-size:0.7rem;padding:0.25rem 0.55rem;border-radius:999px;">Charged</span>
-                  <button class="gc-mark-done" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund</button>
-                </div>`;
-            }
-          } else if (a.status === 'failed') {
-            badgeColor = '#DC2626';
-            action = `<button class="gc-mark-done" data-mark-performed="${a.id}" data-amount="${amt}" data-label="${escapeHtml(addonLabel(a.addon_type))}" style="background:#DC2626;">Retry</button>`;
-          } else {
-            action = `<span class="gc-badge gc-badge-active" style="font-size:0.7rem;">${escapeHtml(a.status)}</span>`;
-          }
-          const visibleNotes = stripRefundLines(a.notes);
-          const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(visibleNotes)}</div>` : '';
-          html += `<div class="gc-visit-row">
-            <div>
-              <div>${escapeHtml(addonLabel(a.addon_type))}</div>
-              <div style="color: ${badgeColor}; font-size: 0.82rem;">${amt} · ${escapeHtml(a.status)}</div>
-              ${noteHtml}
-            </div>
-            ${action}
-          </div>`;
-        }
-        html += `</div>`;
-      }
-
-      // Ad-hoc / other charges section
-      {
-        const visibleCharges = (adhoc_charges || []).filter(c => c.status !== 'canceled');
-        html += `<div class="gc-detail-section">
-          <div class="gc-detail-h" style="display:flex;justify-content:space-between;align-items:center;">
-            <span>Other Charges (non-program)</span>
-            ${subscription.status === 'canceled' ? '' : `<button class="gc-mark-done" id="gc-add-charge-btn" style="background:#0F766E;font-size:0.7rem;padding:0.25rem 0.6rem;">+ Add Charge</button>`}
-          </div>`;
-        if (visibleCharges.length === 0) {
-          html += `<div style="color: #6b7280; font-size: 0.85rem; padding: 0.5rem 0;">No ad-hoc charges. Use this for non-program work (parts, repairs, etc).</div>`;
-        }
-        for (const c of visibleCharges) {
-          const amt = c.amount_cents ? `${(c.amount_cents/100).toFixed(2)}` : '';
-          let badge, badgeColor, action = '';
-          if (c.status === 'pending') {
-            badgeColor = '#D97706';
-            badge = c.billing_method === 'renewal' ? 'Pending - will bill at renewal' : 'Pending';
-            action = `<button class="gc-mark-done" data-cancel-charge="${c.id}" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">&times;</button>`;
-          } else if (c.status === 'charged') {
-            const refunded = parseTotalRefundedCents(c.notes);
-            if (refunded >= c.amount_cents) {
-              badgeColor = '#6B7280';
-              badge = 'Refunded';
-            } else if (refunded > 0) {
-              badgeColor = '#92400E';
-              badge = `Charged · partial refund $${(refunded/100).toFixed(2)}`;
-              action = `<button class="gc-mark-done" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="${refunded}" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund more</button>`;
-            } else {
-              badgeColor = '#059669';
-              badge = c.date_charged ? `Charged ${c.date_charged}` : 'Charged';
-              action = `<button class="gc-mark-done" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${escapeHtml(c.description)}" style="background:#9CA3AF;font-size:0.7rem;padding:0.2rem 0.5rem;">Refund</button>`;
-            }
-          } else if (c.status === 'failed') {
-            badgeColor = '#DC2626';
-            badge = 'Failed';
-          } else {
-            badgeColor = '#6b7280';
-            badge = c.status;
-          }
-          const visibleChargeNotes = stripRefundLines(c.notes);
-          const noteHtml = visibleChargeNotes ? `<div style="color:#DC2626;font-size:0.75rem;margin-top:0.2rem;">${escapeHtml(visibleChargeNotes)}</div>` : '';
-          html += `<div class="gc-visit-row">
-            <div>
-              <div>${escapeHtml(c.description)}</div>
-              <div style="color: ${badgeColor}; font-size: 0.82rem;">${amt} - ${escapeHtml(badge)}</div>
-              ${noteHtml}
-            </div>
-            ${action}
-          </div>`;
-        }
-        html += `</div>`;
-      }
-
-      body.innerHTML = html;
-
-      // Wire up "Mark complete" buttons
+      // ---- Wire up event handlers (existing logic, new button IDs/classes) ----
       body.querySelectorAll('[data-complete-visit]').forEach(btn => {
         btn.addEventListener('click', () => completeVisit(btn.dataset.completeVisit, id));
       });
-
-      // Wire up Confirm buttons for tentative visits
       body.querySelectorAll('[data-confirm-visit]').forEach(btn => {
         btn.addEventListener('click', () => confirmVisit(btn.dataset.confirmVisit, id));
       });
-
-      // Wire up Charge buttons on pending/failed add-ons
-      const addChargeBtn = body.querySelector('#gc-add-charge-btn');
-      if (addChargeBtn) {
-        addChargeBtn.addEventListener('click', () => addAdhocCharge(id, visits || []));
-      }
-      body.querySelectorAll('[data-cancel-charge]').forEach(btn => {
-        btn.addEventListener('click', () => cancelAdhocCharge(btn.dataset.cancelCharge, btn.dataset.desc, id));
-      });
-
-      const addBtn = body.querySelector('#gc-add-addon-btn');
-      if (addBtn) {
-        addBtn.addEventListener('click', () => addAddon(id));
-      }
-
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
       });
@@ -481,28 +524,35 @@
       body.querySelectorAll('[data-refund-charge]').forEach(btn => {
         btn.addEventListener('click', () => refundCharge('adhoc', btn.dataset.refundCharge, parseInt(btn.dataset.amount, 10), parseInt(btn.dataset.refunded, 10), btn.dataset.desc, id));
       });
+      body.querySelectorAll('[data-cancel-charge]').forEach(btn => {
+        btn.addEventListener('click', () => cancelAdhocCharge(btn.dataset.cancelCharge, btn.dataset.desc, id));
+      });
 
-      // Wire up "Save next visit due" button
-      const saveNvBtn = body.querySelector('#gc-next-visit-save');
-      const cancelBtn = body.querySelector('#gc-cancel-sub-btn');
-      if (cancelBtn) {
-        cancelBtn.addEventListener('click', () => cancelSubscription(id));
-      }
+      const addAddonBtn = body.querySelector('#gc-add-addon-btn');
+      if (addAddonBtn) addAddonBtn.addEventListener('click', () => addAddon(id));
+
+      const addChargeBtn = body.querySelector('#gc-add-charge-btn');
+      if (addChargeBtn) addChargeBtn.addEventListener('click', () => addAdhocCharge(id, visits || []));
+
+      const cancelSubBtn = body.querySelector('#gc-cancel-sub-btn');
+      if (cancelSubBtn) cancelSubBtn.addEventListener('click', () => cancelSubscription(id));
+
       const portalBtn = body.querySelector('#gc-portal-btn');
-      if (portalBtn) {
-        portalBtn.addEventListener('click', () => sendPortalLink(id));
-      }
-      const resendWelcomeBtn = body.querySelector('#gc-resend-welcome-btn');
-      if (resendWelcomeBtn) {
-        resendWelcomeBtn.addEventListener('click', () => resendWelcomeEmail(id, resendWelcomeBtn));
-      }
+      if (portalBtn) portalBtn.addEventListener('click', () => sendPortalLink(id));
 
+      const resendWelcomeBtn = body.querySelector('#gc-resend-welcome-btn');
+      if (resendWelcomeBtn) resendWelcomeBtn.addEventListener('click', () => resendWelcomeEmail(id, resendWelcomeBtn));
+
+      const saveNoteBtn = body.querySelector('#gc-save-note-btn');
+      if (saveNoteBtn) saveNoteBtn.addEventListener('click', () => saveCustomerNote(c.id, saveNoteBtn));
+
+      const saveNvBtn = body.querySelector('#gc-next-visit-save');
       if (saveNvBtn) {
         saveNvBtn.addEventListener('click', async () => {
           const newDate = body.querySelector('#gc-next-visit-input').value;
           if (!newDate) { showStatus('Please pick a date.', 'error'); return; }
           saveNvBtn.disabled = true;
-          saveNvBtn.textContent = 'Saving...';
+          saveNvBtn.textContent = 'Saving…';
           try {
             const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
               method: 'PATCH',
@@ -521,9 +571,13 @@
           }
         });
       }
+
+      // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices)
+      loadStripeData(id);
+
     } catch (err) {
       console.error('Detail load failed:', err);
-      body.innerHTML = `<p style="color: #ef4444;">Failed to load: ${escapeHtml(err.message)}</p>`;
+      body.innerHTML = `<div class="gc-card"><p style="color:#DC2626;">Failed to load: ${escapeHtml(err.message)}</p></div>`;
     }
   }
 
@@ -989,6 +1043,131 @@
     });
   }
   wireAdminTools();
+
+  // ---- Modal: lazy Stripe enrichment + new action handlers ----
+
+  // Fetches payment method + lifetime billed + last 5 invoices, replaces
+  // the matching skeletons in the open modal. Fails quietly with a small
+  // "couldn't load" message in each section.
+  async function loadStripeData(subscriptionId) {
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/stripe-data`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+
+      // Payment method row
+      const pmEl = body.querySelector('#gc-payment-method-value');
+      if (pmEl) {
+        const pm = data.payment_method;
+        pmEl.innerHTML = pm
+          ? `${escapeHtml(pm.brand || 'card')} &middot; &bull;&bull;&bull;&bull; ${escapeHtml(pm.last4 || '')} <span style="color:#6b7280;font-weight:500;">exp ${String(pm.exp_month || '').padStart(2,'0')}/${String(pm.exp_year || '').slice(-2)}</span>`
+          : `<span style="color:#9ca3af;font-weight:500;">No card on file</span>`;
+      }
+
+      // Lifetime billed row
+      const ltEl = body.querySelector('#gc-lifetime-value');
+      if (ltEl) {
+        const amt = data.lifetime_billed_cents || 0;
+        ltEl.textContent = `$${(amt / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+
+      // Invoices card body
+      const invEl = body.querySelector('#gc-invoices-body');
+      if (invEl) {
+        const invoices = data.recent_invoices || [];
+        if (invoices.length === 0) {
+          invEl.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">No invoices yet.</div>`;
+        } else {
+          const rows = invoices.map(inv => {
+            const dateStr = inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+            const amt = `$${((inv.amount_paid || 0) / 100).toFixed(2)}`;
+            const chipCls = inv.status === 'paid' ? 'gc-chip-paid' : (inv.status === 'open' ? 'gc-chip-open' : 'gc-chip');
+            return `<div class="gc-card-row">
+              <div>
+                <div class="gc-meta-value">${escapeHtml(dateStr)} <span style="color:#6b7280;font-weight:500;">&middot; ${amt}</span></div>
+                <div style="margin-top:4px;"><span class="gc-chip ${chipCls}">${escapeHtml(inv.status || '')}</span></div>
+              </div>
+              <div>
+                <a href="${inv.stripe_dashboard_url}" target="_blank" rel="noopener noreferrer" class="gc-btn gc-btn-ghost gc-btn-sm" style="text-decoration:none;">View in Stripe &#8599;</a>
+              </div>
+            </div>`;
+          }).join('');
+          const resendBtn = `<div class="gc-card-actions"><button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-invoice-btn" data-sub-id="${subscriptionId}">Resend last invoice</button></div>`;
+          invEl.innerHTML = rows + resendBtn;
+          const resend = body.querySelector('#gc-resend-invoice-btn');
+          if (resend) resend.addEventListener('click', () => resendLastInvoice(subscriptionId, resend));
+        }
+      }
+    } catch (err) {
+      console.error('[stripe-data] load failed:', err);
+      const fail = `<span style="color:#9ca3af;font-weight:500;font-size:0.82rem;">Couldn't load &mdash; refresh to retry</span>`;
+      const pmEl = body.querySelector('#gc-payment-method-value');
+      if (pmEl) pmEl.innerHTML = fail;
+      const ltEl = body.querySelector('#gc-lifetime-value');
+      if (ltEl) ltEl.innerHTML = fail;
+      const invEl = body.querySelector('#gc-invoices-body');
+      if (invEl) invEl.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load invoices &mdash; refresh to retry.</div>`;
+    }
+  }
+
+  async function saveCustomerNote(customerId, btn) {
+    const textarea = document.getElementById('gc-customer-note');
+    if (!textarea || !customerId) return;
+    const original = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/customers/${customerId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: textarea.value }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      showStatus('Note saved.', 'success');
+    } catch (err) {
+      console.error('Save note failed:', err);
+      showStatus(`Note save failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
+
+  async function resendLastInvoice(subscriptionId, btn) {
+    if (!confirm('Resend the most recent invoice to the customer via Stripe? (Stripe sends its own email — separate from our Bates-branded templates.)')) return;
+    const original = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-invoice`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showStatus(`Resend failed: ${data.error || `HTTP ${r.status}`}`, 'error');
+        return;
+      }
+      if (data.note) {
+        // Paid invoice case — no email re-sent. Show the hosted URL so Amy
+        // can copy/paste it to the customer.
+        const url = data.hosted_invoice_url || '';
+        alert(`${data.note}\n\n${url ? 'Hosted invoice URL: ' + url : ''}`);
+        if (url) {
+          try { await navigator.clipboard.writeText(url); showStatus('Invoice URL copied to clipboard.', 'success'); } catch (_) {}
+        }
+      } else {
+        showStatus('Invoice resent via Stripe.', 'success');
+      }
+    } catch (err) {
+      console.error('Resend invoice failed:', err);
+      showStatus(`Resend failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
 
   // ---- Refund helpers ----
   // Parses the structured "REFUNDED $X.XX [of $Y.YY] on YYYY-MM-DD ..." markers

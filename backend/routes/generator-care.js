@@ -92,6 +92,133 @@ router.get('/subscriptions/:id', async (req, res) => {
   }
 });
 
+
+// GET /api/generator-care/subscriptions/:id/stripe-data
+// Lazy-loaded Stripe enrichments for the customer detail modal: payment
+// method on file, lifetime billed total, and the 5 most recent invoices.
+// The modal opens instantly from DB; this endpoint fills in skeletons
+// after the fact. Two Stripe API calls in parallel (~150-300ms).
+router.get('/subscriptions/:id/stripe-data', async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('stripe_customer_id')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub || !sub.stripe_customer_id) {
+      return res.json({
+        payment_method: null,
+        lifetime_billed_cents: 0,
+        recent_invoices: [],
+        note: 'No Stripe customer linked to this subscription.',
+      });
+    }
+    const customerId = sub.stripe_customer_id;
+
+    // Fetch in parallel: payment methods (cards) + paid invoices.
+    // limit:100 on invoices is enough to cover years of subs; if we ever
+    // exceed it the lifetime total just slightly under-counts.
+    const [pmResult, invoiceResult] = await Promise.allSettled([
+      stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 }),
+      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 100 }),
+    ]);
+
+    // Payment method
+    let payment_method = null;
+    if (pmResult.status === 'fulfilled' && pmResult.value.data.length > 0) {
+      const pm = pmResult.value.data[0];
+      const card = pm.card || {};
+      payment_method = {
+        brand: card.brand || null,
+        last4: card.last4 || null,
+        exp_month: card.exp_month || null,
+        exp_year: card.exp_year || null,
+      };
+    } else if (pmResult.status === 'rejected') {
+      console.error('[stripe-data] paymentMethods.list failed:', pmResult.reason && pmResult.reason.message);
+    }
+
+    // Lifetime billed + recent invoices (both from the same list call)
+    let lifetime_billed_cents = 0;
+    let recent_invoices = [];
+    if (invoiceResult.status === 'fulfilled') {
+      const all = invoiceResult.value.data || [];
+      lifetime_billed_cents = all.reduce((sum, inv) => sum + (inv.amount_paid || 0), 0);
+      recent_invoices = all.slice(0, 5).map((inv) => ({
+        id: inv.id,
+        created: inv.created,
+        amount_paid: inv.amount_paid || 0,
+        status: inv.status,
+        hosted_invoice_url: inv.hosted_invoice_url || null,
+        stripe_dashboard_url: `https://dashboard.stripe.com/invoices/${inv.id}`,
+      }));
+    } else {
+      console.error('[stripe-data] invoices.list failed:', invoiceResult.reason && invoiceResult.reason.message);
+    }
+
+    res.json({ payment_method, lifetime_billed_cents, recent_invoices });
+  } catch (err) {
+    console.error('[generator-care] stripe-data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// POST /api/generator-care/subscriptions/:id/resend-invoice
+// Resends the most recent invoice (paid or open) via Stripe. Useful when a
+// customer says they never got their receipt or needs a copy for their
+// records. Stripe's own email goes out -- not one of our branded templates.
+router.post('/subscriptions/:id/resend-invoice', async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('stripe_customer_id')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub || !sub.stripe_customer_id) {
+      return res.status(400).json({ error: 'No Stripe customer linked to this subscription.' });
+    }
+
+    const invoices = await stripe.invoices.list({
+      customer: sub.stripe_customer_id,
+      limit: 1,
+    });
+    const invoice = invoices.data[0];
+    if (!invoice) {
+      return res.status(404).json({ error: 'No invoices on file for this customer yet.' });
+    }
+
+    // sendInvoice works on open invoices; for already-paid ones it returns
+    // the invoice unchanged (no email re-sent). Surface that distinction.
+    if (invoice.status === 'paid') {
+      // For a paid invoice, the right action is to email the receipt URL.
+      // We don't have a dedicated Stripe API for "resend paid receipt" --
+      // best we can do is point the customer at the hosted invoice URL.
+      return res.json({
+        ok: true,
+        invoice_id: invoice.id,
+        status: invoice.status,
+        note: 'Most recent invoice is already paid. No re-send needed -- share hosted_invoice_url with the customer if they want a copy.',
+        hosted_invoice_url: invoice.hosted_invoice_url || null,
+      });
+    }
+
+    const sent = await stripe.invoices.sendInvoice(invoice.id);
+    res.json({
+      ok: true,
+      invoice_id: invoice.id,
+      status: sent.status,
+      hosted_invoice_url: sent.hosted_invoice_url || null,
+    });
+  } catch (err) {
+    console.error('[generator-care] resend-invoice error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // POST /api/generator-care/visits/:id/complete
 // Mark a service visit completed and roll the subscription's next_visit_due forward.
 router.post('/visits/:id/complete', async (req, res) => {
@@ -202,6 +329,39 @@ router.patch('/subscriptions/:id', async (req, res) => {
     res.json({ ok: true, subscription: updated });
   } catch (err) {
     console.error('[generator-care] subscription patch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// PATCH /api/generator-care/customers/:id
+// Edit customer-level fields. Currently scoped to `notes` (the internal-note
+// textarea on the dashboard modal); add more fields here as needed. Notes here
+// persist across subscriptions if the customer ever resubscribes, which is
+// why this lives on customers and not subscriptions.
+router.patch('/customers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body || {};
+
+    const updates = {};
+    if (notes !== undefined) updates.notes = notes;
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'no editable fields provided' });
+    }
+
+    const { data: updated, error: custErr } = await supabaseAdmin
+      .from('generator_customers')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (custErr) throw custErr;
+    if (!updated) return res.status(404).json({ error: 'customer not found' });
+
+    res.json({ ok: true, customer: updated });
+  } catch (err) {
+    console.error('[generator-care] customer patch error:', err);
     res.status(500).json({ error: err.message });
   }
 });
