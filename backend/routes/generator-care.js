@@ -908,12 +908,33 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
 
     // 2. Hit Stripe based on billing_method
     if (billing_method === 'immediate') {
+      // Resolve which saved card to charge first — a bare
+      // paymentIntents.create({ customer }) can't find the card Checkout attached
+      // to the subscription, which is what was failing in the field.
+      const paymentMethodId = await resolveSavedPaymentMethod(sub.stripe_subscription_id, sub.stripe_customer_id);
+      if (!paymentMethodId) {
+        // No card on file at all: record the failure and auto-email the
+        // card-update link so the customer can add one.
+        await supabaseAdmin
+          .from('generator_adhoc_charges')
+          .update({ status: 'failed', notes: 'Charge failed on ' + today + ': no saved card on file' })
+          .eq('id', row.id);
+        const linkResult = await emailCardUpdateLinkForSub(id);
+        return res.status(402).json({
+          error: 'charge failed',
+          reason: 'no saved card on file',
+          adhoc_charge_id: row.id,
+          card_update_email_sent: !!linkResult.sent,
+        });
+      }
+
       let intent;
       try {
         intent = await stripe.paymentIntents.create({
           customer: sub.stripe_customer_id,
           amount: amount_cents,
           currency: 'usd',
+          payment_method: paymentMethodId,
           payment_method_types: ['card'],
           off_session: true,
           confirm: true,
@@ -925,6 +946,9 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
           },
         });
       } catch (stripeErr) {
+        // Off-session charges can fail with authentication_required (3DS) or card
+        // errors (declined, expired, etc.). Record FAILED with the message and do
+        // not throw; Amy can re-send a card-update link from the dashboard.
         const reason = stripeErr.message || stripeErr.code || 'unknown_error';
         await supabaseAdmin
           .from('generator_adhoc_charges')
@@ -1335,6 +1359,66 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
     text,
     logTag: '[card-update-link]',
   });
+}
+
+// Resolve which saved card to charge for an off-session payment. Stripe Checkout
+// attaches the card as the SUBSCRIPTION's default_payment_method but does not
+// always set the CUSTOMER's invoice_settings default, so a bare
+// paymentIntents.create({ customer, confirm }) finds no payment method and fails
+// with "missing a payment method". Try, in order: subscription default ->
+// customer invoice-settings default -> first saved card. Returns a pm id or null.
+async function resolveSavedPaymentMethod(stripeSubscriptionId, stripeCustomerId) {
+  if (stripeSubscriptionId) {
+    try {
+      const subObj = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+      const pm = subObj && subObj.default_payment_method;
+      if (pm) return typeof pm === 'string' ? pm : pm.id;
+    } catch (e) {
+      console.error('[adhoc-charge] subscription retrieve failed:', e && e.message);
+    }
+  }
+  try {
+    const cust = await stripe.customers.retrieve(stripeCustomerId);
+    const pm = cust && cust.invoice_settings && cust.invoice_settings.default_payment_method;
+    if (pm) return typeof pm === 'string' ? pm : pm.id;
+  } catch (e) {
+    console.error('[adhoc-charge] customer retrieve failed:', e && e.message);
+  }
+  try {
+    const list = await stripe.paymentMethods.list({ customer: stripeCustomerId, type: 'card', limit: 1 });
+    if (list && list.data && list.data.length) return list.data[0].id;
+  } catch (e) {
+    console.error('[adhoc-charge] paymentMethods.list failed:', e && e.message);
+  }
+  return null;
+}
+
+// Create a Customer Portal session for a subscription and email the card-update
+// link to the customer (same flow as POST /subscriptions/:id/portal-session).
+// Used when an off-session charge can't find a card. Returns { sent, reason }.
+async function emailCardUpdateLinkForSub(subscriptionId) {
+  try {
+    const { data: sub } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('stripe_customer_id, customer:generator_customers(name, email)')
+      .eq('id', subscriptionId)
+      .single();
+    if (!sub || !sub.stripe_customer_id) return { sent: false, reason: 'no stripe customer' };
+    const email = sub.customer && sub.customer.email;
+    if (!email) return { sent: false, reason: 'no email on file' };
+    const session = await stripe.billingPortal.sessions.create({
+      customer: sub.stripe_customer_id,
+      return_url: 'https://app.bates-electric.com/generator-care.html',
+    });
+    return await sendCardUpdateLinkEmail({
+      name: (sub.customer && sub.customer.name) || null,
+      email,
+      portalUrl: session.url,
+    });
+  } catch (e) {
+    console.error('[adhoc-charge] emailCardUpdateLinkForSub failed:', e && e.message);
+    return { sent: false, reason: e && e.message };
+  }
 }
 
 

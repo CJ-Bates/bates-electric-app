@@ -140,15 +140,40 @@ async function handleSubscriptionCreated(subscription) {
     .single();
   if (custErr) throw new Error('upsert customer: ' + custErr.message);
 
-  // 2. Compute next-visit date
+  // 1b. Make the card from Checkout the customer's default payment method for
+  // invoices and any future off-session charges (ad-hoc charges, renewals).
+  // Checkout sets the card as the SUBSCRIPTION's default_payment_method but not
+  // the CUSTOMER's invoice_settings default, so without this an ad-hoc charge
+  // (paymentIntents.create) can't find a card. Non-fatal if it doesn't stick.
+  try {
+    let defaultPm = subscription.default_payment_method;
+    if (defaultPm && typeof defaultPm !== 'string') defaultPm = defaultPm.id;
+    if (!defaultPm) {
+      const pms = await stripeGet(`/payment_methods?customer=${stripeCustomerId}&type=card&limit=1`);
+      defaultPm = pms && pms.data && pms.data[0] && pms.data[0].id;
+    }
+    if (defaultPm) {
+      await stripePost(`/customers/${stripeCustomerId}`, {
+        'invoice_settings[default_payment_method]': defaultPm,
+      });
+      console.log(`[generator-webhook] set customer ${stripeCustomerId} default payment method`);
+    }
+  } catch (e) {
+    console.error('[generator-webhook] set default_payment_method failed:', e && e.message);
+  }
+
+  // 2. Compute dates. The first tentative visit is set ~2 weeks out (Amy confirms
+  // the real date with the customer by phone); the regular cadence (every 6 or 12
+  // months) is applied later, when a visit is marked complete. If the 2-week date
+  // lands on a weekend, roll forward to the next weekday.
   const today = new Date();
-  const monthsAhead = meta.plan === 'semi_annual' ? 6 : 12;
-  const next = new Date(today);
-  // First visit: schedule for signup day so dashboard shows 'needs scheduling now'.
-  // monthsAhead cadence kicks in only after first visit is marked complete.
-  next.setMonth(next.getMonth() + 0);
   const todayStr = today.toISOString().slice(0, 10);
-  const nextStr = next.toISOString().slice(0, 10);
+  const firstVisit = new Date(today);
+  firstVisit.setUTCDate(firstVisit.getUTCDate() + 14);
+  const dow = firstVisit.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  if (dow === 6) firstVisit.setUTCDate(firstVisit.getUTCDate() + 2);      // Sat -> Mon
+  else if (dow === 0) firstVisit.setUTCDate(firstVisit.getUTCDate() + 1); // Sun -> Mon
+  const nextStr = firstVisit.toISOString().slice(0, 10);
 
   // 3. Compute annual price (sum of subscription line items, times 2 for semi-annual billed twice/year)
   const lineItems = subscription.items?.data || [];
