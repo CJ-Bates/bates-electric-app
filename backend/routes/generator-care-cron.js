@@ -113,14 +113,14 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
     const pastDue = pastDueR.data || [];
     const failedTotal = failedAddons.length + failedAdhoc.length;
 
-    if (overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0) {
- // Quiet morning  -  no email. Still a successful cron run, so ping the
- // healthcheck; otherwise Healthchecks would false-alarm on no-news days.
- pingHealthcheck();
- return res.json({ ok: true, sent: false, reason: 'No visits, failed charges, or past-due subs', overdue: 0, upcoming: 0, failed: 0, past_due: 0 });
- }
+    // The digest must go out EVERY day. Amy's runbook treats a missing email as
+    // an outage signal, so on a genuinely quiet day we still send — just a short
+    // "all quiet" note instead of suppressing the email entirely.
+    const isQuiet = overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0;
 
- const { subject, html, text } = buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, pastDue, todayStr });
+    const { subject, html, text } = isQuiet
+      ? buildQuietEmail({ todayStr })
+      : buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, pastDue, todayStr });
 
  if (!SENDGRID_KEY) {
  return res.status(500).json({ error: 'SENDGRID_API_KEY not configured', preview: { subject, text } });
@@ -137,7 +137,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  // Digest sent successfully -- signal the dead-man's switch.
  pingHealthcheck();
 
- res.json({ ok: true, sent: true, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
+ res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
  } catch (err) {
  // Signal failure to Healthchecks first so we hear about a crashed cron.
  pingHealthcheck('/fail');
@@ -361,6 +361,50 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
       }
 
       return { subject, html, text: textLines.join('\n') };
+}
+
+// Quiet-day digest: same branded shell as the full digest (so Amy recognizes the
+// daily email arrived) with a single "all clear" line. Sending this every quiet
+// day is what keeps a missing email meaningful as an outage signal.
+function buildQuietEmail({ todayStr }) {
+  const dashboardUrl = 'https://bates-electric-app.netlify.app/generator-care.html';
+  const dateLine = new Date(todayStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const subject = 'Generator Care: all quiet - nothing due today';
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827;background:#f9fafb;">
+  <div style="max-width:680px;margin:0 auto;">
+    <div style="background:#1F3A5F;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0;">
+      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;opacity:0.7;margin-bottom:4px;">Bates Electric, Inc.</div>
+      <h1 style="margin:0;font-size:22px;letter-spacing:-0.3px;">Generator Care Digest</h1>
+      <p style="margin:6px 0 0;opacity:0.85;font-size:13px;">${dateLine}</p>
+    </div>
+    <div style="background:#fff;padding:28px 24px;border-radius:0 0 8px 8px;border:1px solid #e5e7eb;border-top:none;text-align:center;">
+      <div style="font-size:30px;line-height:1;margin-bottom:8px;">&#9989;</div>
+      <p style="margin:0;color:#1F3A5F;font-size:16px;font-weight:600;">All quiet</p>
+      <p style="margin:8px 0 0;color:#374151;font-size:14px;">No new signups, no visits due, no failed charges.</p>
+      <p style="margin:22px 0 0;">
+        <a href="${dashboardUrl}" style="display:inline-block;background:#1F3A5F;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;font-size:14px;">Open Generator Care dashboard -></a>
+      </p>
+    </div>
+    <div style="margin-top:24px;padding:16px 24px;text-align:center;color:#9ca3af;font-size:11px;line-height:1.6;">
+      <div style="font-weight:600;color:#6b7280;letter-spacing:0.5px;">BATES ELECTRIC, INC.</div>
+      <div>Commercial &middot; Residential &middot; Industrial &middot; Restorative</div>
+      <div style="margin-top:6px;">(636) 464-3939 &middot; bates-electric.com</div>
+    </div>
+  </div>
+</body></html>`;
+
+  const text = [
+    'Generator Care  -  daily digest',
+    '',
+    'All quiet - no new signups, no visits due, no failed charges.',
+    '',
+    `Dashboard: ${dashboardUrl}`,
+  ].join('\n');
+
+  return { subject, html, text };
 }
 
 function escapeHtml(s) {
