@@ -517,24 +517,43 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
 
 // --- 7. Cancellation confirmation -------------------------------------------
 
-function buildCancellationEmail({ customer }) {
+// periodEndDate (optional, 'YYYY-MM-DD'): when the cancel takes effect at the end
+// of the current billing period, the email says coverage stays active through that
+// date. When omitted (e.g. an outright cancel that's already terminal), it uses the
+// plain "has been cancelled" wording.
+function buildCancellationEmail({ customer, periodEndDate }) {
   const name = (customer && customer.name) || 'there';
+  const throughStr = periodEndDate ? fmtFriendlyDate(periodEndDate) : null;
+
+  const heading = throughStr
+    ? 'Your Generator Care plan is scheduled to cancel'
+    : 'Your Generator Care plan has been cancelled';
+  const subject = throughStr
+    ? 'Your Generator Care plan is scheduled to cancel'
+    : 'Your Generator Care plan has been cancelled';
+
+  const firstParaHtml = throughStr
+    ? `<p style="${P}">This confirms that your Bates Electric Generator Care plan is set to cancel. <strong>Your plan stays active through ${escHtml(throughStr)}</strong> &mdash; you keep your remaining coverage until then, and <strong>you won&rsquo;t be charged again</strong> (no renewal at the end of the period).</p>`
+    : `<p style="${P}">This confirms that your Bates Electric Generator Care plan has been cancelled. <strong>You won&rsquo;t be charged again</strong> &mdash; no future renewals or recurring charges will be made to your card on file.</p>`;
 
   const body =
-    `<p style="${P}">This confirms that your Bates Electric Generator Care plan has been cancelled. <strong>You won&rsquo;t be charged again</strong> &mdash; no future renewals or recurring charges will be made to your card on file.</p>` +
+    firstParaHtml +
     `<p style="${P}">Per our <a href="https://generator.bates-electric.com/terms.html" style="color:${BRAND.navy};">Terms of Service</a> (Section 5), any pre-paid maintenance visits that haven&rsquo;t been performed yet are not refunded. If you have a visit already scheduled, we&rsquo;ll be in touch to wrap it up.</p>` +
     `<p style="${P_LAST}margin-top:24px;">Changed your mind, or cancelled by mistake? We&rsquo;d love to have you back &mdash; just give us a call at <strong>${BRAND.phone}</strong> and we&rsquo;ll get you set back up.</p>`;
 
   const html = renderBrandedEmail({
-    heading: 'Your Generator Care plan has been cancelled',
+    heading,
     intro: `Hi ${escHtml(name)},`,
     body,
   });
 
+  const firstParaText = throughStr
+    ? `This confirms that your Bates Electric Generator Care plan is set to cancel. Your plan stays active through ${throughStr} -- you keep your remaining coverage until then, and you won't be charged again (no renewal at the end of the period).`
+    : `This confirms that your Bates Electric Generator Care plan has been cancelled. You won't be charged again -- no future renewals or recurring charges will be made to your card on file.`;
+
   const text =
     `Hi ${name},\n\n` +
-    `This confirms that your Bates Electric Generator Care plan has been cancelled. ` +
-    `You won't be charged again -- no future renewals or recurring charges will be made to your card on file.\n\n` +
+    firstParaText + `\n\n` +
     `Per our Terms of Service (Section 5, https://generator.bates-electric.com/terms.html), any pre-paid ` +
     `maintenance visits that haven't been performed yet are not refunded. If you have a visit already ` +
     `scheduled, we'll be in touch to wrap it up.\n\n` +
@@ -542,7 +561,7 @@ function buildCancellationEmail({ customer }) {
     `${BRAND.phone} and we'll get you set back up.\n\n` +
     `-- Bates Electric`;
 
-  return { subject: 'Your Generator Care plan has been cancelled', html, text };
+  return { subject, html, text };
 }
 
 // ============================================================================

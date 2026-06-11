@@ -19,6 +19,7 @@ const {
   buildVisitScheduledEmail,
   buildVisitCompletedEmail,
   buildRenewalUpcomingEmail,
+  buildCancellationEmail,
 } = require('../lib/emails');
 
 function planLabelFor(plan) {
@@ -634,7 +635,7 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
 
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('*, customer:generator_customers(name)')
+      .select('*, customer:generator_customers(name, email)')
       .eq('id', id)
       .single();
     if (subErr) throw subErr;
@@ -659,28 +660,50 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
     }
 
     const today = new Date().toISOString().slice(0, 10);
+    const periodEnd = stripeSub.current_period_end
+      ? new Date(stripeSub.current_period_end * 1000).toISOString().slice(0, 10)
+      : null;
+
+    // Send the cancellation confirmation NOW. The cancel is at period end, so
+    // customer.subscription.deleted won't fire until that date (potentially months
+    // away) — waiting for it would leave the customer with no confirmation. Email
+    // failure must never fail the cancel (same rule as the webhook side-effects).
+    let cancellationEmailSent = false;
+    try {
+      const r = await sendCancellationEmail({
+        customer: { name: sub.customer && sub.customer.name, email: sub.customer && sub.customer.email },
+        periodEndDate: periodEnd,
+      });
+      cancellationEmailSent = !!(r && r.sent);
+    } catch (e) {
+      console.error('[generator-care] cancellation email failed:', e && e.message);
+    }
+
     const noteAddition = 'Canceled on ' + today + (reason ? ': ' + reason : '');
     const newNotes = sub.notes ? sub.notes + '\n\n' + noteAddition : noteAddition;
+    // Stash the paid-through date (for the dashboard banner) and, if we sent the
+    // confirmation, a dedupe marker so the eventual subscription.deleted event
+    // doesn't send a second email.
+    const newMeta = { ...(sub.raw_metadata || {}), service_through: periodEnd };
+    if (cancellationEmailSent) newMeta.cancellation_email_sent_at = new Date().toISOString();
 
     const { data: updated, error: updErr } = await supabaseAdmin
       .from('generator_subscriptions')
       .update({
         status: 'canceled',
         notes: newNotes,
+        raw_metadata: newMeta,
       })
       .eq('id', id)
       .select()
       .single();
     if (updErr) throw updErr;
 
-    const periodEnd = stripeSub.current_period_end
-      ? new Date(stripeSub.current_period_end * 1000).toISOString().slice(0, 10)
-      : null;
-
     res.json({
       ok: true,
       subscription: updated,
       service_through: periodEnd,
+      cancellation_email_sent: cancellationEmailSent,
     });
   } catch (err) {
     console.error('[generator-care] cancel subscription error:', err);
@@ -1366,6 +1389,24 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
   });
 }
 
+// Send the cancellation-confirmation email (period-end aware). Mirrors the
+// webhook's sender so the dashboard cancel endpoint can confirm immediately
+// instead of waiting for customer.subscription.deleted. Returns { sent, reason }.
+async function sendCancellationEmail({ customer, periodEndDate }) {
+  if (!customer || !customer.email) {
+    console.log('[cancellation-email] no email on file, skipping');
+    return { sent: false, reason: 'no email on file' };
+  }
+  const { subject, html, text } = buildCancellationEmail({ customer, periodEndDate });
+  return sendEmail({
+    to: customer.email,
+    subject,
+    html,
+    text,
+    logTag: '[cancellation-email]',
+  });
+}
+
 // Resolve which saved card to charge for an off-session payment. Stripe Checkout
 // attaches the card as the SUBSCRIPTION's default_payment_method but does not
 // always set the CUSTOMER's invoice_settings default, so a bare
@@ -1432,7 +1473,7 @@ async function emailCardUpdateLinkForSub(subscriptionId) {
 // it to the supplied address. Lets us visually verify templates before
 // flipping Stripe to live mode without triggering real customer events.
 // Body: { template: 'welcome' | 'failed_charge' | 'portal_link', to: '...' }
-const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link', 'visit_scheduled', 'visit_complete', 'renewal_upcoming'];
+const TEST_EMAIL_TEMPLATES = ['welcome', 'failed_charge', 'portal_link', 'visit_scheduled', 'visit_complete', 'renewal_upcoming', 'cancellation'];
 const FAKE_PORTAL_URL = 'https://billing.stripe.com/p/session/test_PLACEHOLDER';
 
 function buildTestTemplate(template) {
@@ -1483,6 +1524,12 @@ function buildTestTemplate(template) {
       nextVisitDate: '2027-06-08',
       planLabel: 'Annual',
       notes: 'Replaced battery. Tested generator under load — ran cleanly for 15 minutes. Topped off coolant.',
+    });
+  }
+  if (template === 'cancellation') {
+    return buildCancellationEmail({
+      customer: { name: 'Sample Customer', email: 'sample@example.com' },
+      periodEndDate: '2026-12-11',
     });
   }
   if (template === 'renewal_upcoming') {

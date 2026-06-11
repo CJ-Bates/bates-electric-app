@@ -294,27 +294,39 @@ async function handleSubscriptionDeleted(subscription) {
   // Final terminal event from Stripe — sub is fully gone. Mark canceled if
   // not already (the dashboard cancel + the updated handler usually beat us
   // here, but this is the backstop).
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('generator_subscriptions')
     .update({ status: 'canceled' })
     .eq('stripe_subscription_id', subscription.id)
-    .neq('status', 'canceled')
-    .select('id')
-    .maybeSingle();
+    .neq('status', 'canceled');
   if (error) {
     console.error('[generator-webhook] subscription.deleted update error:', error.message);
-    // Don't return — still try to send the confirmation below.
-  } else if (data) {
-    console.log(`[generator-webhook] subscription ${data.id} -> canceled (via subscription.deleted)`);
+    // Don't return — still try to send/dedupe the confirmation below.
   }
 
-  // Cancellation confirmation. subscription.deleted is the terminal event (fires
-  // once, at period end when cancel_at_period_end was set), so it's the right
-  // place to confirm "no future charges" exactly once. We look the customer up
-  // by stripe_customer_id rather than gating on the status update above, because
-  // the dashboard cancel + the updated handler usually beat us here (so `data`
-  // is null) but the customer still deserves the email. Non-generator subs won't
-  // match a generator_customers row, so they're naturally skipped.
+  // Look up our subscription row for (a) the dedupe marker and (b) its id.
+  const { data: subRow, error: subRowErr } = await supabase
+    .from('generator_subscriptions')
+    .select('id, raw_metadata')
+    .eq('stripe_subscription_id', subscription.id)
+    .maybeSingle();
+  if (subRowErr) {
+    console.error('[generator-webhook] subscription.deleted row lookup error:', subRowErr.message);
+  }
+
+  // Dedupe: the dashboard cancel endpoint sends the confirmation at cancel time
+  // (cancel_at_period_end) and records cancellation_email_sent_at. If that already
+  // happened, don't send a second email when the period actually ends here. We DO
+  // still send for an outright cancel done directly in the Stripe dashboard, where
+  // no endpoint ran and the marker was never set.
+  if (subRow && subRow.raw_metadata && subRow.raw_metadata.cancellation_email_sent_at) {
+    console.log(`[generator-webhook] subscription.deleted: cancellation email already sent at ${subRow.raw_metadata.cancellation_email_sent_at}, skipping`);
+    return;
+  }
+
+  // Look up the customer and send. No periodEndDate here — by the time deleted
+  // fires there's no future coverage window to advertise; use the plain
+  // "has been cancelled" copy. Non-generator subs won't match a customer row.
   let canceledCustomer = null;
   if (subscription.customer) {
     const { data: cust, error: custErr } = await supabase
@@ -328,9 +340,25 @@ async function handleSubscriptionDeleted(subscription) {
       canceledCustomer = cust;
     }
   }
-  // Non-blocking — a failed email must never throw out of the webhook (Stripe retries on 500s).
-  sendCancellationEmail({ customer: canceledCustomer })
-    .catch((e) => console.error('[cancellation-email] unexpected:', e && e.message));
+
+  // A failed email must never throw out of the webhook (Stripe retries on 500s).
+  let sent = false;
+  try {
+    const r = await sendCancellationEmail({ customer: canceledCustomer });
+    sent = !!(r && r.sent);
+  } catch (e) {
+    console.error('[cancellation-email] unexpected:', e && e.message);
+  }
+
+  // Record the marker so a retried/duplicate deleted delivery doesn't re-send.
+  if (sent && subRow && subRow.id) {
+    const meta = { ...(subRow.raw_metadata || {}), cancellation_email_sent_at: new Date().toISOString() };
+    const { error: markErr } = await supabase
+      .from('generator_subscriptions')
+      .update({ raw_metadata: meta })
+      .eq('id', subRow.id);
+    if (markErr) console.error('[generator-webhook] subscription.deleted mark-sent error:', markErr.message);
+  }
 }
 
 async function handleCustomerUpdated(customer) {

@@ -462,10 +462,17 @@
     </div>`;
   }
 
-  function renderDangerZone(isCanceled) {
+  function renderDangerZone(isCanceled, subscription) {
     if (isCanceled) {
+      // Stripe keeps the sub active until the period end even though we mark it
+      // 'canceled'. Show the paid-through date so Amy doesn't tell a customer
+      // their coverage already ended.
+      const through = subscription && subscription.raw_metadata && subscription.raw_metadata.service_through;
+      const throughLine = through
+        ? `Customer keeps service through <strong>${fmtDate(through)}</strong>; auto-renewal is off.`
+        : `Customer keeps service through their paid-through date; auto-renewal is off.`;
       return `<div class="gc-canceled-banner">
-        <strong>This subscription is canceled.</strong> Customer keeps service through their paid-through date; auto-renewal is off.
+        <strong>This subscription is canceled.</strong> ${throughLine}
       </div>`;
     }
     return `<div class="gc-danger-zone">
@@ -500,7 +507,7 @@
         renderAddonsCard(pending_addons, isCanceled) +
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
-        renderDangerZone(isCanceled);
+        renderDangerZone(isCanceled, subscription);
 
       // ---- Wire up event handlers (existing logic, new button IDs/classes) ----
       body.querySelectorAll('[data-complete-visit]').forEach(btn => {
