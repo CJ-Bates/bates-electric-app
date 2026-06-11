@@ -873,7 +873,7 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
 
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('id, stripe_subscription_id, stripe_customer_id, status, customer:generator_customers(name)')
+      .select('id, stripe_subscription_id, stripe_customer_id, status, customer:generator_customers(name, email)')
       .eq('id', id)
       .single();
     if (subErr) throw subErr;
@@ -888,6 +888,7 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const performedDate = date_performed || today;
     const customerName = (sub.customer && sub.customer.name) || 'customer';
+    const customerEmail = (sub.customer && sub.customer.email) || null;
     const stripeDescription = 'Bates Electric: ' + description.trim();
 
     // 1. Insert the row first as 'pending'
@@ -939,6 +940,10 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
           off_session: true,
           confirm: true,
           description: stripeDescription,
+          // Stripe's automatic receipts for raw PaymentIntents key off receipt_email;
+          // without it ad-hoc charges won't generate a receipt even with the
+          // "Successful payments" email setting enabled.
+          ...(customerEmail ? { receipt_email: customerEmail } : {}),
           metadata: {
             adhoc_charge_id: row.id,
             subscription_id: id,
