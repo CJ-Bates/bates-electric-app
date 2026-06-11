@@ -515,6 +515,36 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
   return { subject: 'Your Bates Electric subscription renews soon', html, text };
 }
 
+// --- 7. Cancellation confirmation -------------------------------------------
+
+function buildCancellationEmail({ customer }) {
+  const name = (customer && customer.name) || 'there';
+
+  const body =
+    `<p style="${P}">This confirms that your Bates Electric Generator Care plan has been cancelled. <strong>You won&rsquo;t be charged again</strong> &mdash; no future renewals or recurring charges will be made to your card on file.</p>` +
+    `<p style="${P}">Per our <a href="https://generator.bates-electric.com/terms.html" style="color:${BRAND.navy};">Terms of Service</a> (Section 5), any pre-paid maintenance visits that haven&rsquo;t been performed yet are not refunded. If you have a visit already scheduled, we&rsquo;ll be in touch to wrap it up.</p>` +
+    `<p style="${P_LAST}margin-top:24px;">Changed your mind, or cancelled by mistake? We&rsquo;d love to have you back &mdash; just give us a call at <strong>${BRAND.phone}</strong> and we&rsquo;ll get you set back up.</p>`;
+
+  const html = renderBrandedEmail({
+    heading: 'Your Generator Care plan has been cancelled',
+    intro: `Hi ${escHtml(name)},`,
+    body,
+  });
+
+  const text =
+    `Hi ${name},\n\n` +
+    `This confirms that your Bates Electric Generator Care plan has been cancelled. ` +
+    `You won't be charged again -- no future renewals or recurring charges will be made to your card on file.\n\n` +
+    `Per our Terms of Service (Section 5, https://generator.bates-electric.com/terms.html), any pre-paid ` +
+    `maintenance visits that haven't been performed yet are not refunded. If you have a visit already ` +
+    `scheduled, we'll be in touch to wrap it up.\n\n` +
+    `Changed your mind, or cancelled by mistake? We'd love to have you back -- just give us a call at ` +
+    `${BRAND.phone} and we'll get you set back up.\n\n` +
+    `-- Bates Electric`;
+
+  return { subject: 'Your Generator Care plan has been cancelled', html, text };
+}
+
 // ============================================================================
 // Module exports
 // ============================================================================
@@ -543,4 +573,5 @@ module.exports = {
   buildVisitScheduledEmail,
   buildVisitCompletedEmail,
   buildRenewalUpcomingEmail,
+  buildCancellationEmail,
 };

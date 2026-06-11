@@ -8,7 +8,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
-const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail } = require('../lib/emails');
+const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -278,11 +278,34 @@ async function handleSubscriptionDeleted(subscription) {
     .maybeSingle();
   if (error) {
     console.error('[generator-webhook] subscription.deleted update error:', error.message);
-    return;
-  }
-  if (data) {
+    // Don't return — still try to send the confirmation below.
+  } else if (data) {
     console.log(`[generator-webhook] subscription ${data.id} -> canceled (via subscription.deleted)`);
   }
+
+  // Cancellation confirmation. subscription.deleted is the terminal event (fires
+  // once, at period end when cancel_at_period_end was set), so it's the right
+  // place to confirm "no future charges" exactly once. We look the customer up
+  // by stripe_customer_id rather than gating on the status update above, because
+  // the dashboard cancel + the updated handler usually beat us here (so `data`
+  // is null) but the customer still deserves the email. Non-generator subs won't
+  // match a generator_customers row, so they're naturally skipped.
+  let canceledCustomer = null;
+  if (subscription.customer) {
+    const { data: cust, error: custErr } = await supabase
+      .from('generator_customers')
+      .select('name, email')
+      .eq('stripe_customer_id', subscription.customer)
+      .maybeSingle();
+    if (custErr) {
+      console.error('[generator-webhook] subscription.deleted customer lookup error:', custErr.message);
+    } else {
+      canceledCustomer = cust;
+    }
+  }
+  // Non-blocking — a failed email must never throw out of the webhook (Stripe retries on 500s).
+  sendCancellationEmail({ customer: canceledCustomer })
+    .catch((e) => console.error('[cancellation-email] unexpected:', e && e.message));
 }
 
 async function handleCustomerUpdated(customer) {
@@ -530,6 +553,22 @@ async function sendCardFailedEmail({ customer, amountCents, description }) {
     html,
     text,
     logTag: '[card-failed-email]',
+  });
+}
+
+// ---- Cancellation confirmation email send ----
+async function sendCancellationEmail({ customer }) {
+  if (!customer || !customer.email) {
+    console.log('[cancellation-email] no email on file, skipping');
+    return { sent: false, reason: 'no email on file' };
+  }
+  const { subject, html, text } = buildCancellationEmail({ customer });
+  return sendEmail({
+    to: customer.email,
+    subject,
+    html,
+    text,
+    logTag: '[cancellation-email]',
   });
 }
 
