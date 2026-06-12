@@ -1283,6 +1283,34 @@ router.get('/accounting/transactions', async (req, res) => {
     // endpoint ignores the created filter.
     allRefunds = allRefunds.filter(r => r.created >= fromTs && r.created <= toTs);
 
+    // Page through standalone Stripe account fees (e.g. Billing "Usage Fee", the
+    // 0.7% of subscription invoice volume) in the range. Stripe deducts these
+    // straight from our balance — they never appear as charges or refunds — so
+    // without them the Net here is short of what actually moves toward payouts,
+    // and Brenda's bank deposits won't reconcile. type:'stripe_fee' is exactly
+    // these account-level fees; it excludes the per-charge processing fees (which
+    // live inside each charge's balance transaction and are already shown in the
+    // fee column), so there is no double counting.
+    let allFees = [];
+    {
+      let after = undefined;
+      let guard = 0;
+      do {
+        const page = await stripe.balanceTransactions.list({
+          type: 'stripe_fee',
+          created: { gte: fromTs, lte: toTs },
+          limit: 100,
+          starting_after: after,
+        });
+        allFees = allFees.concat(page.data);
+        after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+        guard++;
+        if (guard > 20) break;
+      } while (after);
+    }
+    // Same client-side date-range defense as refunds.
+    allFees = allFees.filter(t => t.created >= fromTs && t.created <= toTs);
+
     // Look up customer info for all stripe customers in the result set (charges + refunds)
     const refundCustomerIds = allRefunds.map(r => (r.charge && typeof r.charge === 'object') ? r.charge.customer : null);
     const customerIds = [...new Set([...allCharges.map(c => c.customer), ...refundCustomerIds].filter(Boolean))];
@@ -1355,7 +1383,23 @@ router.get('/accounting/transactions', async (req, res) => {
       };
     });
 
-    const transactions = [...chargeTxns, ...refundTxns].sort((a, b) => a.date.localeCompare(b.date));
+    // Standalone Stripe account fees as negative entries. A balance transaction's
+    // amount/net are already signed (negative for a fee), and fee==0 because the
+    // transaction IS the fee — so we use them directly without negating.
+    const feeTxns = allFees.map(t => ({
+      date: new Date(t.created * 1000).toISOString().slice(0, 10),
+      customer_name: 'Stripe',
+      address: '',
+      description: t.description || 'Stripe fee',
+      gross_cents: t.amount,
+      fee_cents: 0,
+      net_cents: typeof t.net === 'number' ? t.net : t.amount,
+      stripe_charge_id: t.id,
+      stripe_customer_id: null,
+      is_fee: true
+    }));
+
+    const transactions = [...chargeTxns, ...refundTxns, ...feeTxns].sort((a, b) => a.date.localeCompare(b.date));
 
     res.json({
       from: fromDate.toISOString().slice(0, 10),
