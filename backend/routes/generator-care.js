@@ -122,7 +122,9 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
     // exceed it the lifetime total just slightly under-counts.
     const [pmResult, invoiceResult] = await Promise.allSettled([
       stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 }),
-      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 100 }),
+      // Expand the charge so we can report refund status per invoice (for the
+      // dashboard Refund button + Refunded/Partial chips).
+      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 100, expand: ['data.charge'] }),
     ]);
 
     // Payment method
@@ -146,14 +148,23 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
     if (invoiceResult.status === 'fulfilled') {
       const all = invoiceResult.value.data || [];
       lifetime_billed_cents = all.reduce((sum, inv) => sum + (inv.amount_paid || 0), 0);
-      recent_invoices = all.slice(0, 5).map((inv) => ({
-        id: inv.id,
-        created: inv.created,
-        amount_paid: inv.amount_paid || 0,
-        status: inv.status,
-        hosted_invoice_url: inv.hosted_invoice_url || null,
-        stripe_dashboard_url: `https://dashboard.stripe.com/invoices/${inv.id}`,
-      }));
+      recent_invoices = all.slice(0, 5).map((inv) => {
+        const ch = inv.charge && typeof inv.charge === 'object' ? inv.charge : null;
+        const chargeAmount = ch ? ch.amount : (inv.amount_paid || 0);
+        const amountRefunded = ch ? (ch.amount_refunded || 0) : 0;
+        return {
+          id: inv.id,
+          created: inv.created,
+          amount_paid: inv.amount_paid || 0,
+          status: inv.status,
+          hosted_invoice_url: inv.hosted_invoice_url || null,
+          stripe_dashboard_url: `https://dashboard.stripe.com/invoices/${inv.id}`,
+          charge_amount_cents: chargeAmount,
+          amount_refunded_cents: amountRefunded,
+          // Refundable: a paid invoice with a charge that isn't already fully refunded.
+          refundable: inv.status === 'paid' && !!ch && amountRefunded < chargeAmount,
+        };
+      });
     } else {
       console.error('[stripe-data] invoices.list failed:', invoiceResult.reason && invoiceResult.reason.message);
     }
@@ -544,17 +555,24 @@ router.post('/addons/:id/unmark-performed', async (req, res) => {
 
 // ===== REFUND HELPERS (shared by /addons/:id/refund + /adhoc-charges/:id/refund) =====
 
-async function executeStripeRefund({ paymentIntentId, originalAmountCents, requestedAmountCents, reason }) {
-  const refundAmount = requestedAmountCents || originalAmountCents;
-  if (!Number.isInteger(refundAmount) || refundAmount <= 0 || refundAmount > originalAmountCents) {
-    throw new Error(`refund amount must be between 1 cent and the original charge ($${(originalAmountCents/100).toFixed(2)})`);
+// Refund against a payment_intent OR a charge. originalAmountCents is the full
+// charge; alreadyRefundedCents (default 0) lets callers cap a partial top-up to
+// the remaining balance. requestedAmountCents omitted = refund the remainder.
+async function executeStripeRefund({ paymentIntentId, chargeId, originalAmountCents, alreadyRefundedCents = 0, requestedAmountCents, reason, metadata }) {
+  const maxRefundable = originalAmountCents - (alreadyRefundedCents || 0);
+  const refundAmount = requestedAmountCents || maxRefundable;
+  if (!Number.isInteger(refundAmount) || refundAmount <= 0 || refundAmount > maxRefundable) {
+    throw new Error(`refund amount must be between 1 cent and $${(maxRefundable/100).toFixed(2)}`);
   }
-  const refund = await stripe.refunds.create({
-    payment_intent: paymentIntentId,
+  const params = {
     amount: refundAmount,
     reason: 'requested_by_customer',
-    metadata: reason ? { bates_reason: String(reason).slice(0, 500) } : {},
-  });
+    metadata: { ...(reason ? { bates_reason: String(reason).slice(0, 500) } : {}), ...(metadata || {}) },
+  };
+  if (paymentIntentId) params.payment_intent = paymentIntentId;
+  else if (chargeId) params.charge = chargeId;
+  else throw new Error('no payment_intent or charge to refund against');
+  const refund = await stripe.refunds.create(params);
   return { refund, refundAmount };
 }
 
@@ -1149,6 +1167,66 @@ router.post('/adhoc-charges/:id/refund', async (req, res) => {
 });
 
 
+// POST /api/generator-care/invoices/:invoiceId/refund
+// Body: { amount_cents?, reason? }
+// Refunds a paid subscription/plan invoice's charge to the customer's card.
+// amount_cents omitted = full refund of the remaining (un-refunded) balance.
+// NOTE: refunding an invoice does NOT cancel the subscription — they're
+// independent actions (the customer keeps their plan unless separately canceled).
+router.post('/invoices/:invoiceId/refund', async (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+    const { amount_cents, reason } = req.body || {};
+
+    let invoice;
+    try {
+      invoice = await stripe.invoices.retrieve(invoiceId, { expand: ['charge'] });
+    } catch (e) {
+      return res.status(404).json({ error: 'invoice not found in Stripe: ' + (e && e.message ? e.message : 'unknown') });
+    }
+    if (invoice.status !== 'paid') {
+      return res.status(400).json({ error: `cannot refund invoice with status '${invoice.status}' (must be 'paid')` });
+    }
+    const charge = invoice.charge && typeof invoice.charge === 'object' ? invoice.charge : null;
+    if (!charge || !charge.id) {
+      return res.status(400).json({ error: 'invoice has no captured charge to refund' });
+    }
+    const originalAmountCents = charge.amount;
+    const alreadyRefundedCents = charge.amount_refunded || 0;
+    if (alreadyRefundedCents >= originalAmountCents) {
+      return res.status(400).json({ error: 'invoice is already fully refunded' });
+    }
+
+    let result;
+    try {
+      result = await executeStripeRefund({
+        chargeId: charge.id,
+        originalAmountCents,
+        alreadyRefundedCents,
+        requestedAmountCents: amount_cents,
+        reason,
+        metadata: { generator_invoice_id: invoiceId },
+      });
+    } catch (refundErr) {
+      return res.status(400).json({ error: refundErr.message });
+    }
+
+    // No DB row to annotate (invoices live in Stripe). Accounting visibility
+    // comes from the Stripe refund itself, surfaced by /accounting/transactions.
+    res.json({
+      ok: true,
+      refund_id: result.refund.id,
+      amount_cents: result.refundAmount,
+      stripe_status: result.refund.status,
+      invoice_id: invoiceId,
+    });
+  } catch (err) {
+    console.error('[generator-care] invoice refund error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // === ACCOUNTING ENDPOINTS ===
 
 // GET /accounting/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -1180,8 +1258,34 @@ router.get('/accounting/transactions', async (req, res) => {
       if (safety > 20) break;
     } while (starting_after);
 
-    // Look up customer info for all stripe customers in the result set
-    const customerIds = [...new Set(allCharges.map(c => c.customer).filter(Boolean))];
+    // Page through refunds in the same range too. Refunds don't change the
+    // original charge's amount, so without surfacing them here, money returned to
+    // customers (plan/invoice refunds AND ad-hoc refunds) would be invisible in
+    // the books — the tab would overstate net revenue.
+    let allRefunds = [];
+    {
+      let after = undefined;
+      let guard = 0;
+      do {
+        const page = await stripe.refunds.list({
+          created: { gte: fromTs, lte: toTs },
+          limit: 100,
+          starting_after: after,
+          expand: ['data.balance_transaction', 'data.charge'],
+        });
+        allRefunds = allRefunds.concat(page.data);
+        after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+        guard++;
+        if (guard > 20) break;
+      } while (after);
+    }
+    // Defensive: keep only refunds actually created in range, in case the list
+    // endpoint ignores the created filter.
+    allRefunds = allRefunds.filter(r => r.created >= fromTs && r.created <= toTs);
+
+    // Look up customer info for all stripe customers in the result set (charges + refunds)
+    const refundCustomerIds = allRefunds.map(r => (r.charge && typeof r.charge === 'object') ? r.charge.customer : null);
+    const customerIds = [...new Set([...allCharges.map(c => c.customer), ...refundCustomerIds].filter(Boolean))];
     let customerMap = {};
     if (customerIds.length > 0) {
       const { data: subs, error: subErr } = await supabaseAdmin
@@ -1194,7 +1298,7 @@ router.get('/accounting/transactions', async (req, res) => {
       });
     }
 
-    const transactions = allCharges
+    const chargeTxns = allCharges
       .filter(c => c.status === 'succeeded')
       .map(c => {
         const bt = c.balance_transaction;
@@ -1221,10 +1325,37 @@ router.get('/accounting/transactions', async (req, res) => {
           fee_cents: bt ? bt.fee : 0,
           net_cents: bt ? bt.net : c.amount,
           stripe_charge_id: c.id,
-          stripe_customer_id: c.customer
+          stripe_customer_id: c.customer,
+          is_refund: false
         };
-      })
-      .sort((a, b) => a.date.localeCompare(b.date));
+      });
+
+    // Refunds as negative entries. Stripe doesn't return the original processing
+    // fee on a standard refund (balance_transaction.fee is 0), so net is the
+    // negative refund amount — correctly leaving the business out the original fee.
+    const refundTxns = allRefunds.map(r => {
+      const bt = r.balance_transaction && typeof r.balance_transaction === 'object' ? r.balance_transaction : null;
+      const ch = r.charge && typeof r.charge === 'object' ? r.charge : null;
+      const custId = ch ? ch.customer : null;
+      const cust = customerMap[custId] || {};
+      const address = [cust.install_address, cust.install_city, cust.install_state, cust.install_zip].filter(Boolean).join(', ');
+      const isInvoice = !!(ch && ch.invoice);
+      const isAdhoc = !!(ch && ch.metadata && ch.metadata.adhoc_charge_id);
+      return {
+        date: new Date(r.created * 1000).toISOString().slice(0, 10),
+        customer_name: cust.name || '(unmatched)',
+        address,
+        description: 'Refund' + (isInvoice ? ' (plan/invoice)' : isAdhoc ? ' (ad-hoc charge)' : ''),
+        gross_cents: -r.amount,
+        fee_cents: bt ? bt.fee : 0,
+        net_cents: bt ? bt.net : -r.amount,
+        stripe_charge_id: ch ? ch.id : (typeof r.charge === 'string' ? r.charge : null),
+        stripe_customer_id: custId,
+        is_refund: true
+      };
+    });
+
+    const transactions = [...chargeTxns, ...refundTxns].sort((a, b) => a.date.localeCompare(b.date));
 
     res.json({
       from: fromDate.toISOString().slice(0, 10),

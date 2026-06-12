@@ -1103,12 +1103,27 @@
             const dateStr = inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
             const amt = `$${((inv.amount_paid || 0) / 100).toFixed(2)}`;
             const chipCls = inv.status === 'paid' ? 'gc-chip-paid' : (inv.status === 'open' ? 'gc-chip-open' : 'gc-chip');
+            const chargeAmt = inv.charge_amount_cents || inv.amount_paid || 0;
+            const refunded = inv.amount_refunded_cents || 0;
+            // Refund-status chip next to the paid chip.
+            let refundChip = '';
+            if (refunded > 0 && refunded >= chargeAmt) {
+              refundChip = ` <span class="gc-chip gc-chip-refunded">Refunded</span>`;
+            } else if (refunded > 0) {
+              refundChip = ` <span class="gc-chip gc-chip-partial">Partial refund $${(refunded / 100).toFixed(2)}</span>`;
+            }
+            // Refund button only when the backend says it's refundable (paid, has a
+            // charge, not already fully refunded). Hidden on open/refunded invoices.
+            const refundBtn = inv.refundable
+              ? `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-invoice="${inv.id}" data-charge-amount="${chargeAmt}" data-refunded="${refunded}" data-amount="${amt}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`
+              : '';
             return `<div class="gc-card-row">
               <div>
                 <div class="gc-meta-value">${escapeHtml(dateStr)} <span style="color:#6b7280;font-weight:500;">&middot; ${amt}</span></div>
-                <div style="margin-top:4px;"><span class="gc-chip ${chipCls}">${escapeHtml(inv.status || '')}</span></div>
+                <div style="margin-top:4px;"><span class="gc-chip ${chipCls}">${escapeHtml(inv.status || '')}</span>${refundChip}</div>
               </div>
-              <div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                ${refundBtn}
                 <a href="${inv.stripe_dashboard_url}" target="_blank" rel="noopener noreferrer" class="gc-btn gc-btn-ghost gc-btn-sm" style="text-decoration:none;">View in Stripe &#8599;</a>
               </div>
             </div>`;
@@ -1117,6 +1132,14 @@
           invEl.innerHTML = rows + resendBtn;
           const resend = body.querySelector('#gc-resend-invoice-btn');
           if (resend) resend.addEventListener('click', () => resendLastInvoice(subscriptionId, resend));
+          body.querySelectorAll('[data-refund-invoice]').forEach(btn => {
+            btn.addEventListener('click', () => refundInvoice(
+              btn.dataset.refundInvoice,
+              parseInt(btn.dataset.chargeAmount, 10) || 0,
+              parseInt(btn.dataset.refunded, 10) || 0,
+              subscriptionId
+            ));
+          });
         }
       }
     } catch (err) {
@@ -1257,6 +1280,59 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Refund failed:', err);
+      showStatus(`Refund failed: ${err.message}`, 'error');
+    }
+  }
+
+  // Refund a paid subscription/plan invoice. Independent of cancellation — the
+  // confirm copy makes that explicit so Amy doesn't conflate the two.
+  async function refundInvoice(invoiceId, chargeAmountCents, alreadyRefundedCents, subscriptionId) {
+    const remaining = (chargeAmountCents || 0) - (alreadyRefundedCents || 0);
+    if (remaining <= 0) {
+      alert('This invoice is already fully refunded.');
+      return;
+    }
+    const remainingDollars = (remaining / 100).toFixed(2);
+    const fullDollars = ((chargeAmountCents || 0) / 100).toFixed(2);
+
+    const promptMsg = alreadyRefundedCents > 0
+      ? `Refund plan charge.\n\nInvoice total: $${fullDollars}\nAlready refunded: $${(alreadyRefundedCents / 100).toFixed(2)}\nMax additional refund: $${remainingDollars}\n\nAmount (blank = full $${remainingDollars}):`
+      : `Refund plan charge.\n\nInvoice total: $${fullDollars}\n\nAmount (blank = full $${fullDollars}):`;
+    const amtStr = prompt(promptMsg, '');
+    if (amtStr === null) return;
+
+    let amount_cents = null;
+    const trimmed = (amtStr || '').trim();
+    if (trimmed) {
+      const num = parseFloat(trimmed);
+      if (!Number.isFinite(num) || num <= 0 || Math.round(num * 100) > remaining) {
+        alert(`Invalid amount. Must be between 0.01 and ${remainingDollars}.`);
+        return;
+      }
+      amount_cents = Math.round(num * 100);
+    }
+
+    const reasonStr = prompt('Optional reason for refund (or leave blank):', '');
+    if (reasonStr === null) return;
+
+    const confirmAmt = amount_cents ? (amount_cents / 100).toFixed(2) : remainingDollars;
+    if (!confirm(`Refund this $${confirmAmt} plan charge to the customer's card? This does not cancel their subscription.\n\nRefunding and canceling are separate actions - the customer keeps their plan unless you cancel it in the Danger Zone. The refund posts to the card within a few business days and cannot be undone (you would have to re-charge them).`)) return;
+
+    try {
+      const r = await fetch(`${API_BASE}/api/generator-care/invoices/${invoiceId}/refund`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount_cents, reason: (reasonStr || '').trim() || null }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showStatus(`Refund failed: ${data.error || `HTTP ${r.status}`}`, 'error');
+        return;
+      }
+      showStatus(`Refunded $${(data.amount_cents / 100).toFixed(2)} to the customer's card.`, 'success');
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Invoice refund failed:', err);
       showStatus(`Refund failed: ${err.message}`, 'error');
     }
   }
