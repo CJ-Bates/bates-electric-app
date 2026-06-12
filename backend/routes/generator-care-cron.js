@@ -164,7 +164,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  const planLabel = (p) => p === 'semi_annual' ? 'Semi-Annual' : 'Annual';
  const genClassLabel = (c) => ({
  air_cooled: 'Air Cooled',
- liquid_22_38: 'Liquid 22-38 KW',
+ liquid_22_38: 'Liquid 22-45 KW',
  liquid_48_150: 'Liquid 48-150 KW',
  })[c] || c;
 
