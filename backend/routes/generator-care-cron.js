@@ -160,7 +160,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  ? `Generator Care: ${overdue.length} OVERDUE, ${upcoming.length} due soon`
  : `Generator Care: ${upcoming.length} visit${upcoming.length === 1 ? '' : 's'} due in the next 14 days`;
 
- const dashboardUrl = 'https://bates-electric-app.netlify.app/generator-care.html';
+ const dashboardUrl = 'https://app.bates-electric.com/generator-care.html';
 
  const planLabel = (p) => p === 'semi_annual' ? 'Semi-Annual' : 'Annual';
  const genClassLabel = (c) => ({
@@ -368,7 +368,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
 // daily email arrived) with a single "all clear" line. Sending this every quiet
 // day is what keeps a missing email meaningful as an outage signal.
 function buildQuietEmail({ todayStr }) {
-  const dashboardUrl = 'https://bates-electric-app.netlify.app/generator-care.html';
+  const dashboardUrl = 'https://app.bates-electric.com/generator-care.html';
   const dateLine = new Date(todayStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const subject = 'Generator Care: all quiet - nothing due today';
 
