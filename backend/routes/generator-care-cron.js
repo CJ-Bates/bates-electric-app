@@ -123,7 +123,8 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
       : buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, pastDue, todayStr });
 
  if (!SENDGRID_KEY) {
- return res.status(500).json({ error: 'SENDGRID_API_KEY not configured', preview: { subject, text } });
+ // Do NOT echo the rendered digest (subject/text contain customer names + phones).
+ return res.status(500).json({ error: 'SENDGRID_API_KEY not configured' });
  }
 
  await sgMail.send({
@@ -142,7 +143,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  // Signal failure to Healthchecks first so we hear about a crashed cron.
  pingHealthcheck('/fail');
  console.error('[gc-cron] daily-email error:', err && (err.response?.body || err.message));
- res.status(500).json({ error: err.message });
+ res.status(500).json({ error: 'Server error' });
  }
 });
 

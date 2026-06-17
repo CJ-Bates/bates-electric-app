@@ -46,7 +46,7 @@ router.get('/subscriptions', async (req, res) => {
     res.json({ subscriptions: data || [] });
   } catch (err) {
     console.error('[generator-care] subscriptions error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -89,7 +89,7 @@ router.get('/subscriptions/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] subscription detail error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -172,7 +172,7 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
     res.json({ payment_method, lifetime_billed_cents, recent_invoices });
   } catch (err) {
     console.error('[generator-care] stripe-data error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -226,7 +226,7 @@ router.post('/subscriptions/:id/resend-invoice', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] resend-invoice error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -298,7 +298,7 @@ router.post('/visits/:id/complete', async (req, res) => {
     res.json({ ok: true, visit: updated });
   } catch (err) {
     console.error('[generator-care] visit complete error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -341,7 +341,7 @@ router.patch('/subscriptions/:id', async (req, res) => {
     res.json({ ok: true, subscription: updated });
   } catch (err) {
     console.error('[generator-care] subscription patch error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -374,7 +374,7 @@ router.patch('/customers/:id', async (req, res) => {
     res.json({ ok: true, customer: updated });
   } catch (err) {
     console.error('[generator-care] customer patch error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -426,7 +426,7 @@ router.post('/visits/:id/confirm', async (req, res) => {
     res.json({ ok: true, visit: updated });
   } catch (err) {
     console.error('[generator-care] confirm visit error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -501,7 +501,7 @@ router.post('/addons/:id/mark-performed', async (req, res) => {
     res.json({ ok: true, addon: updated, invoice_item_id: item.id });
   } catch (err) {
     console.error('[generator-care] mark-performed error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -548,7 +548,7 @@ router.post('/addons/:id/unmark-performed', async (req, res) => {
     res.json({ ok: true, addon: updated });
   } catch (err) {
     console.error('[generator-care] unmark-performed error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -637,7 +637,7 @@ router.post('/addons/:id/refund', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] addon refund error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -725,7 +725,7 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] cancel subscription error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -799,7 +799,7 @@ router.get('/subscriptions/:id/available-addons', async (req, res) => {
     res.json({ ok: true, gen_class: sub.gen_class, addons: available });
   } catch (err) {
     console.error('[generator-care] available-addons error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -844,7 +844,7 @@ router.post('/subscriptions/:id/add-addon', async (req, res) => {
     res.json({ ok: true, addon: inserted });
   } catch (err) {
     console.error('[generator-care] add-addon error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -886,7 +886,7 @@ router.post('/addons/:id/remove', async (req, res) => {
     res.json({ ok: true, addon: updated });
   } catch (err) {
     console.error('[generator-care] remove addon error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1059,7 +1059,7 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
     return res.json({ ok: true, adhoc_charge: updated, invoice_item_id: item.id });
   } catch (err) {
     console.error('[generator-care] adhoc-charge error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1111,7 +1111,7 @@ router.post('/adhoc-charges/:id/cancel', async (req, res) => {
     res.json({ ok: true, adhoc_charge: updated });
   } catch (err) {
     console.error('[generator-care] adhoc-charges cancel error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1162,7 +1162,7 @@ router.post('/adhoc-charges/:id/refund', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] adhoc-charges refund error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1191,6 +1191,24 @@ router.post('/invoices/:invoiceId/refund', async (req, res) => {
     if (!charge || !charge.id) {
       return res.status(400).json({ error: 'invoice has no captured charge to refund' });
     }
+
+    // Ownership guard (prevent IDOR): only refund invoices that belong to a
+    // Generator Care customer. Without this, a valid office token could refund
+    // ANY invoice id in the connected Stripe account.
+    const invoiceCustomerId = typeof invoice.customer === 'string'
+      ? invoice.customer
+      : (invoice.customer && invoice.customer.id) || null;
+    const { data: ownerSub, error: ownerErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id')
+      .eq('stripe_customer_id', invoiceCustomerId)
+      .limit(1)
+      .maybeSingle();
+    if (ownerErr) throw ownerErr;
+    if (!invoiceCustomerId || !ownerSub) {
+      return res.status(403).json({ error: 'invoice does not belong to a Generator Care customer' });
+    }
+
     const originalAmountCents = charge.amount;
     const alreadyRefundedCents = charge.amount_refunded || 0;
     if (alreadyRefundedCents >= originalAmountCents) {
@@ -1222,7 +1240,7 @@ router.post('/invoices/:invoiceId/refund', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] invoice refund error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1414,7 +1432,7 @@ router.get('/accounting/transactions', async (req, res) => {
     });
   } catch (err) {
     console.error('[accounting] transactions error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1467,7 +1485,7 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
     });
   } catch (err) {
     console.error('[portal-session] error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1547,7 +1565,7 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
     });
   } catch (err) {
     console.error('[resend-welcome] error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
