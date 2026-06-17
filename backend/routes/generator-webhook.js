@@ -186,6 +186,10 @@ async function handleSubscriptionCreated(subscription) {
       annual_price_cents: annualPriceCents,
       signup_date: todayStr,
       next_visit_due: nextStr,
+      // Acquisition channel (from the signup form / marketing link). Null for
+      // pre-005 signups; the metrics view reports "collecting since" until data accrues.
+      signup_source: meta.signup_source || null,
+      signup_utm_source: meta.signup_utm_source || null,
       raw_metadata: meta,
     })
     .select()
@@ -260,9 +264,13 @@ async function handleSubscriptionUpdated(subscription) {
     return;
   }
 
+  const updates = { status: dbStatus };
+  // Reactivation clears the cancellation stamp so it isn't counted as churned.
+  if (dbStatus === 'active') updates.canceled_at = null;
+
   const { data, error } = await supabase
     .from('generator_subscriptions')
-    .update({ status: dbStatus })
+    .update(updates)
     .eq('stripe_subscription_id', subscription.id)
     .select('id, status')
     .maybeSingle();
@@ -274,6 +282,19 @@ async function handleSubscriptionUpdated(subscription) {
     console.log(`[generator-webhook] subscription.updated: no matching DB row for ${subscription.id}`);
     return;
   }
+
+  // Stamp canceled_at only the FIRST time the sub enters canceled — a repeat
+  // 'updated' delivery (or the later 'deleted' backstop) must not move the
+  // original cancellation date the churn metrics rely on.
+  if (dbStatus === 'canceled') {
+    const { error: stampErr } = await supabase
+      .from('generator_subscriptions')
+      .update({ canceled_at: new Date().toISOString() })
+      .eq('stripe_subscription_id', subscription.id)
+      .is('canceled_at', null);
+    if (stampErr) console.error('[generator-webhook] subscription.updated canceled_at stamp error:', stampErr.message);
+  }
+
   console.log(`[generator-webhook] subscription ${data.id} status -> ${dbStatus} (stripe: ${subscription.status}, cancel_at_period_end: ${subscription.cancel_at_period_end})`);
 }
 
@@ -281,9 +302,11 @@ async function handleSubscriptionDeleted(subscription) {
   // Final terminal event from Stripe — sub is fully gone. Mark canceled if
   // not already (the dashboard cancel + the updated handler usually beat us
   // here, but this is the backstop).
+  // The .neq filter means we only touch rows transitioning IN to canceled, so
+  // stamping canceled_at here can't overwrite an earlier (dashboard/updated) one.
   const { error } = await supabase
     .from('generator_subscriptions')
-    .update({ status: 'canceled' })
+    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
     .eq('stripe_subscription_id', subscription.id)
     .neq('status', 'canceled');
   if (error) {
