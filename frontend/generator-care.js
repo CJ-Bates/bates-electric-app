@@ -169,9 +169,16 @@
     })[c] || c;
   }
   function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
+    // Must be quote-safe: this value is interpolated into double-quoted HTML
+    // attributes (data-desc, data-label, etc.), not just element text. The
+    // textContent/innerHTML trick does NOT escape " or ', which allowed
+    // attribute-breakout XSS. Escape the full set, matching accounting.js.
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
   function fmtDate(dateStr) {
     if (!dateStr) return '—';
