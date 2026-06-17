@@ -6,7 +6,7 @@
 // so Stripe signature verification works.
 
 const express = require('express');
-const crypto = require('crypto');
+const Stripe = require('stripe');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
@@ -15,24 +15,7 @@ const router = express.Router();
 
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-
-// Verify Stripe signature header
-function verifySignature(payload, header, secret) {
-  if (!header || !secret) return false;
-  const parts = header.split(',').reduce((acc, p) => {
-    const [k, v] = p.split('=');
-    acc[k] = v;
-    return acc;
-  }, {});
-  if (!parts.t || !parts.v1) return false;
-  const signed = parts.t + '.' + payload;
-  const expected = crypto.createHmac('sha256', secret).update(signed).digest('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(parts.v1, 'hex'), Buffer.from(expected, 'hex'));
-  } catch {
-    return false;
-  }
-}
+const stripe = new Stripe(STRIPE_SECRET);
 
 // Helper: fetch a Stripe object by ID
 async function stripeGet(path) {
@@ -62,19 +45,23 @@ async function stripePost(path, params) {
 
 // POST /webhooks/stripe - Stripe sends events here
 router.post('/', async (req, res) => {
-  const payload = req.body.toString('utf8');
   const sig = req.headers['stripe-signature'];
 
-  if (WEBHOOK_SECRET && !verifySignature(payload, sig, WEBHOOK_SECRET)) {
-    console.error('[generator-webhook] bad signature');
-    return res.status(400).send('Invalid signature');
+  // Fail closed: never process an unsigned/unverifiable event. If the secret is
+  // missing we refuse outright rather than silently skipping verification.
+  if (!WEBHOOK_SECRET) {
+    console.error('[generator-webhook] STRIPE_WEBHOOK_SECRET is not set — refusing to process webhooks');
+    return res.status(500).send('Webhook secret not configured');
   }
 
+  // constructEvent verifies the HMAC against the RAW body in constant time and
+  // enforces Stripe's ~5-minute timestamp tolerance (replay protection).
   let event;
   try {
-    event = JSON.parse(payload);
-  } catch {
-    return res.status(400).send('Invalid JSON');
+    event = stripe.webhooks.constructEvent(req.body, sig, WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('[generator-webhook] signature verification failed:', err && err.message);
+    return res.status(400).send('Webhook signature verification failed');
   }
 
   console.log(`[generator-webhook] received ${event.type}`);
@@ -105,7 +92,7 @@ router.post('/', async (req, res) => {
       method: 'POST',
       user: 'stripe-webhook',
     }).catch(() => {});
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Webhook handler error' });
   }
 });
 
