@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+const helmet = require('helmet');
 
 const authRoutes = require('./routes/auth');
 const inspectionRoutes = require('./routes/inspections');
@@ -18,7 +19,29 @@ if (process.env.SENTRY_DSN) initSentry();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Security headers. CSP is disabled here because this Express app also serves the
+// PWA static files below, whose inline scripts/styles a default CSP would break;
+// the static signup site sets its own CSP at the Netlify edge. Frame embedding denied.
+app.use(helmet({ contentSecurityPolicy: false, frameguard: { action: 'deny' } }));
+
+// CORS restricted to our own origins. Auth is a bearer token (no cookies), so
+// requests with no Origin header (Stripe webhook, cron-job.org, curl, server-to-
+// server) are allowed; cross-origin browser requests from anywhere else are not.
+const ALLOWED_ORIGINS = [
+  'https://app.bates-electric.com',
+  'https://generator.bates-electric.com',
+  'https://bates-electric-app.netlify.app',
+  'https://bates-generator.netlify.app',
+];
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true); // local dev
+    return cb(null, false);
+  },
+}));
+
 // Stripe webhook must receive raw body for signature verification
 app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), generatorWebhookRouter);
 
