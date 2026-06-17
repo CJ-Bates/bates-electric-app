@@ -33,6 +33,16 @@
     if (el) { el.hidden = true; el.textContent = ''; }
   };
 
+  // If a dashboard page bounced us here on an expired/invalid session, surface
+  // the reason on the sign-in form (default-active tab) and clear the one-shot flag.
+  try {
+    const expiredMsg = sessionStorage.getItem('bates.auth.message');
+    if (expiredMsg) {
+      sessionStorage.removeItem('bates.auth.message');
+      showStatus('status', expiredMsg, 'error');
+    }
+  } catch (e) {}
+
   // --- Password toggle ---
   const passwordEl = document.getElementById('password');
   const toggleBtn = document.getElementById('toggle-password');

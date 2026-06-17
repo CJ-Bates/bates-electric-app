@@ -17,6 +17,62 @@
     }
   } catch (e) {}
 
+  // ---- Shared authenticated fetch + session-expiry handling ----------------
+  // Centralizes the "token expired" UX for every dashboard page: any
+  // authenticated API call that comes back 401 clears the stored token and
+  // bounces the user to login with a short message, instead of leaving them on
+  // a broken page firing "Failed to load" / "Role check failed" toasts.
+  // Exposed as window.BatesAuth so the per-page scripts (loaded after this one)
+  // can route their fetches through it.
+  (function setupAuthHelper() {
+    const TOKEN_KEY = 'bates.auth.token';
+    const DEFAULT_EXPIRED_MSG = 'Your session expired — please sign in again.';
+
+    const getToken = () =>
+      localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
+
+    const onLoginPage = () => {
+      const p = window.location.pathname;
+      return p === '/' || /(^|\/)index\.html$/i.test(p);
+    };
+
+    // Clear both token stores and redirect to login (once). Returns true if it
+    // navigated, false if suppressed because we're already on the login page
+    // (guards against a redirect loop).
+    function redirectToLogin(message) {
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(TOKEN_KEY);
+      } catch (e) {}
+      if (onLoginPage()) return false;
+      try { sessionStorage.setItem('bates.auth.message', message || DEFAULT_EXPIRED_MSG); } catch (e) {}
+      window.location.replace('index.html');
+      return true;
+    }
+
+    // Drop-in fetch wrapper. Adds the bearer token if the caller didn't, and on
+    // 401 triggers clear-token-and-redirect. When it redirects it returns a
+    // promise that never resolves, so the caller halts (no stray error toast)
+    // while the page navigates away. Every non-401 response is returned
+    // untouched — the happy path and all other status handling are unchanged.
+    async function authFetch(url, options) {
+      const opts = options || {};
+      const headers = Object.assign({}, opts.headers || {});
+      const token = getToken();
+      if (token && !('Authorization' in headers)) {
+        headers['Authorization'] = 'Bearer ' + token;
+      }
+      const res = await fetch(url, Object.assign({}, opts, { headers }));
+      if (res.status === 401) {
+        if (redirectToLogin()) return new Promise(() => {}); // navigating away; stop the caller
+        throw new Error('Unauthorized'); // already on login — let caller handle rather than hang
+      }
+      return res;
+    }
+
+    window.BatesAuth = { authFetch, redirectToLogin, getToken, onLoginPage };
+  })();
+
   // SVG icon definitions
   const svgIcons = {
     hamburger: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>`,
