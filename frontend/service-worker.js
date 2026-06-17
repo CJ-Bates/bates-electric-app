@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v62';
+const CACHE = 'bates-shell-v63';
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,8 @@ const ASSETS = [
   './generator-care.js',
   './accounting.html',
   './accounting.js',
+  './metrics.html',
+  './metrics.js',
   './settings.html',
   './documents.html',
   './safety-manual.html',

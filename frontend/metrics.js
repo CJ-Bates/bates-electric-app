@@ -1,0 +1,281 @@
+// frontend/metrics.js
+// Metrics / Insights view for the Generator Care program.
+// Mirrors the auth + fetch pattern used by accounting.js; charts via Chart.js.
+// All aggregation happens server-side (GET /api/generator-care/metrics); this
+// file only formats numbers and draws charts.
+
+(() => {
+  const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? 'http://localhost:4000'
+    : 'https://bates-electric-app.onrender.com';
+  const TOKEN_KEY = 'bates.auth.token';
+
+  const getToken = () =>
+    localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
+
+  const token = getToken();
+  if (!token) {
+    window.location.replace('index.html');
+    return;
+  }
+
+  // ---- Palette (Bates navy + complements) ----
+  const NAVY = '#1F3A5F';
+  const BLUE = '#5B95C9';
+  const CATEGORICAL = ['#1F3A5F', '#5B95C9', '#8FB3D9', '#0F766E', '#B45309', '#6b7280', '#9333EA', '#0EA5E9'];
+
+  const CHANNEL_LABELS = {
+    existing_customer: 'Installed/serviced by Bates',
+    phone_call: 'Phone call from Bates',
+    postcard_mail: 'Postcard / mail',
+    website: 'Website',
+    referral: 'Referral',
+    other: 'Other',
+  };
+
+  // ---- Helpers ----
+  const $ = (id) => document.getElementById(id);
+  const fmtMoneyWhole = (cents) =>
+    '$' + Math.round((cents || 0) / 100).toLocaleString('en-US');
+  const fmtPct = (frac, digits = 0) =>
+    (100 * (frac || 0)).toFixed(digits) + '%';
+  const channelLabel = (k) =>
+    CHANNEL_LABELS[k] || String(k).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const monthLabel = (ym) => {
+    const [y, m] = String(ym).split('-').map(Number);
+    if (!y || !m) return ym;
+    return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short' }) + " '" + String(y).slice(2);
+  };
+  const niceDate = (ymd) => {
+    if (!ymd) return '';
+    const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number);
+    if (!y) return ymd;
+    return new Date(y, (m || 1) - 1, d || 1).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  function showStatus(msg, kind) {
+    const el = $('status');
+    el.textContent = msg;
+    el.className = 'status ' + (kind || '');
+    el.hidden = false;
+    if (kind !== 'error') setTimeout(() => { el.hidden = true; }, 3500);
+  }
+
+  // ---- Role check (must be office) ----
+  async function checkRole() {
+    try {
+      const r = await fetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error('Failed to get profile');
+      const { profile } = await r.json();
+      if (profile.role !== 'office') {
+        showStatus('Access denied. Office role required.', 'error');
+        setTimeout(() => window.location.replace('home.html'), 1500);
+      }
+    } catch (err) {
+      console.error('Role check failed:', err);
+    }
+  }
+
+  // ---- Chart lifecycle: keep refs so Refresh can destroy before redraw ----
+  const charts = {};
+  function draw(key, canvasId, config) {
+    if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+    const el = $(canvasId);
+    if (!el || typeof Chart === 'undefined') return;
+    // Un-hide + clear any empty-state note left from a previous render (Refresh-safe).
+    el.style.display = '';
+    const prevNote = el.parentElement && el.parentElement.querySelector('.m-empty-note');
+    if (prevNote) prevNote.remove();
+    charts[key] = new Chart(el.getContext('2d'), config);
+  }
+  // Shared options
+  const baseBar = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+  };
+  const baseHBar = {
+    indexAxis: 'y',
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+  };
+
+  // ---- Load + render ----
+  async function loadMetrics() {
+    const from = $('from-date').value;
+    const to = $('to-date').value;
+    $('loading').hidden = false;
+    $('content').hidden = true;
+    try {
+      const url = `${API_BASE}/api/generator-care/metrics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      render(data);
+      $('content').hidden = false;
+    } catch (err) {
+      console.error('Load failed:', err);
+      showStatus('Failed to load metrics: ' + err.message, 'error');
+    } finally {
+      $('loading').hidden = true;
+    }
+  }
+
+  function render(data) {
+    const h = data.headline || {};
+
+    // ----- Headline stat cards -----
+    $('stat-active').textContent = (h.active_subscriptions || 0).toLocaleString('en-US');
+    $('stat-active-sub').innerHTML = '&nbsp;';
+
+    $('stat-new').textContent = (h.new_this_month || 0).toLocaleString('en-US');
+    const nm = h.new_this_month || 0, lm = h.new_last_month || 0;
+    let deltaHtml;
+    if (lm === 0) {
+      deltaHtml = `vs ${lm} last month`;
+    } else {
+      const pct = Math.round(((nm - lm) / lm) * 100);
+      const cls = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
+      const arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '▬');
+      deltaHtml = `<span class="${cls}">${arrow} ${Math.abs(pct)}%</span> vs last month (${lm})`;
+    }
+    $('stat-new-sub').innerHTML = deltaHtml;
+
+    $('stat-arr').textContent = fmtMoneyWhole(h.arr_cents);
+    $('stat-attach').textContent = fmtPct(h.attach_rate);
+
+    // ----- Signups over time (bar) -----
+    const sm = data.signups_by_month || [];
+    draw('signups', 'chart-signups', {
+      type: 'bar',
+      data: {
+        labels: sm.map((p) => monthLabel(p.month)),
+        datasets: [{ data: sm.map((p) => p.count), backgroundColor: NAVY, borderRadius: 4, maxBarThickness: 46 }],
+      },
+      options: baseBar,
+    });
+    $('signups-note').textContent =
+      `By month signed up · ${niceDate(data.from)} – ${niceDate(data.to)}`;
+
+    // ----- Plan mix (doughnut) -----
+    const pm = (data.plan_mix || []).filter((p) => p.count > 0);
+    if (pm.length) {
+      draw('plan', 'chart-plan', {
+        type: 'doughnut',
+        data: {
+          labels: pm.map((p) => p.label),
+          datasets: [{ data: pm.map((p) => p.count), backgroundColor: [NAVY, BLUE, '#8FB3D9'] }],
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
+      });
+    } else {
+      draw('plan', 'chart-plan', emptyDoughnut());
+    }
+
+    // ----- Generator class (horizontal bar) -----
+    const gc = data.gen_class_mix || [];
+    draw('genclass', 'chart-genclass', {
+      type: 'bar',
+      data: {
+        labels: gc.map((p) => p.label),
+        datasets: [{ data: gc.map((p) => p.count), backgroundColor: NAVY, borderRadius: 4 }],
+      },
+      options: baseHBar,
+    });
+
+    // ----- Add-on popularity (horizontal bar) -----
+    const ap = data.addon_popularity || [];
+    if (ap.length) {
+      draw('addons', 'chart-addons', {
+        type: 'bar',
+        data: {
+          labels: ap.map((p) => p.label),
+          datasets: [{ data: ap.map((p) => p.count), backgroundColor: BLUE, borderRadius: 4 }],
+        },
+        options: baseHBar,
+      });
+    } else {
+      emptyPanel('addon-wrap', 'No add-ons on active subscriptions yet.');
+    }
+
+    // ----- Cancellations -----
+    const churn = data.churn || {};
+    const cbm = churn.by_month || [];
+    const churnPct = fmtPct(churn.overall_rate, 1);
+    $('churn-note').innerHTML =
+      `Overall churn <strong>${churnPct}</strong> · ${churn.canceled_total || 0} canceled all-time · ${churn.canceled_in_range || 0} in range`;
+    if (churn.tracking_since) {
+      draw('churn', 'chart-churn', {
+        type: 'bar',
+        data: {
+          labels: cbm.map((p) => monthLabel(p.month)),
+          datasets: [{ data: cbm.map((p) => p.count), backgroundColor: '#B45309', borderRadius: 4, maxBarThickness: 46 }],
+        },
+        options: baseBar,
+      });
+    } else {
+      emptyPanel('churn-wrap',
+        'No cancellations recorded with a date yet. Cancellation dates are tracked going forward, so the monthly trend starts filling in from now.');
+    }
+
+    // ----- Signups by channel (horizontal bar) -----
+    const ch = data.channel || {};
+    const cb = ch.breakdown || [];
+    if (cb.length) {
+      draw('channel', 'chart-channel', {
+        type: 'bar',
+        data: {
+          labels: cb.map((p) => channelLabel(p.source)),
+          datasets: [{ data: cb.map((p) => p.count), backgroundColor: cb.map((_, i) => CATEGORICAL[i % CATEGORICAL.length]) }],
+        },
+        options: baseHBar,
+      });
+      $('channel-note').textContent = ch.collecting_since
+        ? `How customers heard about us · collecting since ${niceDate(ch.collecting_since)}`
+        : 'How customers heard about us';
+    } else {
+      emptyPanel('channel-wrap', ch.collecting_since
+        ? `No "how did you hear about us" answers in this range yet (collecting since ${niceDate(ch.collecting_since)}).`
+        : 'Channel data starts collecting once new signups answer "How did you hear about us?" on the signup form.');
+    }
+  }
+
+  // Show a plain note in a panel (empty state) without destroying the canvas,
+  // so a later Refresh with real data can redraw it.
+  function emptyPanel(wrapId, msg) {
+    const wrap = $(wrapId);
+    if (!wrap) return;
+    const canvas = wrap.querySelector('canvas');
+    for (const k of Object.keys(charts)) {
+      if (charts[k] && charts[k].canvas === canvas) { charts[k].destroy(); delete charts[k]; }
+    }
+    if (canvas) canvas.style.display = 'none';
+    let note = wrap.querySelector('.m-empty-note');
+    if (!note) { note = document.createElement('div'); note.className = 'm-empty-note'; wrap.appendChild(note); }
+    note.textContent = msg;
+    note.style.display = '';
+  }
+
+  function emptyDoughnut() {
+    return {
+      type: 'doughnut',
+      data: { labels: ['No active subs'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } },
+    };
+  }
+
+  // ---- Init ----
+  window.addEventListener('DOMContentLoaded', () => {
+    const today = new Date();
+    const start = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+    $('from-date').value = start.toISOString().slice(0, 10);
+    $('to-date').value = today.toISOString().slice(0, 10);
+
+    $('apply-btn').addEventListener('click', loadMetrics);
+    $('refresh-btn').addEventListener('click', loadMetrics);
+
+    checkRole();
+    loadMetrics();
+  });
+})();
