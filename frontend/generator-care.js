@@ -26,7 +26,7 @@
   // ---- Role check (must be office) ----
   async function checkRole() {
     try {
-      const r = await fetch(`${API_BASE}/me`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error('Failed to get profile');
@@ -51,7 +51,7 @@
   async function loadSubscriptions() {
     showLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -497,7 +497,7 @@
     body.innerHTML = renderInitialSkeleton();
 
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -568,7 +568,7 @@
           saveNvBtn.disabled = true;
           saveNvBtn.textContent = 'Saving…';
           try {
-            const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
+            const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
               method: 'PATCH',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ next_visit_due: newDate }),
@@ -610,7 +610,7 @@
   async function removeAddon(addonId, label, subscriptionId) {
     if (!confirm(`Remove "${label}" from this subscription?\n\nThe add-on will be marked canceled. You can always add it back via "+ Add Add-on".`)) return;
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/remove`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/remove`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -643,7 +643,7 @@
       return;
     }
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/mark-performed`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/mark-performed`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ date_performed: performedDate }),
@@ -666,7 +666,7 @@
   async function unmarkPerformed(addonId, subscriptionId) {
     if (!confirm('Undo "performed" status? This removes it from the upcoming invoice. Only works before the invoice is finalized.')) return;
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/addons/${addonId}/unmark-performed`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/unmark-performed`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -726,7 +726,7 @@
     if (!confirm(`Confirm:\n\n"${description.trim()}" - ${amount.toFixed(2)}\nMethod: ${methodLabel}\n\nProceed?`)) return;
     
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/adhoc-charge`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/adhoc-charge`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -756,7 +756,7 @@
   async function cancelAdhocCharge(chargeId, desc, subscriptionId) {
     if (!confirm(`Cancel charge "${desc}"?\n\nIf pending, this removes it. If it was already charged, it cannot be canceled here (refund must be handled separately).`)) return;
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/adhoc-charges/${chargeId}/cancel`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/adhoc-charges/${chargeId}/cancel`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -779,7 +779,7 @@
   async function addAddon(subscriptionId) {
     try {
       // Fetch available addons for this subscription's gen class
-      const listR = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/available-addons`, {
+      const listR = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/available-addons`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const listData = await listR.json();
@@ -803,7 +803,7 @@
       }
       const choice = addons[idx];
       if (!confirm(`Add "${choice.label}" (${(choice.amount_cents/100).toFixed(2)}) to this subscription as a pending add-on?\n\nIt will be charged at the next renewal once marked performed.`)) return;
-      const addR = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-addon`, {
+      const addR = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-addon`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ addon_type: choice.addon_type }),
@@ -827,7 +827,7 @@
     const reason = prompt('Optional: reason for cancellation (or leave blank):', '');
     if (reason === null) return; // user hit Cancel on the reason prompt
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/cancel`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/cancel`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: reason.trim() || null }),
@@ -864,7 +864,7 @@
       body.scheduled_date = trimmed;
     }
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/visits/${visitId}/confirm`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/confirm`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -904,7 +904,7 @@
     if (notesInput === null) return; // user cancelled
     const notes = (notesInput || '').trim() || null;
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed_date, notes }),
@@ -971,7 +971,7 @@
     const originalText = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-welcome`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-welcome`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
@@ -995,7 +995,7 @@
   // ---- Send Customer Portal link ----
   async function sendPortalLink(subscriptionId) {
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/portal-session`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/portal-session`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
@@ -1042,7 +1042,7 @@
       btn.textContent = 'Sending...';
       resultEl.textContent = '';
       try {
-        const r = await fetch(`${API_BASE}/api/generator-care/admin/send-test-email`, {
+        const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/admin/send-test-email`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ template, to }),
@@ -1077,7 +1077,7 @@
     const body = document.getElementById('modal-body');
     if (!body) return;
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/stripe-data`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/stripe-data`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -1167,7 +1167,7 @@
     const original = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/customers/${customerId}`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/customers/${customerId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: textarea.value }),
@@ -1188,7 +1188,7 @@
     const original = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-invoice`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-invoice`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
@@ -1272,7 +1272,7 @@
       : `${API_BASE}/api/generator-care/adhoc-charges/${rowId}/refund`;
 
     try {
-      const r = await fetch(endpoint, {
+      const r = await BatesAuth.authFetch(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount_cents, reason: (reasonStr || '').trim() || null }),
@@ -1326,7 +1326,7 @@
     if (!confirm(`Refund this $${confirmAmt} plan charge to the customer's card? This does not cancel their subscription.\n\nRefunding and canceling are separate actions - the customer keeps their plan unless you cancel it in the Danger Zone. The refund posts to the card within a few business days and cannot be undone (you would have to re-charge them).`)) return;
 
     try {
-      const r = await fetch(`${API_BASE}/api/generator-care/invoices/${invoiceId}/refund`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/invoices/${invoiceId}/refund`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount_cents, reason: (reasonStr || '').trim() || null }),

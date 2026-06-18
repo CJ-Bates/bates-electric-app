@@ -41,7 +41,7 @@
   // ---- Role check (must be office) ----
   async function checkRole() {
     try {
-      const r = await fetch(`${API_BASE}/me`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error('Failed to get profile');
@@ -67,7 +67,7 @@
 
     try {
       const url = `${API_BASE}/api/generator-care/accounting/transactions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-      const r = await fetch(url, {
+      const r = await BatesAuth.authFetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
