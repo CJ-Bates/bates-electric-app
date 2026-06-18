@@ -580,7 +580,7 @@ function buildCancellationEmail({ customer, periodEndDate }) {
 // work order created. Body is the full work-order packet so AR can generate the
 // paid invoice without digging. `addons` is the generator_pending_addons rows
 // (optional). `markedBy` is the office user who marked it.
-function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }) {
+function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, chargedAtSignupCents }) {
   const sub = subscription || {};
   const c = customer || {};
   const PLAN = { semi_annual: 'Semi-Annual', annual: 'Annual' };
@@ -597,10 +597,13 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }
   const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
   const planLabel = PLAN[sub.plan] || sub.plan || '';
   const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
-  // Amount charged at signup = the per-period charge. annual_price_cents is the
+  // Renewal price = the standard per-period charge. annual_price_cents is the
   // annualized total (semi-annual is billed at half that, twice a year).
   const annual = sub.annual_price_cents || 0;
-  const chargedCents = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
+  const renewalCents = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
+  // What the customer was ACTUALLY charged at signup (reflects any promo
+  // discount). Falls back to the plan price if the real charge wasn't passed.
+  const signupCents = (typeof chargedAtSignupCents === 'number') ? chargedAtSignupCents : renewalCents;
   const addonList = []
     .concat(sub.fleet_monitoring ? ['Fleet Monitoring'] : [])
     .concat((addons || []).filter(a => a && a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
@@ -617,7 +620,8 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }
     ['Generator', generator || '—'],
     ['Add-ons', addonList.length ? addonList.join(', ') : 'None'],
     ['Signed up', sub.signup_date ? fmtFriendlyDate(sub.signup_date) : '—'],
-    ['Amount charged at signup', `${fmtMoney(chargedCents)}${cadence ? ' (' + cadence + ')' : ''}`],
+    ['Amount charged at signup', fmtMoney(signupCents)],
+    ['Renews at', `${fmtMoney(renewalCents)}${cadence ? ' ' + cadence : ''}`],
   ];
 
   const rowsHtml = fields.map(([k, v]) =>

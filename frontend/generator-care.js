@@ -335,7 +335,7 @@
 
   // Plain-text work-order packet — the fields Amy keys into Jonas. Mirrors the
   // AR "ready to invoice" email body so the dashboard and the email match.
-  function buildPacketText(sub, pendingAddons) {
+  function buildPacketText(sub, pendingAddons, actualChargeCents) {
     const c = sub.customer || {};
     const ADDON = {
       fleet_monitoring: 'Fleet Monitoring', battery_replacement: 'Battery Replacement',
@@ -347,7 +347,9 @@
     const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
     const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
     const annual = sub.annual_price_cents || 0;
-    const charged = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
+    const renewal = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
+    // Actual first charge (promo-aware) when known; else fall back to plan price.
+    const signupCharge = (typeof actualChargeCents === 'number') ? actualChargeCents : renewal;
     const money = (cents) => '$' + ((cents || 0) / 100).toFixed(2);
     const addons = (sub.fleet_monitoring ? ['Fleet Monitoring'] : [])
       .concat((pendingAddons || []).filter(a => a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
@@ -362,7 +364,8 @@
       ['Generator', gen],
       ['Add-ons', addons.length ? addons.join(', ') : 'None'],
       ['Signed up', sub.signup_date ? fmtDate(sub.signup_date) : ''],
-      ['Amount charged at signup', money(charged) + (cadence ? ` (${cadence})` : '')],
+      ['Amount charged at signup', money(signupCharge)],
+      ['Renews at', money(renewal) + (cadence ? ` ${cadence}` : '')],
     ];
     return lines.map(([k, v]) => `${k}: ${v}`).join('\n');
   }
@@ -389,7 +392,7 @@
     const woValue = woAt
       ? `<span style="font-weight:400;color:var(--text-secondary);">${woNum ? '<strong style="color:var(--text-primary);">WO# ' + escapeHtml(woNum) + '</strong> &middot; ' : ''}${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
       : `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
-          <input type="text" id="gc-wo-number" class="gc-wo-input" placeholder="Jonas WO #" autocomplete="off" />
+          <input type="text" id="gc-wo-number" class="gc-wo-input" style="width:96px;flex:0 0 auto;" placeholder="Jonas WO #" autocomplete="off" />
           <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>
         </span>
         <div id="gc-wo-validation" style="display:none;color:#DC2626;font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
@@ -684,8 +687,9 @@
         });
       }
 
-      // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices)
-      loadStripeData(id);
+      // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
+      // and the work-order packet's actual signup charge)
+      loadStripeData(id, subscription, pending_addons);
 
     } catch (err) {
       console.error('Detail load failed:', err);
@@ -1252,7 +1256,7 @@
   // Fetches payment method + lifetime billed + last 5 invoices, replaces
   // the matching skeletons in the open modal. Fails quietly with a small
   // "couldn't load" message in each section.
-  async function loadStripeData(subscriptionId) {
+  async function loadStripeData(subscriptionId, subscription, pendingAddons) {
     const body = document.getElementById('modal-body');
     if (!body) return;
     try {
@@ -1327,6 +1331,13 @@
             ));
           });
         }
+      }
+
+      // Refresh the work-order packet with the ACTUAL signup charge (promo-aware)
+      // now that Stripe data is in — replaces the plan-price fallback shown at first paint.
+      const pktEl = body.querySelector('#gc-packet');
+      if (pktEl && subscription) {
+        pktEl.value = buildPacketText(subscription, pendingAddons, data.signup_charge_cents);
       }
     } catch (err) {
       console.error('[stripe-data] load failed:', err);
