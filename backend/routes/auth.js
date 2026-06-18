@@ -97,6 +97,27 @@ router.post('/login', async (req, res) => {
   });
 });
 
+// POST /auth/refresh  { refresh_token }
+// Exchanges a refresh token for a fresh Supabase session. Supabase access
+// tokens are short-lived (project JWT-expiry setting); the frontend calls this
+// silently on a 401 so a long-lived (remember-me) session survives without
+// re-login. Returns the rotated refresh token — callers must persist it.
+router.post('/refresh', async (req, res) => {
+  const { refresh_token } = req.body || {};
+  if (!refresh_token) {
+    return res.status(400).json({ error: 'Missing refresh token' });
+  }
+  const { data, error } = await supabaseAnon.auth.refreshSession({ refresh_token });
+  if (error || !data || !data.session) {
+    return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+  }
+  return res.json({
+    token: data.session.access_token,
+    refresh_token: data.session.refresh_token,
+    expires_at: data.session.expires_at,
+  });
+});
+
 // POST /auth/logout  (client-side is enough; this is for completeness)
 router.post('/logout', requireAuth, async (req, res) => {
   await supabaseAnon.auth.signOut();

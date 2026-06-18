@@ -26,23 +26,35 @@
   // can route their fetches through it.
   (function setupAuthHelper() {
     const TOKEN_KEY = 'bates.auth.token';
+    const REFRESH_KEY = 'bates.auth.refresh';
     const DEFAULT_EXPIRED_MSG = 'Your session expired — please sign in again.';
+    const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? 'http://localhost:4000'
+      : 'https://bates-electric-app.onrender.com';
 
     const getToken = () =>
       localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
+    const getRefreshToken = () =>
+      localStorage.getItem(REFRESH_KEY) || sessionStorage.getItem(REFRESH_KEY);
+
+    // The session lives in localStorage (remember-me) or sessionStorage. Refreshed
+    // tokens go back into whichever store currently holds the session.
+    const sessionStore = () =>
+      (localStorage.getItem(TOKEN_KEY) != null || localStorage.getItem(REFRESH_KEY) != null)
+        ? localStorage : sessionStorage;
 
     const onLoginPage = () => {
       const p = window.location.pathname;
       return p === '/' || /(^|\/)index\.html$/i.test(p);
     };
 
-    // Clear both token stores and redirect to login (once). Returns true if it
+    // Clear stored session and redirect to login (once). Returns true if it
     // navigated, false if suppressed because we're already on the login page
     // (guards against a redirect loop).
     function redirectToLogin(message) {
       try {
-        localStorage.removeItem(TOKEN_KEY);
-        sessionStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(REFRESH_KEY); sessionStorage.removeItem(REFRESH_KEY);
       } catch (e) {}
       if (onLoginPage()) return false;
       try { sessionStorage.setItem('bates.auth.message', message || DEFAULT_EXPIRED_MSG); } catch (e) {}
@@ -50,27 +62,53 @@
       return true;
     }
 
-    // Drop-in fetch wrapper. Adds the bearer token if the caller didn't, and on
-    // 401 triggers clear-token-and-redirect. When it redirects it returns a
-    // promise that never resolves, so the caller halts (no stray error toast)
-    // while the page navigates away. Every non-401 response is returned
-    // untouched — the happy path and all other status handling are unchanged.
-    async function authFetch(url, options) {
+    // Exchange the refresh token for a fresh access token (Supabase access tokens
+    // are short-lived). Deduped: concurrent 401s share one in-flight refresh so a
+    // rotating refresh token isn't spent twice. Resolves true on success.
+    let refreshInFlight = null;
+    function refreshSession() {
+      if (refreshInFlight) return refreshInFlight;
+      const rt = getRefreshToken();
+      if (!rt) return Promise.resolve(false);
+      refreshInFlight = fetch(API_BASE + '/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: rt }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data || !data.token) return false;
+          const store = sessionStore();
+          store.setItem(TOKEN_KEY, data.token);
+          if (data.refresh_token) store.setItem(REFRESH_KEY, data.refresh_token);
+          return true;
+        })
+        .catch(() => false)
+        .finally(() => { refreshInFlight = null; });
+      return refreshInFlight;
+    }
+
+    // Drop-in fetch wrapper. Always attaches the freshest bearer token. On 401 it
+    // silently refreshes the session once and retries; only if the refresh fails
+    // does it clear the session and bounce to login (returning a never-resolving
+    // promise so the caller halts cleanly). Non-401 responses pass through.
+    async function authFetch(url, options, _retried) {
       const opts = options || {};
       const headers = Object.assign({}, opts.headers || {});
       const token = getToken();
-      if (token && !('Authorization' in headers)) {
-        headers['Authorization'] = 'Bearer ' + token;
-      }
+      if (token) headers['Authorization'] = 'Bearer ' + token; // freshest wins (esp. after a refresh)
       const res = await fetch(url, Object.assign({}, opts, { headers }));
       if (res.status === 401) {
+        if (!_retried && await refreshSession()) {
+          return authFetch(url, options, true); // retry once with the refreshed token
+        }
         if (redirectToLogin()) return new Promise(() => {}); // navigating away; stop the caller
         throw new Error('Unauthorized'); // already on login — let caller handle rather than hang
       }
       return res;
     }
 
-    window.BatesAuth = { authFetch, redirectToLogin, getToken, onLoginPage };
+    window.BatesAuth = { authFetch, redirectToLogin, refreshSession, getToken, getRefreshToken, onLoginPage };
   })();
 
   // SVG icon definitions
@@ -290,6 +328,8 @@
   function handleSignOut() {
     localStorage.removeItem('bates.auth.token');
     sessionStorage.removeItem('bates.auth.token');
+    localStorage.removeItem('bates.auth.refresh');
+    sessionStorage.removeItem('bates.auth.refresh');
     window.location.href = 'index.html';
   }
 

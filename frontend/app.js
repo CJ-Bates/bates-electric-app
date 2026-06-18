@@ -136,10 +136,17 @@
 
       const data = await res.json();
       if (data.token) {
+        // "Keep me signed in" → localStorage (survives browser restarts, refreshed
+        // for ~30 days); unchecked → sessionStorage (ends when the browser closes,
+        // refreshed through the workday). Store the refresh token alongside the
+        // access token so the session can be silently renewed (see shared-nav.js).
         const remember = document.getElementById('remember').checked;
         const store = remember ? localStorage : sessionStorage;
-        (remember ? sessionStorage : localStorage).removeItem('bates.auth.token');
+        const other = remember ? sessionStorage : localStorage;
+        other.removeItem('bates.auth.token');
+        other.removeItem('bates.auth.refresh');
         store.setItem('bates.auth.token', data.token);
+        if (data.refresh_token) store.setItem('bates.auth.refresh', data.refresh_token);
       }
       showStatus('status', 'Signed in. Loading your hub\u2026', 'success');
       window.location.replace('home.html');

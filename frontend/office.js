@@ -17,7 +17,7 @@
   // Verify office role
   async function checkRole() {
     try {
-      const response = await fetch(`${API_BASE}/me`, {
+      const response = await BatesAuth.authFetch(`${API_BASE}/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) throw new Error('Failed to get profile');
@@ -47,7 +47,7 @@
     showLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/inspections?status=submitted&limit=200`, {
+      const response = await BatesAuth.authFetch(`${API_BASE}/inspections?status=submitted&limit=200`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) {
@@ -183,7 +183,7 @@
   // Show details modal
   async function showDetails(id) {
     try {
-      const response = await fetch(`${API_BASE}/inspections/${id}`, {
+      const response = await BatesAuth.authFetch(`${API_BASE}/inspections/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) throw new Error('Failed to load inspection details');
@@ -353,7 +353,7 @@
     const container = document.getElementById('details-files');
     if (!container) return;
     try {
-      const res = await fetch(`${API_BASE}/inspections/${inspectionId}/files`, {
+      const res = await BatesAuth.authFetch(`${API_BASE}/inspections/${inspectionId}/files`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -400,7 +400,7 @@
     btn.disabled = true;
     btn.textContent = 'Building zip…';
     try {
-      const res = await fetch(`${API_BASE}/inspections/${inspectionId}/photos.zip`, {
+      const res = await BatesAuth.authFetch(`${API_BASE}/inspections/${inspectionId}/photos.zip`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -432,7 +432,7 @@
   async function deleteInspection(id) {
     showStatus('Deleting...', 'info');
     try {
-      const response = await fetch(`${API_BASE}/inspections/${id}`, {
+      const response = await BatesAuth.authFetch(`${API_BASE}/inspections/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

@@ -611,7 +611,7 @@
     // as having failed, because it has already been saved on the server.
     let inspectionId = null;
     try {
-      const response = await fetch(`${API_BASE}/inspections`, {
+      const response = await BatesAuth.authFetch(`${API_BASE}/inspections`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
