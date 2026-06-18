@@ -606,7 +606,9 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }
     .concat((addons || []).filter(a => a && a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
   const generator = [GENC[sub.gen_class] || sub.gen_class, sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
 
+  const woNum = (sub.work_order_number || '').trim();
   const fields = [
+    ['Work order #', woNum || '—'],
     ['Customer', name],
     ['Phone', c.phone || '—'],
     ['Email', c.email || '—'],
@@ -623,6 +625,7 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }
   ).join('');
 
   const body =
+    (woNum ? `<p style="${P}font-size:18px;margin-bottom:6px;"><strong style="color:${BRAND.navy};">Work order #${escHtml(woNum)}</strong> created for <strong>${escHtml(name)}</strong> &mdash; ready to invoice.</p>` : '') +
     `<p style="${P}">${escHtml(markedBy || 'The office')} marked the Jonas work order created for <strong>${escHtml(name)}</strong>. Here&rsquo;s the work-order packet &mdash; everything needed to generate and send the paid invoice from Jonas.</p>` +
     `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;margin-top:8px;">${rowsHtml}</table>` +
     `<p style="${P_LAST}margin-top:24px;">Once the invoice is sent, the office will mark it invoiced in the dashboard to close the loop.</p>`;
@@ -635,14 +638,17 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }
 
   // Plain-text packet — the copy-paste-friendly version for keying into Jonas.
   const text =
-    `READY TO INVOICE — Generator Care\n` +
+    (woNum ? `WORK ORDER #${woNum} — READY TO INVOICE\n` : `READY TO INVOICE — Generator Care\n`) +
     `${markedBy || 'The office'} marked the Jonas work order created.\n\n` +
     `WORK ORDER PACKET\n` +
     fields.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
     `Once the invoice is sent, it will be marked invoiced in the dashboard.\n\n` +
     `-- Bates Electric Generator Care`;
 
-  return { subject: `Generator Care — ready to invoice: ${name}`, html, text };
+  const subject = woNum
+    ? `Work order #${woNum} — ready to invoice: ${name}`
+    : `Generator Care — ready to invoice: ${name}`;
+  return { subject, html, text };
 }
 
 // ============================================================================

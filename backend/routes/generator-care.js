@@ -322,13 +322,20 @@ router.post('/subscriptions/:id/work-order-created', async (req, res) => {
 
     const alreadyMarked = !!sub.work_order_created_at;
     const markedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
+    const workOrderNumber = typeof req.body?.work_order_number === 'string' ? req.body.work_order_number.trim() : '';
+
+    // The WO number is what makes the AR email useful (she pulls the order up in
+    // Jonas with it), so require it on the first mark.
+    if (!alreadyMarked && !workOrderNumber) {
+      return res.status(400).json({ error: 'Work order number is required.' });
+    }
 
     let updated = sub;
     let arNotified = false;
     if (!alreadyMarked) {
       const { data: upd, error: updErr } = await supabaseAdmin
         .from('generator_subscriptions')
-        .update({ work_order_created_at: new Date().toISOString(), work_order_created_by: markedBy })
+        .update({ work_order_created_at: new Date().toISOString(), work_order_created_by: markedBy, work_order_number: workOrderNumber })
         .eq('id', id)
         .select('*, customer:generator_customers(*)')
         .single();
