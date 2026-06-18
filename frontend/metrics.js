@@ -125,6 +125,25 @@
   function render(data) {
     const h = data.headline || {};
 
+    // ----- Dark-mode-aware chart colors -----
+    // Chart.js defaults to dark text/gridlines, which vanish on a dark panel.
+    // Point its global text + grid colors (used by ticks, legend labels, and
+    // gridlines) at light values in dark mode, and brighten the series fills so
+    // bars/segments stay legible on the dark surface. Recomputed each render so
+    // a theme toggle + Refresh repaints correctly.
+    const darkMode = document.documentElement.classList.contains('dark');
+    if (typeof Chart !== 'undefined') {
+      Chart.defaults.color = darkMode ? '#A7B0C2' : '#5A6473';
+      Chart.defaults.borderColor = darkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
+    }
+    const cBar    = darkMode ? '#7FA3FF' : NAVY;       // primary bars (signups, gen class)
+    const cBar2   = darkMode ? '#5B95C9' : BLUE;       // secondary bars (add-ons)
+    const cAmber  = darkMode ? '#FBBF24' : '#B45309';  // cancellations
+    const cDonut  = darkMode ? ['#7FA3FF', '#3E6FB0', '#8FB3D9'] : [NAVY, BLUE, '#8FB3D9'];
+    const cCats   = darkMode
+      ? ['#7FA3FF', '#5B95C9', '#8FB3D9', '#34D399', '#FBBF24', '#A7B0C2', '#C084FC', '#38BDF8']
+      : CATEGORICAL;
+
     // ----- Headline stat cards -----
     $('stat-active').textContent = (h.active_subscriptions || 0).toLocaleString('en-US');
     $('stat-active-sub').innerHTML = '&nbsp;';
@@ -151,7 +170,7 @@
       type: 'bar',
       data: {
         labels: sm.map((p) => monthLabel(p.month)),
-        datasets: [{ data: sm.map((p) => p.count), backgroundColor: NAVY, borderRadius: 4, maxBarThickness: 46 }],
+        datasets: [{ data: sm.map((p) => p.count), backgroundColor: cBar, borderRadius: 4, maxBarThickness: 46 }],
       },
       options: baseBar,
     });
@@ -165,7 +184,7 @@
         type: 'doughnut',
         data: {
           labels: pm.map((p) => p.label),
-          datasets: [{ data: pm.map((p) => p.count), backgroundColor: [NAVY, BLUE, '#8FB3D9'] }],
+          datasets: [{ data: pm.map((p) => p.count), backgroundColor: cDonut }],
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
       });
@@ -179,7 +198,7 @@
       type: 'bar',
       data: {
         labels: gc.map((p) => p.label),
-        datasets: [{ data: gc.map((p) => p.count), backgroundColor: NAVY, borderRadius: 4 }],
+        datasets: [{ data: gc.map((p) => p.count), backgroundColor: cBar, borderRadius: 4 }],
       },
       options: baseHBar,
     });
@@ -191,7 +210,7 @@
         type: 'bar',
         data: {
           labels: ap.map((p) => p.label),
-          datasets: [{ data: ap.map((p) => p.count), backgroundColor: BLUE, borderRadius: 4 }],
+          datasets: [{ data: ap.map((p) => p.count), backgroundColor: cBar2, borderRadius: 4 }],
         },
         options: baseHBar,
       });
@@ -210,7 +229,7 @@
         type: 'bar',
         data: {
           labels: cbm.map((p) => monthLabel(p.month)),
-          datasets: [{ data: cbm.map((p) => p.count), backgroundColor: '#B45309', borderRadius: 4, maxBarThickness: 46 }],
+          datasets: [{ data: cbm.map((p) => p.count), backgroundColor: cAmber, borderRadius: 4, maxBarThickness: 46 }],
         },
         options: baseBar,
       });
@@ -227,7 +246,7 @@
         type: 'bar',
         data: {
           labels: cb.map((p) => channelLabel(p.source)),
-          datasets: [{ data: cb.map((p) => p.count), backgroundColor: cb.map((_, i) => CATEGORICAL[i % CATEGORICAL.length]) }],
+          datasets: [{ data: cb.map((p) => p.count), backgroundColor: cb.map((_, i) => cCats[i % cCats.length]) }],
         },
         options: baseHBar,
       });
@@ -258,9 +277,10 @@
   }
 
   function emptyDoughnut() {
+    const dark = document.documentElement.classList.contains('dark');
     return {
       type: 'doughnut',
-      data: { labels: ['No active subs'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+      data: { labels: ['No active subs'], datasets: [{ data: [1], backgroundColor: [dark ? 'rgba(255,255,255,0.12)' : '#e5e7eb'] }] },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } },
     };
   }
