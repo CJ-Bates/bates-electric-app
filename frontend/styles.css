@@ -2099,6 +2099,45 @@ input:focus-visible {
 }
 
 /* ============================================================
+   Generator Care section tabs — shared segmented switcher across
+   generator-care / metrics / accounting. Injected by shared-nav.js into
+   [data-section-tabs] so the markup lives in one place. Theme-token based,
+   so it's correct in light AND dark. Distinct from the .gc-tab filter pills
+   (All Active / Overdue / …) on the dashboard — both can coexist.
+   ============================================================ */
+.section-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.section-tab {
+  flex: 1 1 auto;
+  text-align: center;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.section-tab:hover { color: var(--text-primary); background: var(--glass-hover); }
+.section-tab.active,
+.section-tab.active:hover { background: var(--accent); color: #fff; }
+/* Dark accent is light blue, so the active label must be dark to stay legible. */
+html.dark .section-tab.active,
+html.dark .section-tab.active:hover { color: #0F1420; }
+@media (max-width: 480px) {
+  .section-tab { padding: 9px 8px; font-size: 0.82rem; }
+}
+
+/* ============================================================
    DRAWER / SIDE NAVIGATION
    ============================================================ */
 
