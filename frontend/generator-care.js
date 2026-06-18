@@ -353,6 +353,7 @@
       .concat((pendingAddons || []).filter(a => a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
     const gen = [genClassLabel(sub.gen_class), sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
     const lines = [
+      ['Work order #', sub.work_order_number || '—'],
       ['Customer', c.name || ''],
       ['Phone', c.phone || ''],
       ['Email', c.email || ''],
@@ -372,6 +373,7 @@
   function renderHandoffCard(subscription, pendingAddons) {
     const woAt = subscription.work_order_created_at;
     const woBy = subscription.work_order_created_by;
+    const woNum = subscription.work_order_number;
     const invAt = subscription.invoice_sent_at;
     const invBy = subscription.invoice_sent_by;
     const packet = escapeHtml(buildPacketText(subscription, pendingAddons));
@@ -385,8 +387,12 @@
       </div>`;
 
     const woValue = woAt
-      ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
-      : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>`;
+      ? `<span style="font-weight:400;color:var(--text-secondary);">${woNum ? '<strong style="color:var(--text-primary);">WO# ' + escapeHtml(woNum) + '</strong> &middot; ' : ''}${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
+      : `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
+          <input type="text" id="gc-wo-number" class="gc-wo-input" placeholder="Jonas WO #" autocomplete="off" />
+          <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>
+        </span>
+        <div id="gc-wo-validation" style="display:none;color:#DC2626;font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
     const invValue = invAt
       ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(invAt)}${invBy ? ' &middot; ' + escapeHtml(invBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-invoice-undo-btn">Undo</button>`
       : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-invoice-sent-btn"${woAt ? '' : ' disabled title="Mark the work order created first"'}>Mark invoice sent</button>`;
@@ -1086,12 +1092,22 @@
 
   // ---- Send Customer Portal link ----
   async function markWorkOrderCreated(subscriptionId, btn) {
-    if (!confirm('Mark the Jonas work order created?\n\nThis notifies Accounts Receivable (ar@bates-electric.com) that it’s ready to invoice, with the work-order packet.')) return;
+    const input = document.getElementById('gc-wo-number');
+    const validation = document.getElementById('gc-wo-validation');
+    const woNumber = input ? input.value.trim() : '';
+    if (!woNumber) {
+      if (validation) validation.style.display = 'block';
+      if (input) input.focus();
+      return;
+    }
+    if (validation) validation.style.display = 'none';
+    if (!confirm(`Mark the Jonas work order created (WO# ${woNumber})?\n\nThis notifies Accounts Receivable (ar@bates-electric.com) that it’s ready to invoice, with the work-order packet.`)) return;
     if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/work-order-created`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_order_number: woNumber }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
