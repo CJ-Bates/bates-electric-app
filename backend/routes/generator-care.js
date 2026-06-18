@@ -27,6 +27,22 @@ const {
 // created so AR can generate + send the paid invoice. Env-overridable.
 const AR_EMAIL = process.env.GENERATOR_AR_EMAIL || 'ar@bates-electric.com';
 
+// Actual amount charged at signup = amount_paid of the customer's OLDEST paid
+// invoice (the first/signup invoice), which reflects any promo-code discount.
+// Returns cents, or null if it can't be read (callers fall back to plan price).
+async function getSignupChargeCents(stripeCustomerId) {
+  if (!stripeCustomerId) return null;
+  try {
+    const inv = await stripe.invoices.list({ customer: stripeCustomerId, status: 'paid', limit: 100 });
+    const all = inv.data || [];
+    if (!all.length) return null;
+    return all[all.length - 1].amount_paid || 0; // list is newest-first; last = oldest = signup charge
+  } catch (e) {
+    console.error('[signup-charge] lookup failed:', e && e.message);
+    return null;
+  }
+}
+
 function planLabelFor(plan) {
   return plan === 'semi_annual' ? 'Semi-Annual' : (plan === 'annual' ? 'Annual' : plan);
 }
@@ -349,11 +365,13 @@ router.post('/subscriptions/:id/work-order-created', async (req, res) => {
           .from('generator_pending_addons')
           .select('addon_type, status')
           .eq('subscription_id', id);
+        const chargedAtSignupCents = await getSignupChargeCents(updated.stripe_customer_id);
         const { subject, html, text } = buildArReadyToInvoiceEmail({
           subscription: updated,
           customer: updated.customer,
           addons: addons || [],
           markedBy,
+          chargedAtSignupCents,
         });
         const r = await sendEmail({ to: AR_EMAIL, subject, html, text, logTag: '[ar-ready-to-invoice]' });
         arNotified = !!(r && r.sent);
@@ -474,9 +492,11 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
     // Lifetime billed + recent invoices (both from the same list call)
     let lifetime_billed_cents = 0;
     let recent_invoices = [];
+    let signup_charge_cents = null; // amount_paid of the oldest paid invoice = actual signup charge (promo-aware)
     if (invoiceResult.status === 'fulfilled') {
       const all = invoiceResult.value.data || [];
       lifetime_billed_cents = all.reduce((sum, inv) => sum + (inv.amount_paid || 0), 0);
+      if (all.length) signup_charge_cents = all[all.length - 1].amount_paid || 0;
       recent_invoices = all.slice(0, 5).map((inv) => {
         const ch = inv.charge && typeof inv.charge === 'object' ? inv.charge : null;
         const chargeAmount = ch ? ch.amount : (inv.amount_paid || 0);
@@ -498,7 +518,7 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
       console.error('[stripe-data] invoices.list failed:', invoiceResult.reason && invoiceResult.reason.message);
     }
 
-    res.json({ payment_method, lifetime_billed_cents, recent_invoices });
+    res.json({ payment_method, lifetime_billed_cents, recent_invoices, signup_charge_cents });
   } catch (err) {
     console.error('[generator-care] stripe-data error:', err);
     res.status(500).json({ error: 'Server error' });
