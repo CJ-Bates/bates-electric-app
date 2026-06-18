@@ -414,6 +414,27 @@
   }
 
   /**
+   * Inject the Generator Care section tab switcher into [data-section-tabs].
+   * Only the three GC pages (Customers / Metrics / Accounting) include that
+   * mount, so this is a no-op everywhere else. Keeping the markup here — one
+   * place — means the three pages can't drift apart.
+   */
+  function injectSectionTabs() {
+    const mount = document.querySelector('[data-section-tabs]');
+    if (!mount) return;
+    const tabs = [
+      { label: 'Customers',  href: 'generator-care.html', match: 'generator-care' },
+      { label: 'Metrics',    href: 'metrics.html',        match: 'metrics' },
+      { label: 'Accounting', href: 'accounting.html',     match: 'accounting' },
+    ];
+    const path = window.location.pathname;
+    mount.innerHTML = tabs.map((t) => {
+      const active = path.indexOf(t.match) !== -1;
+      return `<a href="${t.href}" class="section-tab${active ? ' active' : ''}"${active ? ' aria-current="page"' : ''}>${t.label}</a>`;
+    }).join('');
+  }
+
+  /**
    * Initialize the navigation when DOM is ready
    */
   function init() {
@@ -426,6 +447,7 @@
 
   function initialize() {
     injectNavigation();
+    injectSectionTabs();
     fixSvgPointerEvents();
     updateActiveState();
     setupHamburgerListener();
