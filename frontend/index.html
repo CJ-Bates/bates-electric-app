@@ -2,6 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <script>
+    // Apply the persisted dark theme before first paint. The login page doesn't
+    // load shared-nav.js (which does this elsewhere), so without this the
+    // already-defined dark auth styles would never activate here.
+    try { if (localStorage.getItem('bates.theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#FFFFFF" />
   <meta name="apple-mobile-web-app-capable" content="yes" />

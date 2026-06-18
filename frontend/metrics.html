@@ -48,6 +48,20 @@
       .m-panel.wide { grid-column: auto; }
       .m-stat .value { font-size: 1.6rem; }
     }
+
+    /* ============================================================
+       DARK MODE — scoped to html.dark only; light mode untouched.
+       Chart.js tick/grid/legend/series colors are set in metrics.js.
+       ============================================================ */
+    html.dark .m-control input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .m-stat { background: var(--bg-secondary); border-top-color: var(--accent); }
+    html.dark .m-stat .label { color: var(--text-secondary); }
+    html.dark .m-stat .value { color: var(--text-primary); }
+    html.dark .m-stat .sub { color: var(--text-secondary); }
+    html.dark .m-panel { background: var(--bg-secondary); }
+    html.dark .m-panel-h { color: var(--text-primary); }
+    html.dark .m-panel-note { color: var(--text-secondary); }
+    html.dark .m-empty-note { color: var(--text-secondary); }
   </style>
 </head>
 <body class="hub-body dashboard-body">

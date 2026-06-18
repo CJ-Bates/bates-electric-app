@@ -164,6 +164,82 @@
       .gc-danger-zone { flex-direction: column; align-items: stretch; text-align: center; }
       .gc-danger-zone .gc-btn { width: 100%; justify-content: center; }
     }
+
+    /* ============================================================
+       DARK MODE — scoped to html.dark only; light mode untouched.
+       Surfaces use the shared dark tokens (var(--bg-*), --text-*, --glass-border)
+       so they match the home screen / body that already switch correctly.
+       ============================================================ */
+    /* Filter tabs (unselected render white in light mode) */
+    html.dark .gc-tab { background: rgba(255,255,255,0.05); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .gc-tab .count { background: rgba(255,255,255,0.14); }
+    html.dark .gc-tab.active { background: var(--accent); color: #0F1420; border-color: var(--accent); }
+    html.dark .gc-tab.active .count { background: rgba(0,0,0,0.2); }
+
+    /* Subscriptions table */
+    html.dark .gc-table-wrap { background: var(--bg-secondary); }
+    html.dark .gc-table th { background: var(--bg-tertiary); color: var(--text-secondary); border-bottom-color: var(--glass-border); }
+    html.dark .gc-table td { border-bottom-color: var(--glass-border); color: var(--text-primary); }
+    html.dark .gc-row:hover { background: rgba(255,255,255,0.04); }
+    html.dark .gc-row.overdue { background: rgba(239,68,68,0.13); }
+    html.dark .gc-row.overdue:hover { background: rgba(239,68,68,0.2); }
+    html.dark .gc-row.soon { background: rgba(245,158,11,0.13); }
+    html.dark .gc-row.soon:hover { background: rgba(245,158,11,0.2); }
+    html.dark .gc-customer-name { color: var(--text-primary); }
+    html.dark .gc-customer-meta, html.dark .gc-gen-info { color: var(--text-secondary); }
+    html.dark .gc-empty { color: var(--text-secondary); }
+
+    /* Mobile list cards + modal detail cards (both .gc-card) */
+    html.dark .gc-card { background: var(--bg-secondary); border-color: var(--glass-border); }
+    html.dark .gc-card-name { color: var(--text-primary); }
+    html.dark .gc-card-meta { color: var(--text-secondary); }
+
+    /* Modal: detail sections, meta rows, headers */
+    html.dark .gc-detail-h { color: var(--text-secondary); border-bottom-color: var(--glass-border); }
+    html.dark .gc-detail-grid dt { color: var(--text-secondary); }
+    html.dark .gc-detail-grid dd { color: var(--text-primary); }
+    html.dark .gc-visit-row { border-bottom-color: var(--glass-border); }
+    html.dark .gc-modal-subhead { color: var(--text-secondary); }
+    html.dark .gc-modal-subhead a { color: var(--accent); }
+    html.dark .gc-card-h { color: var(--text-secondary); border-bottom-color: var(--glass-border); }
+    html.dark .gc-card-h .gc-card-h-count { color: var(--text-tertiary); }
+    html.dark .gc-card-row { border-bottom-color: var(--glass-border); }
+    html.dark .gc-card-actions { border-top-color: var(--glass-border); }
+    html.dark .gc-meta-label { color: var(--text-secondary); }
+    html.dark .gc-meta-value { color: var(--text-primary); }
+
+    /* White / outlined buttons (navy/primary + colored ones already read on dark) */
+    html.dark .gc-btn-secondary { background: rgba(255,255,255,0.05); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .gc-btn-secondary:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
+    html.dark .gc-btn-ghost { color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .gc-btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.05); }
+    html.dark .gc-btn-icon { background: rgba(255,255,255,0.05); border-color: var(--glass-border); color: var(--text-tertiary); }
+
+    /* Neutral (gray) status pills/chips would otherwise be light boxes */
+    html.dark .gc-status-pill-canceled, html.dark .gc-chip-refunded { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
+
+    /* Internal note editor */
+    html.dark .gc-note-editor { border-top-color: var(--glass-border); }
+    html.dark .gc-note-editor textarea { border-color: var(--glass-border); }
+
+    /* Danger zone + canceled banner */
+    html.dark .gc-danger-zone { background: rgba(220,38,38,0.13); border-color: rgba(220,38,38,0.4); }
+    html.dark .gc-danger-zone-text { color: #FCA5A5; }
+    html.dark .gc-canceled-banner { background: var(--bg-secondary); border-color: var(--glass-border); border-left-color: var(--text-tertiary); color: var(--text-secondary); }
+
+    /* Skeleton loader (transient, but otherwise a light pulse) */
+    @keyframes gc-skeleton-pulse-dark { 0%, 100% { background-color: rgba(255,255,255,0.06); } 50% { background-color: rgba(255,255,255,0.12); } }
+    html.dark .gc-skeleton { background: rgba(255,255,255,0.06); animation-name: gc-skeleton-pulse-dark; }
+
+    /* Admin tools — these are inline-styled in the HTML, so the dark overrides
+       need !important to win. */
+    html.dark #gc-admin-tools { background: var(--bg-secondary) !important; border-color: var(--glass-border) !important; }
+    html.dark #gc-admin-tools summary { color: var(--text-secondary) !important; }
+    html.dark #gc-admin-tools > div { border-top-color: var(--glass-border) !important; }
+    html.dark #gc-admin-tools h3 { color: var(--text-primary) !important; }
+    html.dark #gc-admin-tools p, html.dark #gc-admin-tools label { color: var(--text-secondary) !important; }
+    html.dark #gc-test-template { background: var(--bg-tertiary) !important; color: var(--text-primary) !important; border-color: var(--glass-border) !important; }
+    html.dark #gc-test-email { border-color: var(--glass-border) !important; }
   </style>
 </head>
 <body class="hub-body dashboard-body">

@@ -47,6 +47,28 @@
       .acc-summary { gap: 20px; padding: 14px 16px; }
       .acc-summary-item .value { font-size: 1.2rem; }
     }
+
+    /* ============================================================
+       DARK MODE — scoped to html.dark only; light mode untouched.
+       ============================================================ */
+    html.dark .acc-control input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .acc-summary { background: var(--bg-secondary); }
+    html.dark .acc-summary-item .label { color: var(--text-secondary); }
+    html.dark .acc-summary-item .value { color: var(--text-primary); }
+    html.dark .acc-summary-item.fee .value { color: #FBBF24; }
+    html.dark .acc-summary-item.net .value { color: #4ADE80; }
+    html.dark .acc-table-wrap { background: var(--bg-secondary); }
+    html.dark .acc-table th { background: var(--bg-tertiary); color: var(--text-secondary); border-bottom-color: var(--glass-border); }
+    html.dark .acc-table td { border-bottom-color: var(--glass-border); color: var(--text-primary); }
+    html.dark .acc-table tbody tr:hover { background: rgba(255,255,255,0.04); }
+    html.dark .acc-table tfoot td { background: var(--bg-tertiary); color: var(--text-primary); }
+    html.dark .acc-stripe-id { color: var(--text-tertiary); }
+    html.dark .acc-card { background: var(--bg-secondary); border-left-color: var(--accent); }
+    html.dark .acc-card-name, html.dark .acc-card-amount { color: var(--text-primary); }
+    html.dark .acc-card-meta { color: var(--text-secondary); }
+    html.dark .acc-card-footer { border-top-color: var(--glass-border); }
+    html.dark .acc-card-footer .fee { color: #FBBF24; }
+    html.dark .acc-card-footer .net { color: #4ADE80; }
   </style>
 </head>
 <body class="hub-body dashboard-body">

@@ -3078,9 +3078,21 @@ html.dark .auth-card::before {
     rgba(127,163,255,0.55) 70%,
     transparent 100%);
 }
+/* shared-nav.js injects inline background/backdrop-filter on the topbar and an
+   inline white background/border/shadow on the hamburger, which outrank normal
+   rules — so the dark-mode overrides below need !important to take effect.
+   Scoped to html.dark; light mode keeps the inline styling untouched. */
 html.dark .app-topbar {
-  background: rgba(15,20,32,0.7);
+  background: rgba(15,20,32,0.85) !important;
+  -webkit-backdrop-filter: saturate(120%) blur(8px) !important;
+  backdrop-filter: saturate(120%) blur(8px) !important;
   border-bottom-color: rgba(127,163,255,0.18);
+}
+html.dark .topbar-hamburger {
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: none !important;
+  color: var(--text-primary);
 }
 html.dark .shared-drawer-overlay { background: rgba(0,0,0,0.6); }
 html.dark .shared-drawer-header { border-bottom-color: var(--glass-border); }
