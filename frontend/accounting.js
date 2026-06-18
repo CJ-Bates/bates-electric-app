@@ -100,7 +100,6 @@
     $('table-wrap').hidden = false;
     const tbody = $('acc-tbody');
     tbody.innerHTML = txns.map(t => {
-      const idShort = (t.stripe_charge_id || '').slice(0, 14);
       return `<tr>
         <td>${t.date}</td>
         <td>${escapeHtml(t.customer_name)}</td>
@@ -109,7 +108,7 @@
         <td class="num">${fmtMoney(t.gross_cents)}</td>
         <td class="num" style="color:#b45309;">${fmtMoney(t.fee_cents)}</td>
         <td class="num" style="color:#047857;font-weight:600;">${fmtMoney(t.net_cents)}</td>
-        <td><span class="acc-stripe-id">${escapeHtml(idShort)}&hellip;</span></td>
+        <td><span class="acc-auth-code">${escapeHtml(t.auth_code || '—')}</span></td>
       </tr>`;
     }).join('');
 
@@ -132,6 +131,7 @@
         </div>
         <div class="acc-card-meta">${t.date} &middot; ${escapeHtml(t.description)}</div>
         <div class="acc-card-meta" style="margin-bottom:0;">${escapeHtml(t.address)}</div>
+        <div class="acc-card-meta" style="margin-bottom:0;">Auth code: <span class="acc-auth-code">${escapeHtml(t.auth_code || '—')}</span></div>
         <div class="acc-card-footer">
           <span class="fee">Fee: ${fmtMoney(t.fee_cents)}</span>
           <span class="net">Net: ${fmtMoney(t.net_cents)}</span>
@@ -152,7 +152,7 @@
       showStatus('Nothing to export.', 'error');
       return;
     }
-    const header = ['Date', 'Customer', 'Address', 'Description', 'Gross', 'Stripe Fee', 'Net', 'Stripe Charge ID'];
+    const header = ['Date', 'Customer', 'Address', 'Description', 'Gross', 'Stripe Fee', 'Net', 'Auth Code'];
     const rows = currentData.transactions.map(t => [
       t.date,
       t.customer_name,
@@ -161,7 +161,7 @@
       (t.gross_cents / 100).toFixed(2),
       (t.fee_cents / 100).toFixed(2),
       (t.net_cents / 100).toFixed(2),
-      t.stripe_charge_id,
+      t.auth_code || '',
     ]);
     // Add a totals row
     rows.push([

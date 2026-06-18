@@ -31,7 +31,7 @@
     .acc-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .acc-table tbody tr:hover { background: #fafbfc; }
     .acc-table tfoot td { background: #f9fafb; font-weight: 700; color: #1F3A5F; }
-    .acc-stripe-id { font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; color: #6b7280; }
+    .acc-auth-code { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; letter-spacing: 0.03em; }
     .acc-mobile-cards { display: none; }
     .acc-card { background: #fff; padding: 14px 16px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid #1F3A5F; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
     .acc-card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
@@ -62,7 +62,6 @@
     html.dark .acc-table td { border-bottom-color: var(--glass-border); color: var(--text-primary); }
     html.dark .acc-table tbody tr:hover { background: rgba(255,255,255,0.04); }
     html.dark .acc-table tfoot td { background: var(--bg-tertiary); color: var(--text-primary); }
-    html.dark .acc-stripe-id { color: var(--text-tertiary); }
     html.dark .acc-card { background: var(--bg-secondary); border-left-color: var(--accent); }
     html.dark .acc-card-name, html.dark .acc-card-amount { color: var(--text-primary); }
     html.dark .acc-card-meta { color: var(--text-secondary); }
@@ -135,7 +134,7 @@
             <th class="num">Gross</th>
             <th class="num">Fee</th>
             <th class="num">Net</th>
-            <th>Stripe ID</th>
+            <th>Auth Code</th>
           </tr>
         </thead>
         <tbody id="acc-tbody"></tbody>

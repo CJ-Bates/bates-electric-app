@@ -1547,6 +1547,13 @@ router.get('/accounting/transactions', async (req, res) => {
       });
     }
 
+    // Issuer card authorization (approval) code — what Brenda reconciles against.
+    // It lives on the charge object (no extra expand needed); refunds reuse their
+    // original charge's code so a refund row ties back to the approval it reverses.
+    const authCodeOf = (ch) =>
+      (ch && ch.payment_method_details && ch.payment_method_details.card
+        && ch.payment_method_details.card.authorization_code) || null;
+
     const chargeTxns = allCharges
       .filter(c => c.status === 'succeeded')
       .map(c => {
@@ -1573,7 +1580,8 @@ router.get('/accounting/transactions', async (req, res) => {
           gross_cents: c.amount,
           fee_cents: bt ? bt.fee : 0,
           net_cents: bt ? bt.net : c.amount,
-          stripe_charge_id: c.id,
+          auth_code: authCodeOf(c),
+          stripe_charge_id: c.id,        // kept in the API response for debugging; not shown in the table/CSV
           stripe_customer_id: c.customer,
           is_refund: false
         };
@@ -1598,6 +1606,7 @@ router.get('/accounting/transactions', async (req, res) => {
         gross_cents: -r.amount,
         fee_cents: bt ? bt.fee : 0,
         net_cents: bt ? bt.net : -r.amount,
+        auth_code: authCodeOf(ch),       // original charge's approval code (ties the refund back)
         stripe_charge_id: ch ? ch.id : (typeof r.charge === 'string' ? r.charge : null),
         stripe_customer_id: custId,
         is_refund: true
@@ -1615,6 +1624,7 @@ router.get('/accounting/transactions', async (req, res) => {
       gross_cents: t.amount,
       fee_cents: 0,
       net_cents: typeof t.net === 'number' ? t.net : t.amount,
+      auth_code: null,                   // account-level fee, no card authorization
       stripe_charge_id: t.id,
       stripe_customer_id: null,
       is_fee: true
