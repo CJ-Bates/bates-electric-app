@@ -328,6 +328,85 @@
       </div>`;
   }
 
+  function fmtStamp(ts) {
+    if (!ts) return '';
+    return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // Plain-text work-order packet — the fields Amy keys into Jonas. Mirrors the
+  // AR "ready to invoice" email body so the dashboard and the email match.
+  function buildPacketText(sub, pendingAddons) {
+    const c = sub.customer || {};
+    const ADDON = {
+      fleet_monitoring: 'Fleet Monitoring', battery_replacement: 'Battery Replacement',
+      battery_diagnostics: 'Battery Diagnostics', exterior_wash: 'Exterior Wash',
+      coolant_flush: 'Coolant Flush', coolant_topoff: 'Coolant Top-Off',
+      ats_inspection: 'ATS Inspection', ats_outage_combined: 'ATS + Outage Test',
+      outage_test: 'Outage Test',
+    };
+    const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
+    const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
+    const annual = sub.annual_price_cents || 0;
+    const charged = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
+    const money = (cents) => '$' + ((cents || 0) / 100).toFixed(2);
+    const addons = (sub.fleet_monitoring ? ['Fleet Monitoring'] : [])
+      .concat((pendingAddons || []).filter(a => a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
+    const gen = [genClassLabel(sub.gen_class), sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
+    const lines = [
+      ['Customer', c.name || ''],
+      ['Phone', c.phone || ''],
+      ['Email', c.email || ''],
+      ['Install address', addr],
+      ['Plan', planLabel(sub.plan) + (cadence ? ` (billed ${cadence})` : '')],
+      ['Generator', gen],
+      ['Add-ons', addons.length ? addons.join(', ') : 'None'],
+      ['Signed up', sub.signup_date ? fmtDate(sub.signup_date) : ''],
+      ['Amount charged at signup', money(charged) + (cadence ? ` (${cadence})` : '')],
+    ];
+    return lines.map(([k, v]) => `${k}: ${v}`).join('\n');
+  }
+
+  // The Jonas billing hand-off pipeline. Deliberately distinct from the
+  // Service-Visit card (this is the invoicing relay, not the field visit):
+  // navy "Mark…" buttons + a copy-paste packet.
+  function renderHandoffCard(subscription, pendingAddons) {
+    const woAt = subscription.work_order_created_at;
+    const woBy = subscription.work_order_created_by;
+    const invAt = subscription.invoice_sent_at;
+    const invBy = subscription.invoice_sent_by;
+    const packet = escapeHtml(buildPacketText(subscription, pendingAddons));
+
+    const dot = (done, n) =>
+      `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:0.72rem;font-weight:700;flex-shrink:0;background:${done ? '#16A34A' : 'var(--bg-tertiary)'};color:${done ? '#fff' : 'var(--text-tertiary)'};">${done ? '&#10003;' : n}</span>`;
+    const stepRow = (n, label, done, value) => `
+      <div class="gc-card-row" style="align-items:center;">
+        <span class="gc-meta-label" style="display:flex;align-items:center;gap:8px;">${dot(done, n)}${label}</span>
+        <span class="gc-meta-value" style="text-align:right;">${value}</span>
+      </div>`;
+
+    const woValue = woAt
+      ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
+      : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>`;
+    const invValue = invAt
+      ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(invAt)}${invBy ? ' &middot; ' + escapeHtml(invBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-invoice-undo-btn">Undo</button>`
+      : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-invoice-sent-btn"${woAt ? '' : ' disabled title="Mark the work order created first"'}>Mark invoice sent</button>`;
+
+    return `
+      <div class="gc-card">
+        <h3 class="gc-card-h">Jonas Hand-off <span class="gc-card-h-count">billing relay &mdash; not the service visit</span></h3>
+        ${stepRow('1', 'Signed up', true, `<span style="font-weight:400;color:var(--text-secondary);">${fmtDate(subscription.signup_date)}</span>`)}
+        ${stepRow('2', 'Work order created', !!woAt, woValue)}
+        ${stepRow('3', 'Invoiced', !!invAt, invValue)}
+        <div class="gc-note-editor">
+          <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Work-order packet &mdash; for keying into Jonas</span>
+          <textarea id="gc-packet" class="gc-packet" readonly rows="9">${packet}</textarea>
+          <div class="gc-note-editor-actions">
+            <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-copy-packet-btn">Copy packet</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderVisitsCard(visits) {
     const rows = (visits || []).map(v => {
       const date = v.completed_date
@@ -510,6 +589,7 @@
         renderHeaderBar(c, subscription) +
         renderContactCard(c) +
         renderPlanCard(subscription, isCanceled) +
+        renderHandoffCard(subscription, pending_addons) +
         renderVisitsCard(visits) +
         renderAddonsCard(pending_addons, isCanceled) +
         renderChargesCard(adhoc_charges, isCanceled) +
@@ -559,6 +639,18 @@
 
       const saveNoteBtn = body.querySelector('#gc-save-note-btn');
       if (saveNoteBtn) saveNoteBtn.addEventListener('click', () => saveCustomerNote(c.id, saveNoteBtn));
+
+      // ---- Jonas hand-off buttons ----
+      const woBtn = body.querySelector('#gc-wo-created-btn');
+      if (woBtn) woBtn.addEventListener('click', () => markWorkOrderCreated(id, woBtn));
+      const woUndoBtn = body.querySelector('#gc-wo-undo-btn');
+      if (woUndoBtn) woUndoBtn.addEventListener('click', () => undoHandoff(id, 'work-order-created', 'Undo the work-order-created mark? (AR was already notified.)'));
+      const invBtn = body.querySelector('#gc-invoice-sent-btn');
+      if (invBtn) invBtn.addEventListener('click', () => markInvoiceSent(id, invBtn));
+      const invUndoBtn = body.querySelector('#gc-invoice-undo-btn');
+      if (invUndoBtn) invUndoBtn.addEventListener('click', () => undoHandoff(id, 'invoice-sent', 'Undo the invoice-sent mark?'));
+      const copyPacketBtn = body.querySelector('#gc-copy-packet-btn');
+      if (copyPacketBtn) copyPacketBtn.addEventListener('click', () => copyPacket(copyPacketBtn));
 
       const saveNvBtn = body.querySelector('#gc-next-visit-save');
       if (saveNvBtn) {
@@ -993,6 +1085,77 @@
   }
 
   // ---- Send Customer Portal link ----
+  async function markWorkOrderCreated(subscriptionId, btn) {
+    if (!confirm('Mark the Jonas work order created?\n\nThis notifies Accounts Receivable (ar@bates-electric.com) that it’s ready to invoice, with the work-order packet.')) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/work-order-created`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showStatus(`Could not mark work order created: ${data.error || `HTTP ${r.status}`}`, 'error');
+      } else if (data.already_marked) {
+        showStatus('Already marked — AR was not re-notified.', 'info');
+      } else {
+        showStatus(data.ar_notified ? `Marked. AR notified at ${data.ar_email}.` : 'Marked — but the AR email could not be sent (check logs).', data.ar_notified ? 'success' : 'error');
+      }
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('markWorkOrderCreated failed:', err);
+      showStatus('Failed to mark work order created.', 'error');
+    }
+  }
+
+  async function markInvoiceSent(subscriptionId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/invoice-sent`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) showStatus(`Could not mark invoice sent: ${data.error || `HTTP ${r.status}`}`, 'error');
+      else showStatus('Invoice marked sent — hand-off loop closed.', 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('markInvoiceSent failed:', err);
+      showStatus('Failed to mark invoice sent.', 'error');
+    }
+  }
+
+  async function undoHandoff(subscriptionId, which, confirmMsg) {
+    if (!confirm(confirmMsg)) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/${which}/undo`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) showStatus(`Could not undo: ${data.error || `HTTP ${r.status}`}`, 'error');
+      else showStatus('Undone.', 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('undoHandoff failed:', err);
+      showStatus('Failed to undo.', 'error');
+    }
+  }
+
+  function copyPacket(btn) {
+    const ta = document.getElementById('gc-packet');
+    if (!ta) return;
+    const flash = () => { const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = t; }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(flash).catch(() => { ta.select(); document.execCommand('copy'); flash(); });
+    } else {
+      ta.select(); document.execCommand('copy'); flash();
+    }
+  }
+
   async function sendPortalLink(subscriptionId) {
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/portal-session`, {

@@ -565,6 +565,77 @@ function buildCancellationEmail({ customer, periodEndDate }) {
   return { subject, html, text };
 }
 
+// --- 8. AR "ready to invoice" hand-off (internal) ---------------------------
+
+// Internal notification to Accounts Receivable when the office marks a Jonas
+// work order created. Body is the full work-order packet so AR can generate the
+// paid invoice without digging. `addons` is the generator_pending_addons rows
+// (optional). `markedBy` is the office user who marked it.
+function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy }) {
+  const sub = subscription || {};
+  const c = customer || {};
+  const PLAN = { semi_annual: 'Semi-Annual', annual: 'Annual' };
+  const GENC = { air_cooled: 'Air-cooled', liquid_22_38: 'Liquid-cooled (22–45 kW)', liquid_48_150: 'Liquid-cooled (48–150 kW)' };
+  const ADDON = {
+    fleet_monitoring: 'Fleet Monitoring', battery_replacement: 'Battery Replacement',
+    battery_diagnostics: 'Battery Diagnostics', exterior_wash: 'Exterior Wash',
+    coolant_flush: 'Coolant Flush', coolant_topoff: 'Coolant Top-Off',
+    ats_inspection: 'ATS Inspection', ats_outage_combined: 'ATS + Outage Test',
+    outage_test: 'Outage Test',
+  };
+
+  const name = c.name || 'Customer';
+  const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
+  const planLabel = PLAN[sub.plan] || sub.plan || '';
+  const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
+  // Amount charged at signup = the per-period charge. annual_price_cents is the
+  // annualized total (semi-annual is billed at half that, twice a year).
+  const annual = sub.annual_price_cents || 0;
+  const chargedCents = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
+  const addonList = []
+    .concat(sub.fleet_monitoring ? ['Fleet Monitoring'] : [])
+    .concat((addons || []).filter(a => a && a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
+  const generator = [GENC[sub.gen_class] || sub.gen_class, sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
+
+  const fields = [
+    ['Customer', name],
+    ['Phone', c.phone || '—'],
+    ['Email', c.email || '—'],
+    ['Install address', addr || '—'],
+    ['Plan', planLabel + (cadence ? ` (billed ${cadence})` : '')],
+    ['Generator', generator || '—'],
+    ['Add-ons', addonList.length ? addonList.join(', ') : 'None'],
+    ['Signed up', sub.signup_date ? fmtFriendlyDate(sub.signup_date) : '—'],
+    ['Amount charged at signup', `${fmtMoney(chargedCents)}${cadence ? ' (' + cadence + ')' : ''}`],
+  ];
+
+  const rowsHtml = fields.map(([k, v]) =>
+    `<tr><td style="${TABLE_LABEL};width:42%;">${escHtml(k)}</td><td style="${TABLE_VALUE}">${escHtml(v)}</td></tr>`
+  ).join('');
+
+  const body =
+    `<p style="${P}">${escHtml(markedBy || 'The office')} marked the Jonas work order created for <strong>${escHtml(name)}</strong>. Here&rsquo;s the work-order packet &mdash; everything needed to generate and send the paid invoice from Jonas.</p>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;margin-top:8px;">${rowsHtml}</table>` +
+    `<p style="${P_LAST}margin-top:24px;">Once the invoice is sent, the office will mark it invoiced in the dashboard to close the loop.</p>`;
+
+  const html = renderBrandedEmail({
+    heading: 'Ready to invoice',
+    intro: `Generator Care &mdash; ${escHtml(name)}`,
+    body,
+  });
+
+  // Plain-text packet — the copy-paste-friendly version for keying into Jonas.
+  const text =
+    `READY TO INVOICE — Generator Care\n` +
+    `${markedBy || 'The office'} marked the Jonas work order created.\n\n` +
+    `WORK ORDER PACKET\n` +
+    fields.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
+    `Once the invoice is sent, it will be marked invoiced in the dashboard.\n\n` +
+    `-- Bates Electric Generator Care`;
+
+  return { subject: `Generator Care — ready to invoice: ${name}`, html, text };
+}
+
 // ============================================================================
 // Module exports
 // ============================================================================
@@ -594,4 +665,5 @@ module.exports = {
   buildVisitCompletedEmail,
   buildRenewalUpcomingEmail,
   buildCancellationEmail,
+  buildArReadyToInvoiceEmail,
 };

@@ -285,6 +285,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  ${renderPastDueSection(pastDue)}
  ${section('Overdue', overdue, '#b91c1c')}
  ${section('Tentative - please confirm with customer', upcomingTentative, '#D97706')}
+          ${upcomingTentative.length ? `<p style="margin:6px 0 14px;color:#6b7280;font-size:12px;line-height:1.5;">New signups land here first. For each: create the Jonas work order, then open the customer in the dashboard and click <strong>Mark work order created</strong> &mdash; that notifies AR to invoice and gives you a copy-paste work-order packet.</p>` : ''}
           ${section('Confirmed visits - due in next 14 days', upcomingConfirmed, '#1F3A5F')}
           ${renderFailedSection(failedAddons, failedAdhoc)}
  <p style="margin:24px 0 0;text-align:center;">
