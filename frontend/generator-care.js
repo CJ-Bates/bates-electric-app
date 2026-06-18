@@ -392,7 +392,7 @@
     const woValue = woAt
       ? `<span style="font-weight:400;color:var(--text-secondary);">${woNum ? '<strong style="color:var(--text-primary);">WO# ' + escapeHtml(woNum) + '</strong> &middot; ' : ''}${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
       : `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
-          <input type="text" id="gc-wo-number" class="gc-wo-input" style="width:96px;flex:0 0 auto;" placeholder="Jonas WO #" autocomplete="off" />
+          <input type="text" id="gc-wo-number" class="gc-wo-input" style="width:120px;flex:0 0 auto;font-size:0.8rem;padding:5px 8px;" placeholder="Jonas WO #" autocomplete="off" />
           <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>
         </span>
         <div id="gc-wo-validation" style="display:none;color:#DC2626;font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
