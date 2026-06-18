@@ -1548,11 +1548,44 @@ router.get('/accounting/transactions', async (req, res) => {
     }
 
     // Issuer card authorization (approval) code — what Brenda reconciles against.
-    // It lives on the charge object (no extra expand needed); refunds reuse their
-    // original charge's code so a refund row ties back to the approval it reverses.
     const authCodeOf = (ch) =>
       (ch && ch.payment_method_details && ch.payment_method_details.card
         && ch.payment_method_details.card.authorization_code) || null;
+
+    // Build chargeId -> auth code. The charge objects from charges.list /
+    // refund.charge don't reliably surface payment_method_details.card
+    // .authorization_code, so for any charge whose listed object didn't carry it
+    // we retrieve the charge (which returns it definitively). Deduped across
+    // charges + the originating charges of refunds, and bounded so a huge range
+    // can't fan out into unbounded API calls.
+    const authByChargeId = {};
+    const needRetrieve = new Set();
+    const noteCharge = (chargeObj, chargeId) => {
+      if (!chargeId) return;
+      const fromObj = authCodeOf(chargeObj);
+      if (fromObj) authByChargeId[chargeId] = fromObj;
+      else if (!(chargeId in authByChargeId)) needRetrieve.add(chargeId);
+    };
+    allCharges.forEach(c => { if (c.status === 'succeeded') noteCharge(c, c.id); });
+    allRefunds.forEach(r => {
+      const ch = r.charge && typeof r.charge === 'object' ? r.charge : null;
+      noteCharge(ch, ch ? ch.id : (typeof r.charge === 'string' ? r.charge : null));
+    });
+
+    const RETRIEVE_CAP = 300;
+    const toRetrieve = [...needRetrieve].slice(0, RETRIEVE_CAP);
+    if (needRetrieve.size > RETRIEVE_CAP) {
+      console.warn(`[accounting] auth-code retrieve capped at ${RETRIEVE_CAP}; ${needRetrieve.size - RETRIEVE_CAP} charges will have no code`);
+    }
+    await Promise.all(toRetrieve.map(async (id) => {
+      try {
+        const full = await stripe.charges.retrieve(id);
+        const code = authCodeOf(full);
+        if (code) authByChargeId[id] = code;
+      } catch (e) {
+        console.error('[accounting] charge retrieve for auth code failed:', id, e && e.message);
+      }
+    }));
 
     const chargeTxns = allCharges
       .filter(c => c.status === 'succeeded')
@@ -1580,7 +1613,7 @@ router.get('/accounting/transactions', async (req, res) => {
           gross_cents: c.amount,
           fee_cents: bt ? bt.fee : 0,
           net_cents: bt ? bt.net : c.amount,
-          auth_code: authCodeOf(c),
+          auth_code: authByChargeId[c.id] || null,
           stripe_charge_id: c.id,        // kept in the API response for debugging; not shown in the table/CSV
           stripe_customer_id: c.customer,
           is_refund: false
@@ -1598,6 +1631,7 @@ router.get('/accounting/transactions', async (req, res) => {
       const address = [cust.install_address, cust.install_city, cust.install_state, cust.install_zip].filter(Boolean).join(', ');
       const isInvoice = !!(ch && ch.invoice);
       const isAdhoc = !!(ch && ch.metadata && ch.metadata.adhoc_charge_id);
+      const origChargeId = ch ? ch.id : (typeof r.charge === 'string' ? r.charge : null);
       return {
         date: new Date(r.created * 1000).toISOString().slice(0, 10),
         customer_name: cust.name || '(unmatched)',
@@ -1606,8 +1640,8 @@ router.get('/accounting/transactions', async (req, res) => {
         gross_cents: -r.amount,
         fee_cents: bt ? bt.fee : 0,
         net_cents: bt ? bt.net : -r.amount,
-        auth_code: authCodeOf(ch),       // original charge's approval code (ties the refund back)
-        stripe_charge_id: ch ? ch.id : (typeof r.charge === 'string' ? r.charge : null),
+        auth_code: origChargeId ? (authByChargeId[origChargeId] || null) : null,  // original charge's approval code (ties the refund back)
+        stripe_charge_id: origChargeId,
         stripe_customer_id: custId,
         is_refund: true
       };
