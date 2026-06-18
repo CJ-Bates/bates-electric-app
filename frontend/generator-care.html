@@ -136,6 +136,7 @@
     .gc-note-editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6; }
     .gc-note-editor textarea { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.88rem; line-height: 1.5; resize: vertical; min-height: 60px; box-sizing: border-box; }
     .gc-note-editor textarea:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.1); }
+    .gc-packet { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; line-height: 1.5; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; resize: vertical; background: #fff; color: #111827; }
     .gc-note-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 
     /* Skeleton loader */
@@ -221,6 +222,7 @@
     /* Internal note editor */
     html.dark .gc-note-editor { border-top-color: var(--glass-border); }
     html.dark .gc-note-editor textarea { border-color: var(--glass-border); }
+    html.dark .gc-packet { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
 
     /* Danger zone + canceled banner */
     html.dark .gc-danger-zone { background: rgba(220,38,38,0.13); border-color: rgba(220,38,38,0.4); }
