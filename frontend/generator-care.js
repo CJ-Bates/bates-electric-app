@@ -373,6 +373,7 @@
     const woAt = subscription.work_order_created_at;
     const woBy = subscription.work_order_created_by;
     const invAt = subscription.invoice_sent_at;
+    const invBy = subscription.invoice_sent_by;
     const packet = escapeHtml(buildPacketText(subscription, pendingAddons));
 
     const dot = (done, n) =>
@@ -387,7 +388,7 @@
       ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
       : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>`;
     const invValue = invAt
-      ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(invAt)}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-invoice-undo-btn">Undo</button>`
+      ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(invAt)}${invBy ? ' &middot; ' + escapeHtml(invBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-invoice-undo-btn">Undo</button>`
       : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-invoice-sent-btn"${woAt ? '' : ' disabled title="Mark the work order created first"'}>Mark invoice sent</button>`;
 
     return `

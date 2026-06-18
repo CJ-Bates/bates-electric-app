@@ -382,9 +382,10 @@ router.post('/subscriptions/:id/work-order-created/undo', async (req, res) => {
 // POST /api/generator-care/subscriptions/:id/invoice-sent  (closes the loop)
 router.post('/subscriptions/:id/invoice-sent', async (req, res) => {
   try {
+    const markedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
     const { data, error } = await supabaseAdmin
       .from('generator_subscriptions')
-      .update({ invoice_sent_at: new Date().toISOString() })
+      .update({ invoice_sent_at: new Date().toISOString(), invoice_sent_by: markedBy })
       .eq('id', req.params.id)
       .select('*, customer:generator_customers(*)')
       .single();
@@ -402,7 +403,7 @@ router.post('/subscriptions/:id/invoice-sent/undo', async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('generator_subscriptions')
-      .update({ invoice_sent_at: null })
+      .update({ invoice_sent_at: null, invoice_sent_by: null })
       .eq('id', req.params.id)
       .select('*, customer:generator_customers(*)')
       .single();

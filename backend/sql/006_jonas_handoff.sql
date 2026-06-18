@@ -8,6 +8,9 @@
 --                              (also the trigger point for the AR notification).
 --   * work_order_created_by  - which office user marked it (name or email).
 --   * invoice_sent_at        - when AR's paid invoice was sent (closes the loop).
+--   * invoice_sent_by        - which office user marked the invoice sent (name or
+--                              email) -- e.g. Ally in AR. Symmetric with
+--                              work_order_created_by.
 --
 -- Safe to re-run: ADD COLUMN IF NOT EXISTS (PG 15). No data is modified.
 
@@ -19,3 +22,6 @@ ALTER TABLE public.generator_subscriptions
 
 ALTER TABLE public.generator_subscriptions
   ADD COLUMN IF NOT EXISTS invoice_sent_at timestamptz;
+
+ALTER TABLE public.generator_subscriptions
+  ADD COLUMN IF NOT EXISTS invoice_sent_by text;
