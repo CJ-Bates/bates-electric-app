@@ -18,6 +18,7 @@ const BRAND = {
   name: 'Bates Electric',
   tagline: 'Generator Care',
   phone: '(636) 464-3939',
+  email: 'generators@bates-electric.com',   // monitored role mailbox (contact, not sender)
   logoUrl: 'https://app.bates-electric.com/logo-icon-192.png',
   navy: '#1F3A5F',          // primary brand color (header, CTA, headings)
   accent: '#5B95C9',        // links, secondary accents (rarely used)
@@ -178,7 +179,7 @@ function renderFooter() {
   return (
     `<tr><td align="center" style="background:${BRAND.bgFooter};padding:22px 28px;border-top:1px solid ${BRAND.borderLight};">` +
       `<div style="font-family:${FONT_STACK};font-size:13px;color:${BRAND.textBody};font-weight:600;">${escHtml(BRAND.name)}, Inc.</div>` +
-      `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Call us anytime: <a href="tel:${BRAND.phone.replace(/[^0-9+]/g, '')}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.phone)}</a></div>` +
+      `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Questions? Call <a href="tel:${BRAND.phone.replace(/[^0-9+]/g, '')}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.phone)}</a> or email <a href="mailto:${BRAND.email}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.email)}</a></div>` +
     `</td></tr>`
   );
 }
@@ -291,7 +292,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
       (fleetMonitoring ? `<tr><td style="${TABLE_LABEL}">Add-on</td><td style="${TABLE_VALUE}">Fleet Monitoring (Mobile Link)</td></tr>` : '') +
     `</table>` +
 
-    `<p style="${P}margin-top:28px;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${BRAND.phone}</strong>.</p>`;
+    `<p style="${P}margin-top:28px;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
   const html = renderBrandedEmail({
     heading: `Welcome aboard, ${escHtml(name)}!`,
@@ -312,7 +313,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     (nextVisitDate ? `  First visit: ${fmtFriendlyDate(nextVisitDate)} (we will confirm time)\n` : '') +
     `  Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
     (fleetMonitoring ? `  Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
-    `\nQuestions? Give us a call at ${BRAND.phone}.\n\n` +
+    `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- Bates Electric`;
 
   return { subject: 'Welcome to Bates Electric Generator Care!', html, text };
@@ -395,7 +396,7 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
   const body =
     `<p style="${P}">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
     `<p style="${P}">Our technician will be on-site to perform a full inspection and any services included in your plan. You don&rsquo;t need to be there as long as the generator is accessible &mdash; though we&rsquo;re happy to walk you through what we did if you are.</p>` +
-    `<p style="${P_LAST}">Need to reschedule or have a question? Give us a call at <strong>${BRAND.phone}</strong>.</p>`;
+    `<p style="${P_LAST}">Need to reschedule or have a question? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
   const html = renderBrandedEmail({
     heading: 'Your service visit is confirmed',
@@ -408,7 +409,7 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
     `Your ${planText}generator service visit is confirmed for ${dateStr}.\n\n` +
     `Our technician will perform a full inspection and any included services. ` +
     `You don't need to be there as long as the generator is accessible.\n\n` +
-    `Need to reschedule? Give us a call at ${BRAND.phone}.\n\n` +
+    `Need to reschedule? Give us a call at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- Bates Electric`;
 
   return { subject: 'Your generator service visit is confirmed', html, text };
@@ -438,7 +439,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     `<p style="${P}">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a Bates Electric Generator Care customer.</p>` +
     notesSection +
     nextVisitSection +
-    `<p style="${P_LAST}margin-top:20px;">Questions about the work, or noticed something we missed? Give us a call at <strong>${BRAND.phone}</strong>.</p>`;
+    `<p style="${P_LAST}margin-top:20px;">Questions about the work, or noticed something we missed? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
   const html = renderBrandedEmail({
     heading: 'Service visit complete',
@@ -458,7 +459,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     `Your generator service visit on ${completedStr} is complete. Thanks for being a Bates Electric Generator Care customer.\n` +
     notesText +
     nextVisitText +
-    `\nQuestions? Give us a call at ${BRAND.phone}.\n\n` +
+    `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- Bates Electric`;
 
   return { subject: 'Your generator service visit is complete', html, text };
@@ -496,7 +497,7 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
   const body =
     `<p style="${P}">Just a heads up &mdash; your ${escHtml(planText)}generator care subscription renews on <strong>${escHtml(dateStr)}</strong>. We&rsquo;ll charge <strong>${escHtml(amountStr)}</strong> to your card on file.</p>` +
     lineItemSection +
-    `<p style="${P_LAST}margin-top:24px;">No action needed if everything looks right. If you need to update your card or have any questions, give us a call at <strong>${BRAND.phone}</strong>.</p>`;
+    `<p style="${P_LAST}margin-top:24px;">No action needed if everything looks right. If you need to update your card or have any questions, give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
   const html = renderBrandedEmail({
     heading: 'Your subscription renews soon',
@@ -509,7 +510,7 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
     `Just a heads up -- your ${planText}generator care subscription renews on ${dateStr}. ` +
     `We'll charge ${amountStr} to your card on file.\n` +
     lineItemTextSection +
-    `\nNo action needed if everything looks right. If you need to update your card or have any questions, give us a call at ${BRAND.phone}.\n\n` +
+    `\nNo action needed if everything looks right. If you need to update your card or have any questions, give us a call at ${BRAND.phone} or email us at ${BRAND.email}.\n\n` +
     `-- Bates Electric`;
 
   return { subject: 'Your Bates Electric subscription renews soon', html, text };
