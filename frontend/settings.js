@@ -60,7 +60,7 @@
     if (!token) return redirectToLogin();
 
     try {
-      const res = await fetch(`${API_BASE}/me`, {
+      const res = await BatesAuth.authFetch(`${API_BASE}/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
@@ -193,7 +193,7 @@
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      const res = await fetch(`${API_BASE}/me`, {
+      const res = await BatesAuth.authFetch(`${API_BASE}/me`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -272,7 +272,7 @@
     saveBtn.disabled = true;
     saveBtn.textContent = 'Updating…';
     try {
-      const res = await fetch(`${API_BASE}/auth/change-password`, {
+      const res = await BatesAuth.authFetch(`${API_BASE}/auth/change-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

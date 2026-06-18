@@ -231,7 +231,7 @@
     if (!token) return redirectToLogin();
 
     try {
-      const res = await fetch(`${API_BASE}/me`, {
+      const res = await BatesAuth.authFetch(`${API_BASE}/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
