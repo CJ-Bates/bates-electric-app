@@ -261,8 +261,14 @@ const TABLE_VALUE = `padding:8px 0;font-weight:600;color:${BRAND.textBody};font-
 
 // --- 1. Welcome -------------------------------------------------------------
 
-function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring }) {
+function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring, paidAmountCents, paidDate }) {
   const safeMeta = meta || {};
+  // Payment-confirmation line: our own proof of payment, since Stripe's customer
+  // invoice/receipt email is turned off (Jonas is the invoice system of record).
+  // paidAmountCents is the ACTUAL first charge (passed by the caller from the
+  // real Stripe invoice — reflects any promo discount), not a hardcoded price.
+  const showPaid = (typeof paidAmountCents === 'number');
+  const paidDateStr = paidDate ? fmtFriendlyDate(paidDate) : '';
   const genClass = safeMeta.gen_class === 'air_cooled'
     ? 'Air cooled'
     : (safeMeta.gen_class && safeMeta.gen_class.startsWith('liquid') ? 'Liquid cooled' : '');
@@ -292,6 +298,8 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
       (fleetMonitoring ? `<tr><td style="${TABLE_LABEL}">Add-on</td><td style="${TABLE_VALUE}">Fleet Monitoring (Mobile Link)</td></tr>` : '') +
     `</table>` +
 
+    (showPaid ? `<p style="${P}margin-top:18px;"><strong style="color:${BRAND.navy};">Payment received:</strong> ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + escHtml(paidDateStr) : ''}. This is your confirmation of payment &mdash; your formal invoice comes separately from our office.</p>` : '') +
+
     `<p style="${P}margin-top:28px;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
   const html = renderBrandedEmail({
@@ -313,6 +321,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     (nextVisitDate ? `  First visit: ${fmtFriendlyDate(nextVisitDate)} (we will confirm time)\n` : '') +
     `  Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
     (fleetMonitoring ? `  Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
+    (showPaid ? `\nPayment received: ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + paidDateStr : ''}. This is your confirmation of payment -- your formal invoice comes separately from our office.\n` : '') +
     `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- Bates Electric`;
 
