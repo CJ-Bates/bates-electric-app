@@ -1867,7 +1867,7 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
       .select(`
-        id, plan, annual_price_cents, next_visit_due, last_visit_date, fleet_monitoring,
+        id, plan, annual_price_cents, signup_date, next_visit_due, last_visit_date, fleet_monitoring,
         gen_class, gen_type_label, gen_model, gen_serial,
         raw_metadata,
         customer:generator_customers(name, email, install_address, install_city, install_state, install_zip)
@@ -1906,6 +1906,15 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
     // a prior last_visit_date would just confuse the customer.
     const nextVisitForEmail = sub.last_visit_date ? null : sub.next_visit_due;
 
+    // On resend we don't re-fetch the original Stripe charge; use the per-period
+    // amount from the plan (annual billed in full; semi-annual billed at half).
+    // Correct for standard signups; a promo-discounted first charge isn't
+    // reconstructed here (the signup-time welcome from the webhook uses the exact
+    // charged amount).
+    const resendPaidCents = sub.annual_price_cents != null
+      ? (sub.plan === 'semi_annual' ? Math.round(sub.annual_price_cents / 2) : sub.annual_price_cents)
+      : null;
+
     const { subject, html, text } = buildWelcomeEmail({
       customer,
       meta,
@@ -1913,6 +1922,8 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
       nextVisitDate: nextVisitForEmail,
       annualPriceCents: sub.annual_price_cents,
       fleetMonitoring: sub.fleet_monitoring,
+      paidAmountCents: resendPaidCents,
+      paidDate: sub.signup_date || null,
     });
 
     const result = await sendEmail({
@@ -2054,6 +2065,8 @@ function buildTestTemplate(template) {
       nextVisitDate: '2026-08-15',
       annualPriceCents: 49900,
       fleetMonitoring: true,
+      paidAmountCents: 49900,
+      paidDate: '2026-06-18',
     });
   }
   if (template === 'failed_charge') {

@@ -169,6 +169,29 @@ async function handleSubscriptionCreated(subscription) {
     meta.plan === 'semi_annual' ? perInvoiceCents * 2 : perInvoiceCents;
   const fleetMonitoring = lineItems.length > 1;
 
+  // 3b. Actual amount charged on the first invoice, for the welcome email's
+  // payment-confirmation line. We read the invoice's amount_paid (not the
+  // line-item sum) so a promo-code discount is reflected — what the customer was
+  // really charged today. Falls back to the line-item sum if the invoice can't
+  // be read, so the confirmation line still appears.
+  let paidAmountCents = perInvoiceCents;
+  let paidDateStr = todayStr;
+  try {
+    const invId = typeof subscription.latest_invoice === 'string'
+      ? subscription.latest_invoice
+      : (subscription.latest_invoice && subscription.latest_invoice.id);
+    if (invId) {
+      const inv = await stripeGet(`/invoices/${invId}`);
+      if (inv && typeof inv.amount_paid === 'number') {
+        paidAmountCents = inv.amount_paid;
+        const paidTs = (inv.status_transitions && inv.status_transitions.paid_at) || inv.created;
+        if (paidTs) paidDateStr = new Date(paidTs * 1000).toISOString().slice(0, 10);
+      }
+    }
+  } catch (e) {
+    console.error('[welcome-email] first-invoice amount lookup failed:', e && e.message);
+  }
+
   // 4. Insert subscription
   const { data: sub, error: subErr } = await supabase
     .from('generator_subscriptions')
@@ -232,6 +255,8 @@ async function handleSubscriptionCreated(subscription) {
     nextVisitDate: nextStr,
     annualPriceCents,
     fleetMonitoring,
+    paidAmountCents,
+    paidDate: paidDateStr,
   }).catch((e) => console.error('[welcome-email] unexpected:', e && e.message));
 
   console.log(`[generator-webhook] created subscription ${sub.id} for customer ${customer.id}`);
@@ -573,13 +598,13 @@ async function handleInvoicePaymentFailed(invoice) {
 
 
 // ---- Welcome email send (templates live in lib/emails.js) ----
-async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring }) {
+async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring, paidAmountCents, paidDate }) {
   if (!customer || !customer.email) {
     console.log('[welcome-email] no email on file, skipping');
     return { sent: false, reason: 'no email on file' };
   }
   const { subject, html, text } = buildWelcomeEmail({
-    customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring,
+    customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring, paidAmountCents, paidDate,
   });
   return sendEmail({
     to: customer.email,
