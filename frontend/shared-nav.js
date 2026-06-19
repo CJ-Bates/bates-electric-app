@@ -167,13 +167,11 @@
     'safety-manual': 'Safety Manual',
     'sds-sheets': 'SDS Sheets',
     'contacts': 'Contacts',
-    'games': 'Games',
-    'generator-care': 'Generator Care',
-    // Metrics + Accounting are sub-tabs of the Generator Care section — keep the
-    // top ribbon consistent across all three rather than falling back to the
-    // default "Bates Electric".
-    'metrics': 'Generator Care',
-    'accounting': 'Generator Care'
+    'games': 'Games'
+    // Generator Care and its Metrics / Accounting sub-tabs are intentionally NOT
+    // listed, so getPageTitle() falls back to the default "Bates Electric" on all
+    // three: the top ribbon stays the app-shell brand, while the centered page
+    // heading below carries the tab-specific title.
   };
 
   /**
