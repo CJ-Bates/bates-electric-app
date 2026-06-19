@@ -3630,6 +3630,20 @@ html.dark .hub-user-role { color: #0F1420; }
   font-weight: 600;
 }
 
+/* Generator Care sub-tab header (Customers / Metrics / Accounting). A 3-column
+   grid (1fr auto 1fr) centers the H1 on the FULL container width instead of the
+   leftover space between the side controls, so the title no longer shifts when
+   the right-side actions differ per tab. min-width:0 lets the side groups shrink
+   (and the title wrap) on narrow widths instead of colliding. Theme-agnostic —
+   layout only; colors come from the shared header/body rules in both themes. */
+.gc-page-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+.gc-page-header > a { justify-self: start; min-width: 0; }
+.gc-page-header > h1 { justify-self: center; text-align: center; min-width: 0; margin: 0; }
+.gc-page-header > .dashboard-header-actions { justify-self: end; min-width: 0; }
+
 .dashboard-filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
