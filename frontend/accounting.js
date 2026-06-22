@@ -198,8 +198,7 @@
     const statusClass = String(g.status || '').replace(/[^a-z_]/gi, '');
     const niceStatus = String(g.status || '').replace(/_/g, ' ');
     const tied = !!g.ties;
-    return `<div class="payout-card">
-      <div class="payout-head">
+    const head = `<div class="payout-head">
         <div>
           <div class="payout-date">${niceDate(g.arrival_date)}<span class="payout-status ${statusClass}">${escapeHtml(niceStatus)}</span></div>
           <div class="payout-id">${escapeHtml(g.id)}</div>
@@ -208,7 +207,17 @@
           <span class="lbl">${dirLabel}</span>
           <span class="amt">${fmtMoney(Math.abs(g.bank_amount_cents))}</span>
         </div>
-      </div>
+      </div>`;
+    // Some payouts (notably auto-debits) don't itemize constituents in range —
+    // show an explanatory note instead of a misleading "does not tie" warning.
+    if (g.unconstituted) {
+      return `<div class="payout-card">
+        ${head}
+        <div class="payout-note">${escapeHtml(g.note || 'No itemized transactions reference this payout in the selected range.')}</div>
+      </div>`;
+    }
+    return `<div class="payout-card">
+      ${head}
       ${txnTableHtml(g.transactions)}
       ${txnCardsHtml(g.transactions)}
       <div class="payout-recon ${tied ? 'tied' : 'untied'}">
