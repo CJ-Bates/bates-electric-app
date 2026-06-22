@@ -47,6 +47,28 @@ function planLabelFor(plan) {
   return plan === 'semi_annual' ? 'Semi-Annual' : (plan === 'annual' ? 'Annual' : plan);
 }
 
+// ---- Accounting helpers (shared by the date-range and payout views) ----
+// Issuer card authorization (approval) code on a charge — what Brenda reconciles
+// against. Only present on the fully-retrieved charge, not always on list results.
+function authCodeOf(ch) {
+  return (ch && ch.payment_method_details && ch.payment_method_details.card
+    && ch.payment_method_details.card.authorization_code) || null;
+}
+// Best-effort human label for a charge. The payout view doesn't expand the
+// invoice object, so a charge tied to an invoice is labeled generically.
+function chargeDescription(ch) {
+  if (!ch) return 'Card charge';
+  if (ch.invoice && typeof ch.invoice === 'object') {
+    if (ch.invoice.description) return ch.invoice.description;
+    if (ch.invoice.subscription) return 'Subscription renewal';
+    return 'Invoice payment';
+  }
+  if (ch.invoice) return 'Subscription invoice';
+  if (ch.description) return ch.description;
+  if (ch.metadata && ch.metadata.adhoc_charge_id) return 'Ad-hoc charge';
+  return 'Card charge';
+}
+
 // ---- Metrics helpers (date math + month bucketing for /metrics) ----
 function todayYmd() { return new Date().toISOString().slice(0, 10); }
 function isYmd(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
@@ -1826,6 +1848,224 @@ router.get('/accounting/transactions', async (req, res) => {
     });
   } catch (err) {
     console.error('[accounting] transactions error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /accounting/payouts?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Reconcile by Stripe PAYOUT instead of by calendar date. Stripe moves money
+// to/from the bank in settlement batches (payouts) on its own schedule, so a
+// calendar-date "Net to Bank" total rarely matches any single bank line. This
+// view groups balance transactions by the payout that settled them, so each
+// group sums to the exact amount that hit the bank — and surfaces the unsettled
+// balance (not yet assigned to a payout) separately as `pending`.
+//
+// The date range filters by payout ARRIVAL DATE (when money moves at the bank),
+// not by transaction date. Mirrors Stripe's own balance/payout reconciliation.
+//
+// Correctness note: every row's amounts are read straight from its balance
+// transaction (amount/fee/net, already signed by Stripe), so a group's net ties
+// to its payout by construction. Customer/description/auth-code enrichment is
+// layered on top and can never move the totals.
+router.get('/accounting/payouts', async (req, res) => {
+  try {
+    const today = new Date();
+    const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const fromDate = req.query.from ? new Date(req.query.from + 'T00:00:00Z') : defaultFrom;
+    const toDate = req.query.to ? new Date(req.query.to + 'T23:59:59Z') : today;
+    const fromTs = Math.floor(fromDate.getTime() / 1000);
+    const toTs = Math.floor(toDate.getTime() / 1000);
+
+    // 1) Payouts whose arrival_date falls in the range (paged).
+    let payouts = [];
+    {
+      let after; let guard = 0;
+      do {
+        const page = await stripe.payouts.list({
+          arrival_date: { gte: fromTs, lte: toTs },
+          limit: 100,
+          starting_after: after,
+        });
+        payouts = payouts.concat(page.data);
+        after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+        guard++;
+        if (guard > 20) break;
+      } while (after);
+    }
+
+    // 2) Constituent balance transactions for each payout. The payout's own
+    //    settlement entry (type 'payout') is the balancing line, not a
+    //    constituent, so it's excluded from the rows.
+    async function listConstituents(payoutId) {
+      let bts = []; let after; let guard = 0;
+      do {
+        const page = await stripe.balanceTransactions.list({
+          payout: payoutId,
+          limit: 100,
+          starting_after: after,
+          expand: ['data.source'],
+        });
+        bts = bts.concat(page.data);
+        after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+        guard++;
+        if (guard > 20) break;
+      } while (after);
+      return bts.filter((bt) => bt.type !== 'payout');
+    }
+    const payoutBts = {};
+    for (const p of payouts) {
+      payoutBts[p.id] = await listConstituents(p.id);
+    }
+
+    // 3) Pending: balance transactions not yet assigned to any payout. These are
+    //    by definition the most recent activity, so a few pages cover it; bounded.
+    let pendingBts = [];
+    {
+      let after; let guard = 0;
+      do {
+        const page = await stripe.balanceTransactions.list({
+          limit: 100,
+          starting_after: after,
+          expand: ['data.source'],
+        });
+        page.data.forEach((bt) => {
+          if (!bt.payout && bt.type !== 'payout') pendingBts.push(bt);
+        });
+        after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+        guard++;
+        if (guard > 3) break; // pending is recent; don't scan all history
+      } while (after);
+    }
+
+    // 4) Enrichment. Charge ids we need a full charge for: charge txns whose
+    //    expanded source didn't carry the auth code, and every refund's
+    //    originating charge (for its customer + the code that ties it back).
+    const allBts = [...Object.values(payoutBts).reduce((a, b) => a.concat(b), []), ...pendingBts];
+    const authByChargeId = {};
+    const chargeCustomerId = {};
+    const needRetrieve = new Set();
+    allBts.forEach((bt) => {
+      const src = bt.source && typeof bt.source === 'object' ? bt.source : null;
+      if (bt.type === 'charge' || bt.type === 'payment') {
+        const id = src ? src.id : (typeof bt.source === 'string' ? bt.source : null);
+        if (!id) return;
+        if (src && src.customer) chargeCustomerId[id] = src.customer;
+        const code = authCodeOf(src);
+        if (code) authByChargeId[id] = code; else needRetrieve.add(id);
+      } else if (bt.type === 'refund' || bt.type === 'payment_refund') {
+        const origId = src ? (typeof src.charge === 'string' ? src.charge : (src.charge && src.charge.id)) : null;
+        if (origId) needRetrieve.add(origId);
+      }
+    });
+    const RETRIEVE_CAP = 300;
+    const toRetrieve = [...needRetrieve].slice(0, RETRIEVE_CAP);
+    if (needRetrieve.size > RETRIEVE_CAP) {
+      console.warn(`[payouts] charge retrieve capped at ${RETRIEVE_CAP}; ${needRetrieve.size - RETRIEVE_CAP} skipped`);
+    }
+    await Promise.all(toRetrieve.map(async (id) => {
+      try {
+        const full = await stripe.charges.retrieve(id);
+        const code = authCodeOf(full);
+        if (code) authByChargeId[id] = code;
+        if (full.customer) chargeCustomerId[id] = full.customer;
+      } catch (e) {
+        console.error('[payouts] charge retrieve failed:', id, e && e.message);
+      }
+    }));
+
+    // Customer directory (one query for all stripe customers seen).
+    const customerIds = [...new Set(Object.values(chargeCustomerId).filter(Boolean))];
+    let customerMap = {};
+    if (customerIds.length) {
+      const { data: subs, error: subErr } = await supabaseAdmin
+        .from('generator_subscriptions')
+        .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
+        .in('stripe_customer_id', customerIds);
+      if (subErr) throw subErr;
+      (subs || []).forEach((s) => { if (s.customer) customerMap[s.stripe_customer_id] = s.customer; });
+    }
+
+    // A display row built straight from a balance transaction. amount/fee/net
+    // are Stripe's signed figures — used verbatim so groups always tie.
+    function rowFromBt(bt) {
+      const src = bt.source && typeof bt.source === 'object' ? bt.source : null;
+      let chargeId = null; let custId = null; let description = ''; let fallbackName = '';
+      if (bt.type === 'charge' || bt.type === 'payment') {
+        chargeId = src ? src.id : (typeof bt.source === 'string' ? bt.source : null);
+        custId = (chargeId && chargeCustomerId[chargeId]) || (src && src.customer) || null;
+        description = chargeDescription(src);
+      } else if (bt.type === 'refund' || bt.type === 'payment_refund') {
+        chargeId = src ? (typeof src.charge === 'string' ? src.charge : (src.charge && src.charge.id)) : null;
+        custId = chargeId ? chargeCustomerId[chargeId] : null;
+        description = 'Refund';
+      } else if (bt.type === 'stripe_fee') {
+        fallbackName = 'Stripe';
+        description = bt.description || 'Stripe fee';
+      } else {
+        description = bt.description || (bt.type || 'Transaction');
+      }
+      const cust = custId ? (customerMap[custId] || {}) : {};
+      const address = [cust.install_address, cust.install_city, cust.install_state, cust.install_zip].filter(Boolean).join(', ');
+      return {
+        date: new Date(bt.created * 1000).toISOString().slice(0, 10),
+        customer_name: cust.name || fallbackName || '(unmatched)',
+        address,
+        description,
+        gross_cents: bt.amount,
+        fee_cents: bt.fee || 0,
+        net_cents: typeof bt.net === 'number' ? bt.net : bt.amount,
+        auth_code: chargeId ? (authByChargeId[chargeId] || null) : null,
+        type: bt.type,
+      };
+    }
+
+    // 5) Assemble payout groups (newest arrival first).
+    const payoutGroups = payouts.map((p) => {
+      const rows = payoutBts[p.id].map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+      const transactionsNet = rows.reduce((s, r) => s + r.net_cents, 0);
+      const direction = transactionsNet < 0 ? 'debit' : 'deposit';
+      // Stripe's reported payout amount is positive; sign it by the settled
+      // direction. Tie-out compares magnitudes so it's robust either way.
+      const payoutMag = Math.abs(p.amount);
+      const bankAmount = (transactionsNet < 0 ? -1 : 1) * payoutMag;
+      return {
+        id: p.id,
+        arrival_date: new Date(p.arrival_date * 1000).toISOString().slice(0, 10),
+        status: p.status, // paid | in_transit | pending | failed | canceled
+        direction,
+        bank_amount_cents: bankAmount,            // signed: + deposit, − debit (Stripe's figure)
+        transactions_net_cents: transactionsNet,  // signed sum of the rows
+        ties: Math.abs(transactionsNet) === payoutMag,
+        gross_cents: rows.reduce((s, r) => s + r.gross_cents, 0),
+        fee_cents: rows.reduce((s, r) => s + r.fee_cents, 0),
+        count: rows.length,
+        transactions: rows,
+      };
+    }).sort((a, b) => b.arrival_date.localeCompare(a.arrival_date));
+
+    // 6) Pending group.
+    const pendingRows = pendingBts.map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+    const pendingNet = pendingRows.reduce((s, r) => s + r.net_cents, 0);
+
+    res.json({
+      from: fromDate.toISOString().slice(0, 10),
+      to: toDate.toISOString().slice(0, 10),
+      payouts: payoutGroups,
+      pending: {
+        net_cents: pendingNet,
+        gross_cents: pendingRows.reduce((s, r) => s + r.gross_cents, 0),
+        fee_cents: pendingRows.reduce((s, r) => s + r.fee_cents, 0),
+        count: pendingRows.length,
+        transactions: pendingRows,
+      },
+      totals: {
+        payout_count: payoutGroups.length,
+        settled_net_cents: payoutGroups.reduce((s, g) => s + g.bank_amount_cents, 0),
+        untied_count: payoutGroups.filter((g) => !g.ties).length,
+      },
+    });
+  } catch (err) {
+    console.error('[accounting] payouts error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
