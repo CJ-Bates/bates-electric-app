@@ -75,6 +75,9 @@
     .pending-amt { font-size: 1.3rem; font-weight: 800; color: #92400e; font-variant-numeric: tabular-nums; }
     .pending-note { font-size: 0.8rem; color: #92400e; margin: 4px 0 12px; opacity: 0.92; }
 
+    /* Explanatory note for payouts with no itemized constituents (e.g. auto-debits). */
+    .payout-note { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 0.85rem; background: #f3f4f6; color: #4b5563; border-left: 3px solid #9ca3af; }
+
     /* Tables nested inside payout/pending cards sit flat (no inner card chrome). */
     .payout-card .acc-table-wrap, .pending-card .acc-table-wrap { box-shadow: none; background: transparent; border-radius: 0; }
     .payout-card .acc-card, .pending-card .acc-card { box-shadow: none; }
@@ -131,6 +134,7 @@
     html.dark .payout-status.failed, html.dark .payout-status.canceled { background: rgba(248,113,113,0.18); color: #FCA5A5; }
     html.dark .pending-card { background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.32); }
     html.dark .pending-title, html.dark .pending-amt, html.dark .pending-note { color: #FBBF24; }
+    html.dark .payout-note { background: var(--bg-tertiary); color: var(--text-secondary); border-left-color: var(--glass-border); }
   </style>
 </head>
 <body class="hub-body dashboard-body">

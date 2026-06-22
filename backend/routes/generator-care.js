@@ -1903,56 +1903,63 @@ router.get('/accounting/payouts', async (req, res) => {
       } while (after);
     } catch (e) { note('payouts.list', e); }
 
-    // 2) Constituent balance transactions for each payout. No expand here — we
-    //    enrich from bounded retrieves below (a deep data.source expand is both
-    //    unnecessary and a common cause of API errors). The payout's own
-    //    settlement entry (type 'payout') is the balancing line, not a
-    //    constituent, so it's excluded. One bad payout doesn't sink the rest.
-    const payoutBts = {};
-    for (const p of payouts) {
-      payoutBts[p.id] = [];
-      try {
-        let after; let guard = 0;
-        do {
-          const page = await stripe.balanceTransactions.list({
-            payout: p.id,
-            limit: 100,
-            starting_after: after,
-          });
-          payoutBts[p.id] = payoutBts[p.id].concat(page.data.filter((bt) => bt.type !== 'payout'));
-          after = page.has_more ? page.data[page.data.length - 1].id : undefined;
-          guard++;
-          if (guard > 20) break;
-        } while (after);
-      } catch (e) { note('balanceTransactions.list payout=' + p.id, e); }
-    }
+    const payoutById = {};
+    payouts.forEach((p) => { payoutById[p.id] = p; });
+    const inRange = new Set(payouts.map((p) => p.id));
 
-    // 3) Pending: balance transactions not yet settled to a payout. There is no
-    //    "payout is null" filter in Stripe, so we list the most recent balance
-    //    transactions (pending is by definition recent) and treat an item as
-    //    unsettled when it has no payout assigned and isn't already available and
-    //    paid out. `available_on` in the future or status 'pending' also means
-    //    not-yet-settled. Bounded to a few pages.
+    // 2) Group by the balance transaction's `payout` FIELD, not the per-payout
+    //    reconciliation report (balanceTransactions.list({payout})) — that report
+    //    is unsupported for auto-debit payouts and throws. Listing balance
+    //    transactions over the window and reading bt.payout works for normal
+    //    deposits AND auto-debits. The lower bound is widened so a payout
+    //    arriving early in the range still captures its slightly-earlier
+    //    constituents. The settlement entry (type 'payout') is the balancing
+    //    line, not a constituent.
+    const payoutBts = {};
+    payouts.forEach((p) => { payoutBts[p.id] = []; });
     let pendingBts = [];
+    const btById = {};
     try {
-      const nowTs = Math.floor(today.getTime() / 1000);
+      const btFromTs = fromTs - 14 * 24 * 60 * 60;
       let after; let guard = 0;
       do {
         const page = await stripe.balanceTransactions.list({
+          created: { gte: btFromTs, lte: toTs },
           limit: 100,
           starting_after: after,
         });
         page.data.forEach((bt) => {
-          if (bt.type === 'payout') return;
-          const unsettled = !bt.payout || bt.status === 'pending' || (typeof bt.available_on === 'number' && bt.available_on > nowTs);
-          const notYetPaidOut = !bt.payout; // only show what hasn't been assigned to a payout
-          if (unsettled && notYetPaidOut) pendingBts.push(bt);
+          btById[bt.id] = bt;
+          if (bt.type === 'payout') return;                         // settlement line
+          if (bt.payout && inRange.has(bt.payout)) payoutBts[bt.payout].push(bt);
+          else if (!bt.payout) pendingBts.push(bt);                 // not yet settled
+          // else: settled by a payout outside this range — neither here nor pending
         });
         after = page.has_more ? page.data[page.data.length - 1].id : undefined;
         guard++;
-        if (guard > 3) break; // pending is recent; don't scan all history
+        if (guard > 30) break;
       } while (after);
-    } catch (e) { note('balanceTransactions.list pending', e); }
+    } catch (e) { note('balanceTransactions.list window', e); }
+
+    // 3) Authoritative signed bank movement per payout, from the payout's own
+    //    settlement balance transaction. A bt's `amount` is the change to the
+    //    Stripe balance; the bank sees the opposite, so bank = -pbt.amount:
+    //    a normal payout lowers the Stripe balance (pbt.amount < 0) => money to
+    //    bank (+); an auto-debit raises it (pbt.amount > 0) => money from bank (−).
+    //    Retrieving a single bt is supported even for auto-debits (only the list
+    //    report isn't). Reuse btById where the settlement bt is already in window.
+    const payoutBankCents = {};
+    {
+      const needPbt = payouts.filter((p) => p.balance_transaction && !btById[p.balance_transaction]);
+      await Promise.all(needPbt.slice(0, 100).map(async (p) => {
+        try { btById[p.balance_transaction] = await stripe.balanceTransactions.retrieve(p.balance_transaction); }
+        catch (e) { note('balanceTransactions.retrieve ' + p.balance_transaction, e); }
+      }));
+      payouts.forEach((p) => {
+        const pbt = p.balance_transaction ? btById[p.balance_transaction] : null;
+        if (pbt && typeof pbt.amount === 'number') payoutBankCents[p.id] = -pbt.amount;
+      });
+    }
 
     // 4) Enrichment via bounded retrieves (no expand). Each balance transaction's
     //    `source` is just an id string here: charge/payment -> the charge id;
@@ -2049,22 +2056,36 @@ router.get('/accounting/payouts', async (req, res) => {
     const payoutGroups = payouts.map((p) => {
       const rows = (payoutBts[p.id] || []).map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
       const transactionsNet = rows.reduce((s, r) => s + r.net_cents, 0);
-      const direction = transactionsNet < 0 ? 'debit' : 'deposit';
-      // Stripe's reported payout amount is positive; sign it by the settled
-      // direction. Tie-out compares magnitudes so it's robust either way.
-      const payoutMag = Math.abs(typeof p.amount === 'number' ? p.amount : 0);
-      const bankAmount = (transactionsNet < 0 ? -1 : 1) * payoutMag;
+      const count = rows.length;
+      // Signed bank amount comes from the payout's own settlement bt (authoritative
+      // for deposits AND auto-debits). Fall back to |payout.amount| signed by the
+      // constituents' net only if that bt couldn't be read.
+      let bankAmount = payoutBankCents[p.id];
+      if (typeof bankAmount !== 'number') {
+        const mag = Math.abs(typeof p.amount === 'number' ? p.amount : 0);
+        bankAmount = (transactionsNet < 0 ? -1 : 1) * mag;
+      }
+      const direction = bankAmount < 0 ? 'debit' : 'deposit';
+      const unconstituted = count === 0;
+      let groupNote = null;
+      if (unconstituted) {
+        groupNote = direction === 'debit'
+          ? 'Auto-debit recovering a prior negative balance. Its itemized transactions settled in an earlier period and aren’t listed here.'
+          : 'No itemized transactions reference this payout in the selected range.';
+      }
       return {
         id: p.id,
         arrival_date: p.arrival_date ? new Date(p.arrival_date * 1000).toISOString().slice(0, 10) : '',
         status: p.status, // paid | in_transit | pending | failed | canceled
         direction,
-        bank_amount_cents: bankAmount,            // signed: + deposit, − debit (Stripe's figure)
+        bank_amount_cents: bankAmount,            // signed: + deposit, − debit
         transactions_net_cents: transactionsNet,  // signed sum of the rows
-        ties: Math.abs(transactionsNet) === payoutMag,
+        ties: count > 0 ? transactionsNet === bankAmount : false,
+        unconstituted,
+        note: groupNote,
         gross_cents: rows.reduce((s, r) => s + r.gross_cents, 0),
         fee_cents: rows.reduce((s, r) => s + r.fee_cents, 0),
-        count: rows.length,
+        count,
         transactions: rows,
       };
     }).sort((a, b) => b.arrival_date.localeCompare(a.arrival_date));
@@ -2089,8 +2110,20 @@ router.get('/accounting/payouts', async (req, res) => {
         settled_net_cents: payoutGroups.reduce((s, g) => s + g.bank_amount_cents, 0),
         untied_count: payoutGroups.filter((g) => !g.ties).length,
       },
-      // Surfaced only with ?debug=1: which Stripe sections (if any) failed.
-      ...(debug ? { _debug: { errors, payouts_fetched: payouts.length, pending_fetched: pendingBts.length } } : {}),
+      // Surfaced only with ?debug=1: section errors + per-payout signals so we
+      // can confirm grouping/direction without Render log access.
+      ...(debug ? { _debug: {
+        errors,
+        payouts_fetched: payouts.length,
+        pending_fetched: pendingBts.length,
+        payouts_seen: payouts.map((p) => ({
+          id: p.id, amount: p.amount, arrival_date: p.arrival_date, status: p.status,
+          type: p.type, source_type: p.source_type, automatic: p.automatic,
+          has_balance_transaction: !!p.balance_transaction,
+          settlement_bt_cents: payoutBankCents[p.id],
+          grouped_count: (payoutBts[p.id] || []).length,
+        })),
+      } } : {}),
     });
   } catch (err) {
     // Log the full stack so we're never blind again; keep the client message
