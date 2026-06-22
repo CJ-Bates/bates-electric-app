@@ -47,6 +47,10 @@
       .acc-summary { gap: 20px; padding: 14px 16px; }
       .acc-summary-item .value { font-size: 1.2rem; }
     }
+    /* Phones: 2x2 grid instead of four-across (which cramps/overflows at ~360px). */
+    @media (max-width: 640px) {
+      .acc-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; }
+    }
 
     /* ============================================================
        DARK MODE — scoped to html.dark only; light mode untouched.

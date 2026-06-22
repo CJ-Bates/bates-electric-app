@@ -2133,8 +2133,42 @@ input:focus-visible {
 /* Dark accent is light blue, so the active label must be dark to stay legible. */
 html.dark .section-tab.active,
 html.dark .section-tab.active:hover { color: #0F1420; }
-@media (max-width: 480px) {
-  .section-tab { padding: 9px 8px; font-size: 0.82rem; }
+/* Tab icons are only used in the mobile bottom bar (hidden in the desktop top switcher). */
+.section-tab-icon { display: none; }
+
+/* Phones: turn the switcher into a thumb-reachable fixed bottom nav bar
+   (icon + label), repositioning the SAME element so there's only one switcher.
+   Desktop (>640px) keeps the top in-page switcher above, unchanged. */
+@media (max-width: 640px) {
+  .section-tabs {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 1500;
+    margin: 0;
+    gap: 0;
+    border: none;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--bg-secondary);
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.12);
+  }
+  .section-tab {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 6px 4px;
+    min-height: 50px;
+    font-size: 0.7rem;
+  }
+  .section-tab-icon { display: block; line-height: 0; }
+  .section-tab-icon svg { width: 22px; height: 22px; }
+  .section-tab-label { font-size: 0.7rem; }
+  /* Reserve room so the fixed bar never covers the last row of content. */
+  .has-bottom-nav .dashboard-main { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
 }
 
 /* ============================================================
@@ -3658,6 +3692,14 @@ html.dark .hub-user-role { color: #0F1420; }
   }
   .gc-page-header > h1 { text-align: left; }
   .gc-page-header > .dashboard-header-actions { flex-wrap: wrap; }
+  /* Comfortable thumb targets for the header action buttons on phones. */
+  .gc-page-header .dashboard-header-actions .btn-secondary,
+  .gc-page-header .dashboard-header-actions .btn-primary {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .dashboard-filters {

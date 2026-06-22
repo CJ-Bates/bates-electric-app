@@ -465,6 +465,12 @@
   function injectSectionTabs() {
     const mount = document.querySelector('[data-section-tabs]');
     if (!mount) return;
+    // Icons are hidden on desktop (CSS) and only shown in the mobile bottom bar.
+    const ICONS = {
+      'generator-care': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+      'metrics': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>',
+      'accounting': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    };
     const tabs = [
       { label: 'Customers',  href: 'generator-care.html', match: 'generator-care' },
       { label: 'Metrics',    href: 'metrics.html',        match: 'metrics' },
@@ -473,8 +479,13 @@
     const path = window.location.pathname;
     mount.innerHTML = tabs.map((t) => {
       const active = path.indexOf(t.match) !== -1;
-      return `<a href="${t.href}" class="section-tab${active ? ' active' : ''}"${active ? ' aria-current="page"' : ''}>${t.label}</a>`;
+      return `<a href="${t.href}" class="section-tab${active ? ' active' : ''}"${active ? ' aria-current="page"' : ''}>` +
+        `<span class="section-tab-icon" aria-hidden="true">${ICONS[t.match] || ''}</span>` +
+        `<span class="section-tab-label">${t.label}</span></a>`;
     }).join('');
+    // Marks pages that have the switcher so content can reserve space for the
+    // mobile fixed bottom bar (see .has-bottom-nav in styles.css).
+    document.body.classList.add('has-bottom-nav');
   }
 
   /**
