@@ -8,7 +8,7 @@
 const express = require('express');
 const Stripe = require('stripe');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
-const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail } = require('../lib/emails');
+const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildReceiptEmail } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -366,7 +366,7 @@ async function handleSubscriptionDeleted(subscription) {
   if (subscription.customer) {
     const { data: cust, error: custErr } = await supabase
       .from('generator_customers')
-      .select('name, email')
+      .select('name, email, install_state')
       .eq('stripe_customer_id', subscription.customer)
       .maybeSingle();
     if (custErr) {
@@ -468,6 +468,77 @@ async function handleInvoicePaid(invoice) {
       }
     }
   }
+
+  // Send OUR OWN receipt for this charge, branded by the customer's state
+  // (Stripe's automatic receipt is account-level and can't vary per customer).
+  // Covers signup, renewal, add-on, and ad-hoc — they all flow through invoices.
+  // Non-blocking; a mail hiccup must never fail the webhook (Stripe retries 500s).
+  sendReceiptEmail(invoice).catch((e) => console.error('[receipt-email] unexpected:', e && e.message));
+}
+
+// Build + send our state-branded receipt for a paid invoice.
+async function sendReceiptEmail(invoice) {
+  try {
+    if (!invoice || !invoice.customer) return { sent: false, reason: 'no customer' };
+    const amountCents = typeof invoice.amount_paid === 'number' ? invoice.amount_paid : 0;
+    if (amountCents <= 0) {
+      console.log('[receipt-email] amount_paid is 0, skipping');
+      return { sent: false, reason: 'zero amount' };
+    }
+
+    // Only generator customers are in our table; non-generator invoices won't match.
+    const { data: customer, error: custErr } = await supabase
+      .from('generator_customers')
+      .select('name, email, install_state')
+      .eq('stripe_customer_id', invoice.customer)
+      .maybeSingle();
+    if (custErr) {
+      console.error('[receipt-email] customer lookup error:', custErr.message);
+      return { sent: false, reason: 'lookup error' };
+    }
+    if (!customer || !customer.email) {
+      console.log('[receipt-email] no matching customer or email, skipping');
+      return { sent: false, reason: 'no customer email' };
+    }
+
+    const paidTs = (invoice.status_transitions && invoice.status_transitions.paid_at) || invoice.created;
+    const paidDate = paidTs ? new Date(paidTs * 1000).toISOString().slice(0, 10) : null;
+
+    // Card brand + last-4 from the settling charge (best-effort enrichment).
+    let cardBrand = null;
+    let cardLast4 = null;
+    try {
+      const chargeId = typeof invoice.charge === 'string' ? invoice.charge : (invoice.charge && invoice.charge.id);
+      if (chargeId) {
+        const ch = await stripeGet(`/charges/${chargeId}`);
+        const card = ch && ch.payment_method_details && ch.payment_method_details.card;
+        if (card) { cardBrand = card.brand || null; cardLast4 = card.last4 || null; }
+      }
+    } catch (e) {
+      console.error('[receipt-email] charge lookup failed:', e && e.message);
+    }
+
+    // Description from invoice line items (e.g. "Generator Care — Annual" / "Add-on: …").
+    const lineDescs = ((invoice.lines && invoice.lines.data) || [])
+      .map((l) => l.description).filter(Boolean);
+    const description = lineDescs.length ? lineDescs.join('; ') : 'Generator Care';
+    const receiptNumber = invoice.number || invoice.receipt_number || invoice.id || null;
+
+    const { subject, html, text } = buildReceiptEmail({
+      customer,
+      companyState: customer.install_state,
+      amountCents,
+      paidDate,
+      cardBrand,
+      cardLast4,
+      description,
+      receiptNumber,
+    });
+    return sendEmail({ to: customer.email, subject, html, text, logTag: '[receipt-email]', companyState: customer.install_state });
+  } catch (e) {
+    console.error('[receipt-email] build/send error:', e && e.message);
+    return { sent: false, reason: 'error' };
+  }
 }
 
 // Stripe fires invoice.upcoming ahead of every renewal (default 7 days; configurable
@@ -485,7 +556,7 @@ async function handleInvoiceUpcoming(invoice) {
 
   const { data: sub } = await supabase
     .from('generator_subscriptions')
-    .select('id, plan, status, customer:generator_customers(name, email)')
+    .select('id, plan, status, customer:generator_customers(name, email, install_state)')
     .eq('stripe_subscription_id', stripeSubId)
     .maybeSingle();
   if (!sub) {
@@ -529,6 +600,7 @@ async function handleInvoiceUpcoming(invoice) {
     html,
     text,
     logTag: '[renewal-upcoming]',
+    companyState: customer.install_state,
   });
 }
 
@@ -576,7 +648,7 @@ async function handleInvoicePaymentFailed(invoice) {
     if (stripeCustomerId) {
       const { data: cust } = await supabase
         .from('generator_customers')
-        .select('id, name, email, stripe_customer_id')
+        .select('id, name, email, stripe_customer_id, install_state')
         .eq('stripe_customer_id', stripeCustomerId)
         .maybeSingle();
       if (cust && cust.email) {
@@ -612,6 +684,7 @@ async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annu
     html,
     text,
     logTag: '[welcome-email]',
+    companyState: (meta && meta.install_state),
   });
 }
 
@@ -641,6 +714,7 @@ async function sendCardFailedEmail({ customer, amountCents, description }) {
     html,
     text,
     logTag: '[card-failed-email]',
+    companyState: customer.install_state,
   });
 }
 
@@ -657,6 +731,7 @@ async function sendCancellationEmail({ customer }) {
     html,
     text,
     logTag: '[cancellation-email]',
+    companyState: customer.install_state,
   });
 }
 

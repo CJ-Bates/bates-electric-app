@@ -10,6 +10,7 @@
 // template files.
 
 const sgMail = require('@sendgrid/mail');
+const { isFlorida, companyName } = require('./branding');
 
 // ============================================================================
 // Brand constants -- single source of truth for everything visible
@@ -32,7 +33,28 @@ const BRAND = {
   eyebrow: '#DFE6F0',       // pale blue eyebrow text on navy header
   fromEmail: 'no-reply@bates-electric.com',
   fromName: 'Bates Electric Generator Care',
+  // Florida DBA logo (the "S.E. Bates Electric" wordmark). Set via env once the
+  // asset is deployed to the static host, e.g.
+  //   GENERATOR_SE_LOGO_URL=https://app.bates-electric.com/se-bates-electric-logo.png
+  // When unset, Florida emails gracefully fall back to the text name only —
+  // never a broken image. Per the settlement (§2b) the S.E. logo is used as
+  // provided (scaled proportionally, never recolored/cropped/de-emphasized).
+  seLogoUrl: process.env.GENERATOR_SE_LOGO_URL || null,
 };
+
+// Resolve the per-customer brand from an install-address state. Florida =>
+// "S.E. Bates Electric" + its logo (if configured); everywhere else the default.
+function brandFor(state) {
+  const fl = isFlorida(state);
+  return {
+    fl,
+    company: companyName(state),
+    // Non-FL: the square brand icon. FL: the S.E. wordmark if configured, else
+    // null (header renders the text name only — no broken image).
+    logoUrl: fl ? (BRAND.seLogoUrl || null) : BRAND.logoUrl,
+    logoIsWordmark: fl && !!BRAND.seLogoUrl,
+  };
+}
 
 // Legacy exports -- kept for any callers that still reach in for these directly.
 const COMPANY_PHONE = BRAND.phone;
@@ -62,7 +84,7 @@ function ensureSendGridKey() {
 // Sends an email via SendGrid. Returns { sent: boolean, reason?: string }.
 // Never throws -- webhook callers must not surface failures as 500s
 // (Stripe would retry on 500).
-async function sendEmail({ to, subject, html, text, logTag }) {
+async function sendEmail({ to, subject, html, text, logTag, companyState }) {
   const tag = logTag || '[email]';
   if (!ensureSendGridKey()) {
     console.log(`${tag} SENDGRID_API_KEY not set, skipping`);
@@ -72,10 +94,14 @@ async function sendEmail({ to, subject, html, text, logTag }) {
     console.log(`${tag} no recipient, skipping`);
     return { sent: false, reason: 'no recipient' };
   }
+  // The "From" display name is also a displayed company name, so it follows the
+  // Florida DBA rule. Domain is unchanged. When companyState isn't supplied (e.g.
+  // internal AR mail), the default Bates Electric sender name is used.
+  const fromName = (companyState != null) ? (companyName(companyState) + ' Generator Care') : BRAND.fromName;
   try {
     const response = await sgMail.send({
       to,
-      from: { email: getFromEmail(), name: BRAND.fromName },
+      from: { email: getFromEmail(), name: fromName },
       subject,
       text,
       html,
@@ -155,30 +181,46 @@ function ctaButton(text, url) {
 
 // Default sign-off appears at the bottom of the body (above the footer band).
 // Callers can pass their own `signoff` HTML to override (e.g. to add a
-// contextual reminder paragraph above the tagline).
-const DEFAULT_SIGNOFF = (
-  `<p style="margin:28px 0 0;color:${BRAND.textMuted};font-size:14px;line-height:1.6;">` +
-    `&mdash; The Bates Electric team` +
-  `</p>`
-);
+// contextual reminder paragraph above the tagline). `company` is state-aware.
+function defaultSignoff(company) {
+  return (
+    `<p style="margin:28px 0 0;color:${BRAND.textMuted};font-size:14px;line-height:1.6;">` +
+      `&mdash; The ${escHtml(company || BRAND.name)} team` +
+    `</p>`
+  );
+}
+const DEFAULT_SIGNOFF = defaultSignoff(BRAND.name);
 
-// Build the navy header band (logo + "Bates Electric" + "GENERATOR CARE" eyebrow).
-function renderHeader() {
+// Build the navy header band (logo + company name + "GENERATOR CARE" eyebrow).
+// `brand` is a brandFor() result; defaults to the standard Bates Electric brand.
+function renderHeader(brand) {
+  const b = brand || { company: BRAND.name, logoUrl: BRAND.logoUrl, logoIsWordmark: false };
+  const company = b.company || BRAND.name;
+  // Wordmark (FL S.E. logo) is shown as-provided: scaled proportionally, never
+  // forced square. The square brand icon keeps its 56x56. If there's no logo URL
+  // (FL with the asset not yet configured), show the text name only.
+  const logoImg = b.logoUrl
+    ? (b.logoIsWordmark
+        ? `<img src="${b.logoUrl}" alt="${escHtml(company)}" width="240" ` +
+            `style="display:block;margin:0 auto 12px;max-width:240px;width:240px;height:auto;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">`
+        : `<img src="${b.logoUrl}" alt="${escHtml(company)}" width="56" height="56" ` +
+            `style="display:block;margin:0 auto 12px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">`)
+    : '';
   return (
     `<tr><td align="center" style="background:${BRAND.navy};padding:30px 28px 24px;">` +
-      `<img src="${BRAND.logoUrl}" alt="${escHtml(BRAND.name)}" width="56" height="56" ` +
-        `style="display:block;margin:0 auto 12px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">` +
-      `<div style="color:#FFFFFF;font-family:${FONT_STACK};font-size:20px;font-weight:700;letter-spacing:0.4px;line-height:1.2;">${escHtml(BRAND.name)}</div>` +
+      logoImg +
+      `<div style="color:#FFFFFF;font-family:${FONT_STACK};font-size:20px;font-weight:700;letter-spacing:0.4px;line-height:1.2;">${escHtml(company)}</div>` +
       `<div style="color:${BRAND.eyebrow};font-family:${FONT_STACK};font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-top:6px;">${escHtml(BRAND.tagline)}</div>` +
     `</td></tr>`
   );
 }
 
-// Footer band: company name + phone, restrained.
-function renderFooter() {
+// Footer band: company name + phone, restrained. Contact details never change.
+function renderFooter(brand) {
+  const company = (brand && brand.company) || BRAND.name;
   return (
     `<tr><td align="center" style="background:${BRAND.bgFooter};padding:22px 28px;border-top:1px solid ${BRAND.borderLight};">` +
-      `<div style="font-family:${FONT_STACK};font-size:13px;color:${BRAND.textBody};font-weight:600;">${escHtml(BRAND.name)}, Inc.</div>` +
+      `<div style="font-family:${FONT_STACK};font-size:13px;color:${BRAND.textBody};font-weight:600;">${escHtml(company)}, Inc.</div>` +
       `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Questions? Call <a href="tel:${BRAND.phone.replace(/[^0-9+]/g, '')}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.phone)}</a> or email <a href="mailto:${BRAND.email}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.email)}</a></div>` +
     `</td></tr>`
   );
@@ -194,13 +236,14 @@ function renderFooter() {
 //
 // All caller-provided strings inserted as HTML -- caller must escape any
 // user-supplied values (use escHtml).
-function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff }) {
+function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff, companyState }) {
+  const brand = brandFor(companyState);
   const introHtml = intro
     ? `<p style="margin:0 0 14px;font-family:${FONT_STACK};line-height:1.6;color:${BRAND.textBody};font-size:15px;">${intro}</p>`
     : '';
   const bodyHtml = body || '';
   const ctaHtml = ctaButton(ctaText, ctaUrl);
-  const signoffHtml = (signoff != null) ? signoff : DEFAULT_SIGNOFF;
+  const signoffHtml = (signoff != null) ? signoff : defaultSignoff(brand.company);
 
   return (
     `<!DOCTYPE html>` +
@@ -208,7 +251,7 @@ function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff }) 
     `<meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta name="x-apple-disable-message-reformatting">` +
-    `<title>${escHtml(BRAND.name)} &mdash; ${escHtml(BRAND.tagline)}</title>` +
+    `<title>${escHtml(brand.company)} &mdash; ${escHtml(BRAND.tagline)}</title>` +
     `</head>` +
     `<body style="margin:0;padding:0;background:${BRAND.bgPage};font-family:${FONT_STACK};color:${BRAND.navy};-webkit-font-smoothing:antialiased;">` +
 
@@ -219,7 +262,7 @@ function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff }) 
     // Card
     `<table cellpadding="0" cellspacing="0" border="0" width="600" role="presentation" style="max-width:600px;width:100%;background:${BRAND.bgCard};border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,31,61,0.08);">` +
 
-    renderHeader() +
+    renderHeader(brand) +
 
     // Body cell
     `<tr><td style="padding:36px 32px 28px;font-family:${FONT_STACK};">` +
@@ -230,7 +273,7 @@ function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff }) 
       signoffHtml +
     `</td></tr>` +
 
-    renderFooter() +
+    renderFooter(brand) +
 
     `</table>` +
     `</td></tr></table>` +
@@ -261,8 +304,10 @@ const TABLE_VALUE = `padding:8px 0;font-weight:600;color:${BRAND.textBody};font-
 
 // --- 1. Welcome -------------------------------------------------------------
 
-function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring, paidAmountCents, paidDate }) {
+function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring, paidAmountCents, paidDate, companyState }) {
   const safeMeta = meta || {};
+  const state = (companyState != null) ? companyState : safeMeta.install_state;
+  const company = companyName(state);
   // Payment-confirmation line: our own proof of payment, since Stripe's customer
   // invoice/receipt email is turned off (Jonas is the invoice system of record).
   // paidAmountCents is the ACTUAL first charge (passed by the caller from the
@@ -279,7 +324,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
   const name = (customer && customer.name) || 'there';
 
   const body =
-    `<p style="${P}">Thanks for signing up for Bates Electric&rsquo;s Generator Care program. We&rsquo;ve got everything we need on our end and your subscription is active.</p>` +
+    `<p style="${P}">Thanks for signing up for ${escHtml(company)}&rsquo;s Generator Care program. We&rsquo;ve got everything we need on our end and your subscription is active.</p>` +
 
     `<h3 style="${H3}">What happens next</h3>` +
     `<ol style="margin:0;padding-left:20px;color:${BRAND.textBody};font-family:${FONT_STACK};font-size:15px;line-height:1.7;">` +
@@ -305,10 +350,11 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
   const html = renderBrandedEmail({
     heading: `Welcome aboard, ${escHtml(name)}!`,
     body,
+    companyState: state,
   });
 
   const text =
-    `Welcome to Bates Electric Generator Care, ${name}!\n\n` +
+    `Welcome to ${company} Generator Care, ${name}!\n\n` +
     `Thanks for signing up. Your subscription is active and we've got everything we need on our end.\n\n` +
     `WHAT HAPPENS NEXT\n` +
     `  1. We'll reach out within the next few business days to schedule your first visit.\n` +
@@ -323,17 +369,18 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     (fleetMonitoring ? `  Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
     (showPaid ? `\nPayment received: ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + paidDateStr : ''}. This is your confirmation of payment -- your formal invoice comes separately from our office.\n` : '') +
     `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
-  return { subject: 'Welcome to Bates Electric Generator Care!', html, text };
+  return { subject: `Welcome to ${company} Generator Care!`, html, text };
 }
 
 // --- 2. Failed charge -------------------------------------------------------
 
-function buildCardFailedEmail({ customer, amountCents, description, portalUrl }) {
+function buildCardFailedEmail({ customer, amountCents, description, portalUrl, companyState }) {
   const amountLine = amountCents ? ' of ' + fmtMoney(amountCents) : '';
   const descLine = description ? ' for ' + description : '';
   const name = (customer && customer.name) || 'there';
+  const company = companyName(companyState != null ? companyState : (customer && customer.install_state));
 
   const body =
     `<p style="${P}">We tried to charge your card on file${escHtml(amountLine)}${escHtml(descLine)} and it didn&rsquo;t go through. Usually it&rsquo;s something simple &mdash; an expired card, a daily limit, or the bank flagging the charge.</p>` +
@@ -350,6 +397,7 @@ function buildCardFailedEmail({ customer, amountCents, description, portalUrl })
     ctaText: 'Update your card',
     ctaUrl: portalUrl,
     signoff,
+    companyState: companyState != null ? companyState : (customer && customer.install_state),
   });
 
   const text =
@@ -358,15 +406,16 @@ function buildCardFailedEmail({ customer, amountCents, description, portalUrl })
     `Usually it's something simple -- expired card, daily limit, or the bank flagging the charge.\n\n` +
     `Update your card here:\n${portalUrl}\n\n` +
     `If you'd rather handle it over the phone, give us a call at ${BRAND.phone}.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
   return { subject: 'Your card on file needs an update', html, text };
 }
 
 // --- 3. Card update link (Amy-triggered "Send Card-Update Link") ------------
 
-function buildCardUpdateLinkEmail({ name, portalUrl }) {
+function buildCardUpdateLinkEmail({ name, portalUrl, companyState }) {
   const safeName = name || 'there';
+  const company = companyName(companyState);
 
   const body =
     `<p style="${P}">Here is a secure link to your generator care account. You can use it to update your card on file, view your invoice history, or change your contact info &mdash; all in one place.</p>`;
@@ -382,25 +431,27 @@ function buildCardUpdateLinkEmail({ name, portalUrl }) {
     ctaText: 'Manage my account',
     ctaUrl: portalUrl,
     signoff,
+    companyState,
   });
 
   const text =
     `Hi ${safeName},\n\n` +
-    `Here is a secure link to your Bates Electric generator care account. ` +
+    `Here is a secure link to your ${company} generator care account. ` +
     `You can use it to update your card on file, view your invoice history, or change your contact info.\n\n` +
     `${portalUrl}\n\n` +
     `The link is good for about an hour. If it expires, give us a call at ${BRAND.phone} and we'll get you a fresh one.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
-  return { subject: 'Manage your Bates Electric generator care account', html, text };
+  return { subject: `Manage your ${company} generator care account`, html, text };
 }
 
 // --- 4. Visit scheduled -----------------------------------------------------
 
-function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
+function buildVisitScheduledEmail({ customer, scheduledDate, planLabel, companyState }) {
   const name = (customer && customer.name) || 'there';
   const dateStr = fmtFriendlyDate(scheduledDate);
   const planText = planLabel ? `${planLabel} ` : '';
+  const company = companyName(companyState != null ? companyState : (customer && customer.install_state));
 
   const body =
     `<p style="${P}">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
@@ -411,6 +462,7 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
     heading: 'Your service visit is confirmed',
     intro: `Hi ${escHtml(name)},`,
     body,
+    companyState: companyState != null ? companyState : (customer && customer.install_state),
   });
 
   const text =
@@ -419,17 +471,18 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel }) {
     `Our technician will perform a full inspection and any included services. ` +
     `You don't need to be there as long as the generator is accessible.\n\n` +
     `Need to reschedule? Give us a call at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
   return { subject: 'Your generator service visit is confirmed', html, text };
 }
 
 // --- 5. Visit complete ------------------------------------------------------
 
-function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, planLabel, notes }) {
+function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, planLabel, notes, companyState }) {
   const name = (customer && customer.name) || 'there';
   const completedStr = fmtFriendlyDate(completedDate);
   const planText = planLabel ? `${planLabel} ` : '';
+  const company = companyName(companyState != null ? companyState : (customer && customer.install_state));
 
   const notesSection = (typeof notes === 'string' && notes.trim().length > 0)
     ? (
@@ -445,7 +498,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     : '';
 
   const body =
-    `<p style="${P}">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a Bates Electric Generator Care customer.</p>` +
+    `<p style="${P}">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a ${escHtml(company)} Generator Care customer.</p>` +
     notesSection +
     nextVisitSection +
     `<p style="${P_LAST}margin-top:20px;">Questions about the work, or noticed something we missed? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
@@ -454,6 +507,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     heading: 'Service visit complete',
     intro: `Hi ${escHtml(name)},`,
     body,
+    companyState: companyState != null ? companyState : (customer && customer.install_state),
   });
 
   const notesText = (typeof notes === 'string' && notes.trim().length > 0)
@@ -465,22 +519,23 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
 
   const text =
     `Hi ${name},\n\n` +
-    `Your generator service visit on ${completedStr} is complete. Thanks for being a Bates Electric Generator Care customer.\n` +
+    `Your generator service visit on ${completedStr} is complete. Thanks for being a ${company} Generator Care customer.\n` +
     notesText +
     nextVisitText +
     `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
   return { subject: 'Your generator service visit is complete', html, text };
 }
 
 // --- 6. Renewal upcoming ----------------------------------------------------
 
-function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLabel, lineItems }) {
+function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLabel, lineItems, companyState }) {
   const name = (customer && customer.name) || 'there';
   const dateStr = fmtFriendlyDate(renewalDate);
   const amountStr = fmtMoney(amountCents);
   const planText = planLabel ? `${planLabel} ` : '';
+  const company = companyName(companyState != null ? companyState : (customer && customer.install_state));
 
   // Render a line-item breakdown only if there's more than one item (e.g.
   // base sub plus a performed addon being billed at renewal).
@@ -512,6 +567,7 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
     heading: 'Your subscription renews soon',
     intro: `Hi ${escHtml(name)},`,
     body,
+    companyState: companyState != null ? companyState : (customer && customer.install_state),
   });
 
   const text =
@@ -520,9 +576,9 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
     `We'll charge ${amountStr} to your card on file.\n` +
     lineItemTextSection +
     `\nNo action needed if everything looks right. If you need to update your card or have any questions, give us a call at ${BRAND.phone} or email us at ${BRAND.email}.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
-  return { subject: 'Your Bates Electric subscription renews soon', html, text };
+  return { subject: `Your ${company} subscription renews soon`, html, text };
 }
 
 // --- 7. Cancellation confirmation -------------------------------------------
@@ -531,9 +587,10 @@ function buildRenewalUpcomingEmail({ customer, renewalDate, amountCents, planLab
 // of the current billing period, the email says coverage stays active through that
 // date. When omitted (e.g. an outright cancel that's already terminal), it uses the
 // plain "has been cancelled" wording.
-function buildCancellationEmail({ customer, periodEndDate }) {
+function buildCancellationEmail({ customer, periodEndDate, companyState }) {
   const name = (customer && customer.name) || 'there';
   const throughStr = periodEndDate ? fmtFriendlyDate(periodEndDate) : null;
+  const company = companyName(companyState != null ? companyState : (customer && customer.install_state));
 
   const heading = throughStr
     ? 'Your Generator Care plan is scheduled to cancel'
@@ -543,8 +600,8 @@ function buildCancellationEmail({ customer, periodEndDate }) {
     : 'Your Generator Care plan has been cancelled';
 
   const firstParaHtml = throughStr
-    ? `<p style="${P}">This confirms that your Bates Electric Generator Care plan is set to cancel. <strong>Your plan stays active through ${escHtml(throughStr)}</strong> &mdash; you keep your remaining coverage until then, and <strong>you won&rsquo;t be charged again</strong> (no renewal at the end of the period).</p>`
-    : `<p style="${P}">This confirms that your Bates Electric Generator Care plan has been cancelled. <strong>You won&rsquo;t be charged again</strong> &mdash; no future renewals or recurring charges will be made to your card on file.</p>`;
+    ? `<p style="${P}">This confirms that your ${escHtml(company)} Generator Care plan is set to cancel. <strong>Your plan stays active through ${escHtml(throughStr)}</strong> &mdash; you keep your remaining coverage until then, and <strong>you won&rsquo;t be charged again</strong> (no renewal at the end of the period).</p>`
+    : `<p style="${P}">This confirms that your ${escHtml(company)} Generator Care plan has been cancelled. <strong>You won&rsquo;t be charged again</strong> &mdash; no future renewals or recurring charges will be made to your card on file.</p>`;
 
   const body =
     firstParaHtml +
@@ -555,11 +612,12 @@ function buildCancellationEmail({ customer, periodEndDate }) {
     heading,
     intro: `Hi ${escHtml(name)},`,
     body,
+    companyState: companyState != null ? companyState : (customer && customer.install_state),
   });
 
   const firstParaText = throughStr
-    ? `This confirms that your Bates Electric Generator Care plan is set to cancel. Your plan stays active through ${throughStr} -- you keep your remaining coverage until then, and you won't be charged again (no renewal at the end of the period).`
-    : `This confirms that your Bates Electric Generator Care plan has been cancelled. You won't be charged again -- no future renewals or recurring charges will be made to your card on file.`;
+    ? `This confirms that your ${company} Generator Care plan is set to cancel. Your plan stays active through ${throughStr} -- you keep your remaining coverage until then, and you won't be charged again (no renewal at the end of the period).`
+    : `This confirms that your ${company} Generator Care plan has been cancelled. You won't be charged again -- no future renewals or recurring charges will be made to your card on file.`;
 
   const text =
     `Hi ${name},\n\n` +
@@ -569,7 +627,7 @@ function buildCancellationEmail({ customer, periodEndDate }) {
     `scheduled, we'll be in touch to wrap it up.\n\n` +
     `Changed your mind, or cancelled by mistake? We'd love to have you back -- just give us a call at ` +
     `${BRAND.phone} and we'll get you set back up.\n\n` +
-    `-- Bates Electric`;
+    `-- ${company}`;
 
   return { subject, html, text };
 }
@@ -580,9 +638,12 @@ function buildCancellationEmail({ customer, periodEndDate }) {
 // work order created. Body is the full work-order packet so AR can generate the
 // paid invoice without digging. `addons` is the generator_pending_addons rows
 // (optional). `markedBy` is the office user who marked it.
-function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, chargedAtSignupCents }) {
+function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, chargedAtSignupCents, companyState }) {
   const sub = subscription || {};
   const c = customer || {};
+  // Operating name for THIS customer (Florida => S.E. Bates Electric) so AR keys
+  // the Jonas work order + invoice under the legally-correct name.
+  const company = companyName(companyState != null ? companyState : c.install_state);
   const PLAN = { semi_annual: 'Semi-Annual', annual: 'Annual' };
   const GENC = { air_cooled: 'Air-cooled', liquid_22_38: 'Liquid-cooled (22–45 kW)', liquid_48_150: 'Liquid-cooled (48–150 kW)' };
   const ADDON = {
@@ -612,6 +673,7 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, 
   const woNum = (sub.work_order_number || '').trim();
   const fields = [
     ['Work order #', woNum || '—'],
+    ['Bill under', company + (isFlorida(companyState != null ? companyState : c.install_state) ? ' (Florida DBA)' : '')],
     ['Customer', name],
     ['Phone', c.phone || '—'],
     ['Email', c.email || '—'],
@@ -638,6 +700,7 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, 
     heading: 'Ready to invoice',
     intro: `Generator Care &mdash; ${escHtml(name)}`,
     body,
+    companyState: companyState != null ? companyState : c.install_state,
   });
 
   // Plain-text packet — the copy-paste-friendly version for keying into Jonas.
@@ -647,12 +710,69 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, 
     `WORK ORDER PACKET\n` +
     fields.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
     `Once the invoice is sent, it will be marked invoiced in the dashboard.\n\n` +
-    `-- Bates Electric Generator Care`;
+    `-- ${company} Generator Care`;
 
   const subject = woNum
     ? `Work order #${woNum} — ready to invoice: ${name}`
     : `Generator Care — ready to invoice: ${name}`;
   return { subject, html, text };
+}
+
+// --- 9. Payment receipt (our own, state-branded) ----------------------------
+
+// We send our own receipt for every successful charge (signup, renewal, add-on,
+// ad-hoc) so it can be branded per customer — "Bates Electric" normally,
+// "S.E. Bates Electric" for Florida — which Stripe's account-level automatic
+// receipt cannot do. Mirrors what Stripe's receipt provides: company + logo,
+// amount, date, card last-4, what it was for, and a receipt/confirmation number.
+function buildReceiptEmail({ customer, companyState, amountCents, paidDate, cardBrand, cardLast4, description, receiptNumber }) {
+  const state = (companyState != null) ? companyState : (customer && customer.install_state);
+  const company = companyName(state);
+  const name = (customer && customer.name) || 'there';
+  const dateStr = paidDate ? fmtFriendlyDate(paidDate) : '';
+  const brandName = cardBrand ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) : '';
+  const cardStr = cardLast4 ? `${brandName ? brandName + ' ' : ''}&bull;&bull;&bull;&bull; ${escHtml(cardLast4)}` : '';
+  const cardText = cardLast4 ? `${brandName ? brandName + ' ' : ''}**** ${cardLast4}` : '';
+
+  const rows = [
+    ['Amount paid', fmtMoney(amountCents)],
+    dateStr ? ['Date', escHtml(dateStr)] : null,
+    description ? ['For', escHtml(description)] : null,
+    cardStr ? ['Payment method', cardStr] : null,
+    receiptNumber ? ['Receipt #', escHtml(receiptNumber)] : null,
+  ].filter(Boolean);
+  const rowsHtml = rows.map(([k, v]) =>
+    `<tr><td style="${TABLE_LABEL};width:42%;">${escHtml(k)}</td><td style="${TABLE_VALUE}">${v}</td></tr>`
+  ).join('');
+
+  const body =
+    `<p style="${P}">Thanks for your payment &mdash; this is your receipt from ${escHtml(company)} for your Generator Care account.</p>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;margin-top:8px;">${rowsHtml}</table>` +
+    `<p style="${P_LAST}margin-top:24px;">Keep this for your records. Questions about a charge? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
+
+  const html = renderBrandedEmail({
+    heading: 'Your payment receipt',
+    intro: `Hi ${escHtml(name)},`,
+    body,
+    companyState: state,
+  });
+
+  const textRows = [
+    ['Amount paid', fmtMoney(amountCents)],
+    dateStr ? ['Date', dateStr] : null,
+    description ? ['For', description] : null,
+    cardText ? ['Payment method', cardText] : null,
+    receiptNumber ? ['Receipt #', receiptNumber] : null,
+  ].filter(Boolean);
+  const text =
+    `Hi ${name},\n\n` +
+    `Thanks for your payment -- this is your receipt from ${company} for your Generator Care account.\n\n` +
+    `RECEIPT\n` +
+    textRows.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
+    `Keep this for your records. Questions about a charge? Call ${BRAND.phone} or email ${BRAND.email}.\n\n` +
+    `-- ${company}`;
+
+  return { subject: `Your payment receipt from ${company}`, html, text };
 }
 
 // ============================================================================
@@ -685,4 +805,9 @@ module.exports = {
   buildRenewalUpcomingEmail,
   buildCancellationEmail,
   buildArReadyToInvoiceEmail,
+  buildReceiptEmail,
+
+  // Florida DBA helpers (re-exported for convenience)
+  isFlorida,
+  companyName,
 };
