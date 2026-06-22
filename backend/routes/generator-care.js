@@ -2052,46 +2052,71 @@ router.get('/accounting/payouts', async (req, res) => {
       };
     }
 
-    // 5) Assemble payout groups (newest arrival first).
-    const payoutGroups = payouts.map((p) => {
-      const rows = (payoutBts[p.id] || []).map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
-      const transactionsNet = rows.reduce((s, r) => s + r.net_cents, 0);
-      const count = rows.length;
-      // Signed bank amount comes from the payout's own settlement bt (authoritative
-      // for deposits AND auto-debits). Fall back to |payout.amount| signed by the
-      // constituents' net only if that bt couldn't be read.
+    // 5) Assemble payout groups. Normal deposits itemize via bt.payout. Auto-debits
+    //    are special: Stripe does NOT set bt.payout on the balance transactions an
+    //    auto-debit recovers, so they come back with 0 constituents. For an
+    //    unconstituted DEBIT, attribute the not-yet-paid-out transactions whose
+    //    available_on is on/before the payout's arrival — but ONLY if they sum
+    //    EXACTLY to the payout's bank amount. If they don't, keep the honest note
+    //    and leave them in Pending (never force a wrong/partial attribution).
+    const nowTs = Math.floor(today.getTime() / 1000);
+    let pendingPool = pendingBts.slice();
+    const procOrder = payouts.slice().sort((a, b) => (a.arrival_date || 0) - (b.arrival_date || 0)); // oldest claims first
+    const groupById = {};
+    for (const p of procOrder) {
+      let rows = (payoutBts[p.id] || []).map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+      // Signed bank amount from the payout's own settlement bt (authoritative for
+      // deposits AND auto-debits); fall back to |amount| signed by net.
       let bankAmount = payoutBankCents[p.id];
       if (typeof bankAmount !== 'number') {
+        const n0 = rows.reduce((s, r) => s + r.net_cents, 0);
         const mag = Math.abs(typeof p.amount === 'number' ? p.amount : 0);
-        bankAmount = (transactionsNet < 0 ? -1 : 1) * mag;
+        bankAmount = (n0 < 0 ? -1 : 1) * mag;
       }
       const direction = bankAmount < 0 ? 'debit' : 'deposit';
-      const unconstituted = count === 0;
+      let unconstituted = rows.length === 0;
       let groupNote = null;
-      if (unconstituted) {
-        groupNote = direction === 'debit'
-          ? 'Auto-debit recovering a prior negative balance. Its itemized transactions settled in an earlier period and aren’t listed here.'
-          : 'No itemized transactions reference this payout in the selected range.';
+
+      if (unconstituted && direction === 'debit') {
+        const arrivalTs = typeof p.arrival_date === 'number' ? p.arrival_date : nowTs;
+        const candidates = pendingPool
+          .filter((bt) => typeof bt.available_on === 'number' && bt.available_on <= arrivalTs)
+          .sort((a, b) => (a.created - b.created) || (a.available_on - b.available_on));
+        const candNet = candidates.reduce((s, bt) => s + (typeof bt.net === 'number' ? bt.net : 0), 0);
+        if (candidates.length && candNet === bankAmount) {
+          // Exact reconciliation: itemize under the payout and pull from Pending.
+          const claimed = new Set(candidates.map((b) => b.id));
+          pendingPool = pendingPool.filter((b) => !claimed.has(b.id));
+          rows = candidates.map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+          unconstituted = false;
+        } else {
+          groupNote = 'Auto-debit recovering a prior negative balance. Its itemized transactions settled in an earlier period and aren’t listed here.';
+        }
+      } else if (unconstituted) {
+        groupNote = 'No itemized transactions reference this payout in the selected range.';
       }
-      return {
+
+      const transactionsNet = rows.reduce((s, r) => s + r.net_cents, 0);
+      groupById[p.id] = {
         id: p.id,
         arrival_date: p.arrival_date ? new Date(p.arrival_date * 1000).toISOString().slice(0, 10) : '',
         status: p.status, // paid | in_transit | pending | failed | canceled
         direction,
         bank_amount_cents: bankAmount,            // signed: + deposit, − debit
         transactions_net_cents: transactionsNet,  // signed sum of the rows
-        ties: count > 0 ? transactionsNet === bankAmount : false,
+        ties: rows.length > 0 ? transactionsNet === bankAmount : false,
         unconstituted,
         note: groupNote,
         gross_cents: rows.reduce((s, r) => s + r.gross_cents, 0),
         fee_cents: rows.reduce((s, r) => s + r.fee_cents, 0),
-        count,
+        count: rows.length,
         transactions: rows,
       };
-    }).sort((a, b) => b.arrival_date.localeCompare(a.arrival_date));
+    }
+    const payoutGroups = payouts.map((p) => groupById[p.id]).sort((a, b) => b.arrival_date.localeCompare(a.arrival_date));
 
-    // 6) Pending group.
-    const pendingRows = pendingBts.map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+    // 6) Pending group (after window attribution removed any settled items).
+    const pendingRows = pendingPool.map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
     const pendingNet = pendingRows.reduce((s, r) => s + r.net_cents, 0);
 
     res.json({
@@ -2116,12 +2141,11 @@ router.get('/accounting/payouts', async (req, res) => {
         errors,
         payouts_fetched: payouts.length,
         pending_fetched: pendingBts.length,
-        payouts_seen: payouts.map((p) => ({
-          id: p.id, amount: p.amount, arrival_date: p.arrival_date, status: p.status,
-          type: p.type, source_type: p.source_type, automatic: p.automatic,
-          has_balance_transaction: !!p.balance_transaction,
-          settlement_bt_cents: payoutBankCents[p.id],
-          grouped_count: (payoutBts[p.id] || []).length,
+        pending_after_attribution: pendingRows.length,
+        payouts_seen: payoutGroups.map((g) => ({
+          id: g.id, date: g.arrival_date, dir: g.direction, amount: g.bank_amount_cents,
+          txns: g.count, net: g.transactions_net_cents, ties: g.ties, unconstituted: g.unconstituted,
+          bt_payout_grouped: (payoutBts[g.id] || []).length, // raw bt.payout matches before window attribution
         })),
       } } : {}),
     });
