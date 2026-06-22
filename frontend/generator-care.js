@@ -161,6 +161,17 @@
   function planLabel(plan) {
     return plan === 'semi_annual' ? 'Semi-Annual' : (plan === 'annual' ? 'Annual' : plan);
   }
+  // Florida DBA naming — mirrors backend lib/branding.js. In Florida the company
+  // operates as "S.E. Bates Electric" (trademark settlement); elsewhere it's
+  // "Bates Electric." Conditional on the customer's install-address state only.
+  function isFlorida(state) {
+    if (!state) return false;
+    const s = String(state).trim().toLowerCase();
+    return s === 'fl' || s === 'florida';
+  }
+  function companyName(state) {
+    return isFlorida(state) ? 'S.E. Bates Electric' : 'Bates Electric';
+  }
   function genClassLabel(c) {
     return ({
       air_cooled: 'Air Cooled',
@@ -281,12 +292,20 @@
 
   function renderContactCard(customer) {
     const addrLine = [customer.install_address, customer.install_city, customer.install_state, customer.install_zip].filter(Boolean).join(', ');
+    const fl = isFlorida(customer.install_state);
+    // Florida customers operate under the S.E. Bates Electric DBA — surface it so
+    // Amy/Ally use the correct legal name on Jonas work orders + AR invoices.
+    const flBadge = '<span style="display:inline-block;background:#fef3c7;color:#92400e;font-size:0.68rem;font-weight:700;padding:2px 9px;border-radius:999px;letter-spacing:0.03em;">FL &middot; S.E. Bates Electric</span>';
+    const operatingRow = fl
+      ? `<div class="gc-card-row"><span class="gc-meta-label">Operating as</span><span class="gc-meta-value">${flBadge}</span></div>`
+      : '';
     return `
       <div class="gc-card">
         <h3 class="gc-card-h">Contact &amp; Address</h3>
         <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(customer.phone) || '&mdash;'}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
+        ${operatingRow}
         <div class="gc-note-editor">
           <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Internal note (office only)</span>
           <textarea id="gc-customer-note" data-customer-id="${customer.id}" placeholder="Anything Amy or Brenda should know about this customer.">${escapeHtml(customer.notes || '')}</textarea>
@@ -356,6 +375,7 @@
     const gen = [genClassLabel(sub.gen_class), sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
     const lines = [
       ['Work order #', sub.work_order_number || '—'],
+      ['Bill under', companyName(c.install_state) + (isFlorida(c.install_state) ? ' (Florida DBA)' : '')],
       ['Customer', c.name || ''],
       ['Phone', c.phone || ''],
       ['Email', c.email || ''],

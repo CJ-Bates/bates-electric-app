@@ -621,7 +621,7 @@ router.post('/visits/:id/complete', async (req, res) => {
         technician_id: technician_id || req.user.id,
       })
       .eq('id', id)
-      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email))')
+      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email, install_state))')
       .single();
     if (updErr) throw updErr;
 
@@ -663,6 +663,7 @@ router.post('/visits/:id/complete', async (req, res) => {
         html,
         text,
         logTag: '[visit-complete-email]',
+        companyState: customer.install_state,
       }).catch((e) => console.error('[visit-complete-email] unexpected:', e && e.message));
     }
 
@@ -764,7 +765,7 @@ router.post('/visits/:id/confirm', async (req, res) => {
       .from('generator_service_visits')
       .update(updates)
       .eq('id', id)
-      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email))')
+      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email, install_state))')
       .single();
     if (vErr) throw vErr;
 
@@ -791,6 +792,7 @@ router.post('/visits/:id/confirm', async (req, res) => {
         html,
         text,
         logTag: '[visit-scheduled-email]',
+        companyState: customer.install_state,
       }).catch((e) => console.error('[visit-scheduled-email] unexpected:', e && e.message));
     }
 
@@ -1024,7 +1026,7 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
 
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('*, customer:generator_customers(name, email)')
+      .select('*, customer:generator_customers(name, email, install_state)')
       .eq('id', id)
       .single();
     if (subErr) throw subErr;
@@ -1060,7 +1062,11 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
     let cancellationEmailSent = false;
     try {
       const r = await sendCancellationEmail({
-        customer: { name: sub.customer && sub.customer.name, email: sub.customer && sub.customer.email },
+        customer: {
+          name: sub.customer && sub.customer.name,
+          email: sub.customer && sub.customer.email,
+          install_state: sub.customer && sub.customer.install_state,
+        },
         periodEndDate: periodEnd,
       });
       cancellationEmailSent = !!(r && r.sent);
@@ -2172,7 +2178,7 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
   try {
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('stripe_customer_id, customer:generator_customers(name, email)')
+      .select('stripe_customer_id, customer:generator_customers(name, email, install_state)')
       .eq('id', req.params.id)
       .single();
     if (subErr) throw subErr;
@@ -2187,6 +2193,7 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
 
     const customerName = (sub.customer && sub.customer.name) || null;
     const customerEmail = (sub.customer && sub.customer.email) || null;
+    const customerState = (sub.customer && sub.customer.install_state) || null;
 
     // Auto-send the link to the customer (so Amy doesn't have to copy/paste).
     let emailSent = false;
@@ -2196,6 +2203,7 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
         name: customerName,
         email: customerEmail,
         portalUrl: session.url,
+        companyState: customerState,
       });
       emailSent = r.sent;
       emailReason = r.reason || (r.sent ? 'sent' : 'failed');
@@ -2291,6 +2299,7 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
       html,
       text,
       logTag: '[resend-welcome]',
+      companyState: meta.install_state,
     });
 
     return res.json({
@@ -2308,14 +2317,15 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
 
 
 // ---- Send "manage your account" email with portal link ----
-async function sendCardUpdateLinkEmail({ name, email, portalUrl }) {
-  const { subject, html, text } = buildCardUpdateLinkEmail({ name, portalUrl });
+async function sendCardUpdateLinkEmail({ name, email, portalUrl, companyState }) {
+  const { subject, html, text } = buildCardUpdateLinkEmail({ name, portalUrl, companyState });
   return sendEmail({
     to: email,
     subject,
     html,
     text,
     logTag: '[card-update-link]',
+    companyState,
   });
 }
 
@@ -2334,6 +2344,7 @@ async function sendCancellationEmail({ customer, periodEndDate }) {
     html,
     text,
     logTag: '[cancellation-email]',
+    companyState: customer.install_state,
   });
 }
 
@@ -2376,7 +2387,7 @@ async function emailCardUpdateLinkForSub(subscriptionId) {
   try {
     const { data: sub } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('stripe_customer_id, customer:generator_customers(name, email)')
+      .select('stripe_customer_id, customer:generator_customers(name, email, install_state)')
       .eq('id', subscriptionId)
       .single();
     if (!sub || !sub.stripe_customer_id) return { sent: false, reason: 'no stripe customer' };
@@ -2390,6 +2401,7 @@ async function emailCardUpdateLinkForSub(subscriptionId) {
       name: (sub.customer && sub.customer.name) || null,
       email,
       portalUrl: session.url,
+      companyState: (sub.customer && sub.customer.install_state) || null,
     });
   } catch (e) {
     console.error('[adhoc-charge] emailCardUpdateLinkForSub failed:', e && e.message);
