@@ -1868,6 +1868,15 @@ router.get('/accounting/transactions', async (req, res) => {
 // to its payout by construction. Customer/description/auth-code enrichment is
 // layered on top and can never move the totals.
 router.get('/accounting/payouts', async (req, res) => {
+  // Each Stripe section is isolated so one failing call (or one bad payout)
+  // degrades to empty instead of 500ing the whole view. Real errors are always
+  // logged server-side; ?debug=1 also returns them to the (office) caller.
+  const debug = req.query.debug === '1';
+  const errors = [];
+  const note = (where, e) => {
+    console.error('[payouts]', where, '—', (e && e.stack) ? e.stack : e);
+    errors.push({ where, message: e && e.message, type: e && e.type, code: e && e.code, param: e && e.param });
+  };
   try {
     const today = new Date();
     const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -1876,9 +1885,10 @@ router.get('/accounting/payouts', async (req, res) => {
     const fromTs = Math.floor(fromDate.getTime() / 1000);
     const toTs = Math.floor(toDate.getTime() / 1000);
 
-    // 1) Payouts whose arrival_date falls in the range (paged).
+    // 1) Payouts whose arrival_date falls in the range (paged). Stripe wants
+    //    epoch seconds for the gt/lt filters, which fromTs/toTs already are.
     let payouts = [];
-    {
+    try {
       let after; let guard = 0;
       do {
         const page = await stripe.payouts.list({
@@ -1891,111 +1901,127 @@ router.get('/accounting/payouts', async (req, res) => {
         guard++;
         if (guard > 20) break;
       } while (after);
-    }
+    } catch (e) { note('payouts.list', e); }
 
-    // 2) Constituent balance transactions for each payout. The payout's own
+    // 2) Constituent balance transactions for each payout. No expand here — we
+    //    enrich from bounded retrieves below (a deep data.source expand is both
+    //    unnecessary and a common cause of API errors). The payout's own
     //    settlement entry (type 'payout') is the balancing line, not a
-    //    constituent, so it's excluded from the rows.
-    async function listConstituents(payoutId) {
-      let bts = []; let after; let guard = 0;
-      do {
-        const page = await stripe.balanceTransactions.list({
-          payout: payoutId,
-          limit: 100,
-          starting_after: after,
-          expand: ['data.source'],
-        });
-        bts = bts.concat(page.data);
-        after = page.has_more ? page.data[page.data.length - 1].id : undefined;
-        guard++;
-        if (guard > 20) break;
-      } while (after);
-      return bts.filter((bt) => bt.type !== 'payout');
-    }
+    //    constituent, so it's excluded. One bad payout doesn't sink the rest.
     const payoutBts = {};
     for (const p of payouts) {
-      payoutBts[p.id] = await listConstituents(p.id);
+      payoutBts[p.id] = [];
+      try {
+        let after; let guard = 0;
+        do {
+          const page = await stripe.balanceTransactions.list({
+            payout: p.id,
+            limit: 100,
+            starting_after: after,
+          });
+          payoutBts[p.id] = payoutBts[p.id].concat(page.data.filter((bt) => bt.type !== 'payout'));
+          after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+          guard++;
+          if (guard > 20) break;
+        } while (after);
+      } catch (e) { note('balanceTransactions.list payout=' + p.id, e); }
     }
 
-    // 3) Pending: balance transactions not yet assigned to any payout. These are
-    //    by definition the most recent activity, so a few pages cover it; bounded.
+    // 3) Pending: balance transactions not yet settled to a payout. There is no
+    //    "payout is null" filter in Stripe, so we list the most recent balance
+    //    transactions (pending is by definition recent) and treat an item as
+    //    unsettled when it has no payout assigned and isn't already available and
+    //    paid out. `available_on` in the future or status 'pending' also means
+    //    not-yet-settled. Bounded to a few pages.
     let pendingBts = [];
-    {
+    try {
+      const nowTs = Math.floor(today.getTime() / 1000);
       let after; let guard = 0;
       do {
         const page = await stripe.balanceTransactions.list({
           limit: 100,
           starting_after: after,
-          expand: ['data.source'],
         });
         page.data.forEach((bt) => {
-          if (!bt.payout && bt.type !== 'payout') pendingBts.push(bt);
+          if (bt.type === 'payout') return;
+          const unsettled = !bt.payout || bt.status === 'pending' || (typeof bt.available_on === 'number' && bt.available_on > nowTs);
+          const notYetPaidOut = !bt.payout; // only show what hasn't been assigned to a payout
+          if (unsettled && notYetPaidOut) pendingBts.push(bt);
         });
         after = page.has_more ? page.data[page.data.length - 1].id : undefined;
         guard++;
         if (guard > 3) break; // pending is recent; don't scan all history
       } while (after);
-    }
+    } catch (e) { note('balanceTransactions.list pending', e); }
 
-    // 4) Enrichment. Charge ids we need a full charge for: charge txns whose
-    //    expanded source didn't carry the auth code, and every refund's
-    //    originating charge (for its customer + the code that ties it back).
+    // 4) Enrichment via bounded retrieves (no expand). Each balance transaction's
+    //    `source` is just an id string here: charge/payment -> the charge id;
+    //    refund -> the refund id (retrieved to find its originating charge). Then
+    //    each charge is retrieved once for its auth code, customer, and a
+    //    description. Amounts never depend on any of this, so failures here only
+    //    leave a row less-labeled, never wrong.
     const allBts = [...Object.values(payoutBts).reduce((a, b) => a.concat(b), []), ...pendingBts];
+    const srcIdOf = (bt) => (typeof bt.source === 'string' ? bt.source : (bt.source && bt.source.id)) || null;
+    const refundIds = new Set();
+    const chargeIds = new Set();
+    allBts.forEach((bt) => {
+      const sid = srcIdOf(bt);
+      if (!sid) return;
+      if (bt.type === 'charge' || bt.type === 'payment') chargeIds.add(sid);
+      else if (bt.type === 'refund' || bt.type === 'payment_refund') refundIds.add(sid);
+    });
+
+    const RETRIEVE_CAP = 300;
+    // refund id -> originating charge id
+    const refundToCharge = {};
+    await Promise.all([...refundIds].slice(0, RETRIEVE_CAP).map(async (rid) => {
+      try {
+        const rf = await stripe.refunds.retrieve(rid);
+        const cid = typeof rf.charge === 'string' ? rf.charge : (rf.charge && rf.charge.id);
+        if (cid) { refundToCharge[rid] = cid; chargeIds.add(cid); }
+      } catch (e) { note('refunds.retrieve ' + rid, e); }
+    }));
+
+    // charge id -> auth code / customer id / description
     const authByChargeId = {};
     const chargeCustomerId = {};
-    const needRetrieve = new Set();
-    allBts.forEach((bt) => {
-      const src = bt.source && typeof bt.source === 'object' ? bt.source : null;
-      if (bt.type === 'charge' || bt.type === 'payment') {
-        const id = src ? src.id : (typeof bt.source === 'string' ? bt.source : null);
-        if (!id) return;
-        if (src && src.customer) chargeCustomerId[id] = src.customer;
-        const code = authCodeOf(src);
-        if (code) authByChargeId[id] = code; else needRetrieve.add(id);
-      } else if (bt.type === 'refund' || bt.type === 'payment_refund') {
-        const origId = src ? (typeof src.charge === 'string' ? src.charge : (src.charge && src.charge.id)) : null;
-        if (origId) needRetrieve.add(origId);
-      }
-    });
-    const RETRIEVE_CAP = 300;
-    const toRetrieve = [...needRetrieve].slice(0, RETRIEVE_CAP);
-    if (needRetrieve.size > RETRIEVE_CAP) {
-      console.warn(`[payouts] charge retrieve capped at ${RETRIEVE_CAP}; ${needRetrieve.size - RETRIEVE_CAP} skipped`);
-    }
-    await Promise.all(toRetrieve.map(async (id) => {
+    const chargeDescById = {};
+    await Promise.all([...chargeIds].slice(0, RETRIEVE_CAP).map(async (cid) => {
       try {
-        const full = await stripe.charges.retrieve(id);
-        const code = authCodeOf(full);
-        if (code) authByChargeId[id] = code;
-        if (full.customer) chargeCustomerId[id] = full.customer;
-      } catch (e) {
-        console.error('[payouts] charge retrieve failed:', id, e && e.message);
-      }
+        const ch = await stripe.charges.retrieve(cid);
+        const code = authCodeOf(ch);
+        if (code) authByChargeId[cid] = code;
+        const custId = typeof ch.customer === 'string' ? ch.customer : (ch.customer && ch.customer.id);
+        if (custId) chargeCustomerId[cid] = custId;
+        chargeDescById[cid] = chargeDescription(ch);
+      } catch (e) { note('charges.retrieve ' + cid, e); }
     }));
 
     // Customer directory (one query for all stripe customers seen).
     const customerIds = [...new Set(Object.values(chargeCustomerId).filter(Boolean))];
     let customerMap = {};
     if (customerIds.length) {
-      const { data: subs, error: subErr } = await supabaseAdmin
-        .from('generator_subscriptions')
-        .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
-        .in('stripe_customer_id', customerIds);
-      if (subErr) throw subErr;
-      (subs || []).forEach((s) => { if (s.customer) customerMap[s.stripe_customer_id] = s.customer; });
+      try {
+        const { data: subs, error: subErr } = await supabaseAdmin
+          .from('generator_subscriptions')
+          .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
+          .in('stripe_customer_id', customerIds);
+        if (subErr) throw subErr;
+        (subs || []).forEach((s) => { if (s.customer) customerMap[s.stripe_customer_id] = s.customer; });
+      } catch (e) { note('supabase customer lookup', e); }
     }
 
     // A display row built straight from a balance transaction. amount/fee/net
     // are Stripe's signed figures — used verbatim so groups always tie.
     function rowFromBt(bt) {
-      const src = bt.source && typeof bt.source === 'object' ? bt.source : null;
+      const sid = srcIdOf(bt);
       let chargeId = null; let custId = null; let description = ''; let fallbackName = '';
       if (bt.type === 'charge' || bt.type === 'payment') {
-        chargeId = src ? src.id : (typeof bt.source === 'string' ? bt.source : null);
-        custId = (chargeId && chargeCustomerId[chargeId]) || (src && src.customer) || null;
-        description = chargeDescription(src);
+        chargeId = sid;
+        custId = chargeId ? chargeCustomerId[chargeId] : null;
+        description = (chargeId && chargeDescById[chargeId]) || 'Card charge';
       } else if (bt.type === 'refund' || bt.type === 'payment_refund') {
-        chargeId = src ? (typeof src.charge === 'string' ? src.charge : (src.charge && src.charge.id)) : null;
+        chargeId = sid ? refundToCharge[sid] : null;
         custId = chargeId ? chargeCustomerId[chargeId] : null;
         description = 'Refund';
       } else if (bt.type === 'stripe_fee') {
@@ -2007,13 +2033,13 @@ router.get('/accounting/payouts', async (req, res) => {
       const cust = custId ? (customerMap[custId] || {}) : {};
       const address = [cust.install_address, cust.install_city, cust.install_state, cust.install_zip].filter(Boolean).join(', ');
       return {
-        date: new Date(bt.created * 1000).toISOString().slice(0, 10),
+        date: bt.created ? new Date(bt.created * 1000).toISOString().slice(0, 10) : '',
         customer_name: cust.name || fallbackName || '(unmatched)',
         address,
         description,
-        gross_cents: bt.amount,
+        gross_cents: typeof bt.amount === 'number' ? bt.amount : 0,
         fee_cents: bt.fee || 0,
-        net_cents: typeof bt.net === 'number' ? bt.net : bt.amount,
+        net_cents: typeof bt.net === 'number' ? bt.net : (typeof bt.amount === 'number' ? bt.amount : 0),
         auth_code: chargeId ? (authByChargeId[chargeId] || null) : null,
         type: bt.type,
       };
@@ -2021,16 +2047,16 @@ router.get('/accounting/payouts', async (req, res) => {
 
     // 5) Assemble payout groups (newest arrival first).
     const payoutGroups = payouts.map((p) => {
-      const rows = payoutBts[p.id].map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+      const rows = (payoutBts[p.id] || []).map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
       const transactionsNet = rows.reduce((s, r) => s + r.net_cents, 0);
       const direction = transactionsNet < 0 ? 'debit' : 'deposit';
       // Stripe's reported payout amount is positive; sign it by the settled
       // direction. Tie-out compares magnitudes so it's robust either way.
-      const payoutMag = Math.abs(p.amount);
+      const payoutMag = Math.abs(typeof p.amount === 'number' ? p.amount : 0);
       const bankAmount = (transactionsNet < 0 ? -1 : 1) * payoutMag;
       return {
         id: p.id,
-        arrival_date: new Date(p.arrival_date * 1000).toISOString().slice(0, 10),
+        arrival_date: p.arrival_date ? new Date(p.arrival_date * 1000).toISOString().slice(0, 10) : '',
         status: p.status, // paid | in_transit | pending | failed | canceled
         direction,
         bank_amount_cents: bankAmount,            // signed: + deposit, − debit (Stripe's figure)
@@ -2063,10 +2089,19 @@ router.get('/accounting/payouts', async (req, res) => {
         settled_net_cents: payoutGroups.reduce((s, g) => s + g.bank_amount_cents, 0),
         untied_count: payoutGroups.filter((g) => !g.ties).length,
       },
+      // Surfaced only with ?debug=1: which Stripe sections (if any) failed.
+      ...(debug ? { _debug: { errors, payouts_fetched: payouts.length, pending_fetched: pendingBts.length } } : {}),
     });
   } catch (err) {
-    console.error('[accounting] payouts error:', err);
-    res.status(500).json({ error: 'Server error' });
+    // Log the full stack so we're never blind again; keep the client message
+    // generic unless ?debug=1 is set (office-gated route).
+    console.error('[accounting] payouts error:', (err && err.stack) ? err.stack : err);
+    const body = { error: 'Server error' };
+    if (req.query.debug === '1') {
+      body.detail = { message: err && err.message, type: err && err.type, code: err && err.code, param: err && err.param, stack: err && err.stack };
+      body.section_errors = errors;
+    }
+    res.status(500).json(body);
   }
 });
 
