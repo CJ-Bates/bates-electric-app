@@ -158,6 +158,10 @@
 
     /* Mobile reflow for the modal */
     @media (max-width: 640px) {
+      /* Filter chips: single horizontally-scrollable row instead of wrapping. */
+      .gc-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; padding-right: 12px; }
+      .gc-tabs::-webkit-scrollbar { display: none; }
+      .gc-tab { flex: 0 0 auto; }
       .gc-card { padding: 16px; margin-bottom: 12px; }
       .gc-card-actions { flex-direction: column; }
       .gc-card-actions .gc-btn { width: 100%; justify-content: center; }

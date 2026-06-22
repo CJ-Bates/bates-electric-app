@@ -132,6 +132,7 @@
     // bars/segments stay legible on the dark surface. Recomputed each render so
     // a theme toggle + Refresh repaints correctly.
     const darkMode = document.documentElement.classList.contains('dark');
+    const mobile = window.innerWidth <= 640;
     if (typeof Chart !== 'undefined') {
       Chart.defaults.color = darkMode ? '#A7B0C2' : '#5A6473';
       Chart.defaults.borderColor = darkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
@@ -166,13 +167,25 @@
 
     // ----- Signups over time (bar) -----
     const sm = data.signups_by_month || [];
+    // On phones, thin the month labels to ~every other one so they stay legible
+    // and unrotated; all 12 bars (data) are kept. Desktop shows every label.
+    const signupsScales = Object.assign({}, baseBar.scales);
+    if (mobile) {
+      signupsScales.x = {
+        ticks: {
+          autoSkip: false,
+          maxRotation: 0,
+          callback: function (value, index) { return index % 2 !== 0 ? '' : this.getLabelForValue(value); },
+        },
+      };
+    }
     draw('signups', 'chart-signups', {
       type: 'bar',
       data: {
         labels: sm.map((p) => monthLabel(p.month)),
         datasets: [{ data: sm.map((p) => p.count), backgroundColor: cBar, borderRadius: 4, maxBarThickness: 46 }],
       },
-      options: baseBar,
+      options: Object.assign({}, baseBar, { scales: signupsScales }),
     });
     $('signups-note').textContent =
       `By month signed up · ${niceDate(data.from)} – ${niceDate(data.to)}`;
