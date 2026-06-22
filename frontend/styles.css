@@ -3641,8 +3641,24 @@ html.dark .hub-user-role { color: #0F1420; }
   grid-template-columns: 1fr auto 1fr;
 }
 .gc-page-header > a { justify-self: start; min-width: 0; }
-.gc-page-header > h1 { justify-self: center; text-align: center; min-width: 0; margin: 0; }
+/* Fluid title so it never clips/overflows: shrinks on phones, capped at the
+   desktop 2rem (UA default) above ~640px so desktop is unchanged. */
+.gc-page-header > h1 { justify-self: center; text-align: center; min-width: 0; margin: 0; font-size: clamp(1.25rem, 5vw, 2rem); }
 .gc-page-header > .dashboard-header-actions { justify-self: end; min-width: 0; }
+
+/* Phones: the 1fr|auto|1fr columns can't fit side-by-side, so stack the header
+   vertically — Home, then the title, then the action buttons wrapping on their
+   own row. Nothing overlaps. Desktop (>640px) keeps the centered grid above. */
+@media (max-width: 640px) {
+  .gc-page-header {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .gc-page-header > h1 { text-align: left; }
+  .gc-page-header > .dashboard-header-actions { flex-wrap: wrap; }
+}
 
 .dashboard-filters {
   display: grid;

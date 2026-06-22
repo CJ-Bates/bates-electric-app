@@ -149,7 +149,7 @@
 
   function downloadCsv() {
     if (!currentData || !currentData.transactions || currentData.transactions.length === 0) {
-      showStatus('Nothing to export.', 'error');
+      showStatus('Nothing to export.', 'info'); // transient — auto-dismisses so it doesn't linger over a card
       return;
     }
     const header = ['Date', 'Customer', 'Address', 'Description', 'Gross', 'Stripe Fee', 'Net', 'Auth Code'];

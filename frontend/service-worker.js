@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v74';
+const CACHE = 'bates-shell-v75';
 const ASSETS = [
   './',
   './index.html',
