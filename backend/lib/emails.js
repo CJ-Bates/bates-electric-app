@@ -782,6 +782,67 @@ function buildReceiptEmail({ customer, companyState, amountCents, paidDate, card
   return { subject: `Your payment receipt from ${company}`, html, text };
 }
 
+// --- 10. Refund receipt (our own, state-branded) ----------------------------
+
+// We send our own refund confirmation for every refund so it can be branded per
+// customer — "Bates Electric" normally, "S.E. Bates Electric" for Florida —
+// which Stripe's account-level automatic refund email cannot do. Mirrors the
+// payment receipt: company + logo, refunded amount, refund date, card last-4,
+// what was refunded, and the original charge/receipt reference if available.
+// Handles partial refunds — the caller passes the ACTUAL refunded amount (not
+// the full original charge) and sets isPartial so the copy reads correctly.
+function buildRefundReceiptEmail({ customer, companyState, amountCents, refundDate, cardBrand, cardLast4, description, originalReceiptNumber, isPartial }) {
+  const state = (companyState != null) ? companyState : (customer && customer.install_state);
+  const company = companyName(state);
+  const name = (customer && customer.name) || 'there';
+  const dateStr = refundDate ? fmtFriendlyDate(refundDate) : '';
+  const brandName = cardBrand ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) : '';
+  const cardStr = cardLast4 ? `${brandName ? brandName + ' ' : ''}&bull;&bull;&bull;&bull; ${escHtml(cardLast4)}` : '';
+  const cardText = cardLast4 ? `${brandName ? brandName + ' ' : ''}**** ${cardLast4}` : '';
+
+  const rows = [
+    ['Amount refunded', fmtMoney(amountCents)],
+    dateStr ? ['Refund date', escHtml(dateStr)] : null,
+    description ? ['For', escHtml(description)] : null,
+    cardStr ? ['Refunded to', cardStr] : null,
+    originalReceiptNumber ? ['Original receipt #', escHtml(originalReceiptNumber)] : null,
+  ].filter(Boolean);
+  const rowsHtml = rows.map(([k, v]) =>
+    `<tr><td style="${TABLE_LABEL};width:42%;">${escHtml(k)}</td><td style="${TABLE_VALUE}">${v}</td></tr>`
+  ).join('');
+
+  const body =
+    `<p style="${P}">We&rsquo;ve issued a${isPartial ? ' partial' : ''} refund to your ${escHtml(company)} Generator Care account. Here are the details for your records.</p>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;margin-top:8px;">${rowsHtml}</table>` +
+    `<p style="${P}margin-top:18px;">Refunds usually take 5&ndash;10 business days to appear on your statement, depending on your bank.</p>` +
+    `<p style="${P_LAST}margin-top:8px;">Questions about this refund? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
+
+  const html = renderBrandedEmail({
+    heading: 'Your refund confirmation',
+    intro: `Hi ${escHtml(name)},`,
+    body,
+    companyState: state,
+  });
+
+  const textRows = [
+    ['Amount refunded', fmtMoney(amountCents)],
+    dateStr ? ['Refund date', dateStr] : null,
+    description ? ['For', description] : null,
+    cardText ? ['Refunded to', cardText] : null,
+    originalReceiptNumber ? ['Original receipt #', originalReceiptNumber] : null,
+  ].filter(Boolean);
+  const text =
+    `Hi ${name},\n\n` +
+    `We've issued a${isPartial ? ' partial' : ''} refund to your ${company} Generator Care account. Here are the details for your records.\n\n` +
+    `REFUND\n` +
+    textRows.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
+    `Refunds usually take 5-10 business days to appear on your statement, depending on your bank.\n\n` +
+    `Questions about this refund? Call ${BRAND.phone} or email ${BRAND.email}.\n\n` +
+    `-- ${company}`;
+
+  return { subject: `Your refund from ${company}`, html, text };
+}
+
 // ============================================================================
 // Module exports
 // ============================================================================
@@ -813,6 +874,7 @@ module.exports = {
   buildCancellationEmail,
   buildArReadyToInvoiceEmail,
   buildReceiptEmail,
+  buildRefundReceiptEmail,
 
   // Florida DBA helpers (re-exported for convenience)
   isFlorida,
