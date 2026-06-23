@@ -523,6 +523,9 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
         const ch = inv.charge && typeof inv.charge === 'object' ? inv.charge : null;
         const chargeAmount = ch ? ch.amount : (inv.amount_paid || 0);
         const amountRefunded = ch ? (ch.amount_refunded || 0) : 0;
+        // Card the charge settled on — what the refund posts back to. Shown in
+        // the dashboard refund dialog ("to Mastercard ••3981").
+        const card = (ch && ch.payment_method_details && ch.payment_method_details.card) || null;
         return {
           id: inv.id,
           created: inv.created,
@@ -532,6 +535,8 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
           stripe_dashboard_url: `https://dashboard.stripe.com/invoices/${inv.id}`,
           charge_amount_cents: chargeAmount,
           amount_refunded_cents: amountRefunded,
+          card_brand: card ? (card.brand || null) : null,
+          card_last4: card ? (card.last4 || null) : null,
           // Refundable: a paid invoice with a charge that isn't already fully refunded.
           refundable: inv.status === 'paid' && !!ch && amountRefunded < chargeAmount,
         };
@@ -719,17 +724,45 @@ router.patch('/subscriptions/:id', async (req, res) => {
 
 
 // PATCH /api/generator-care/customers/:id
-// Edit customer-level fields. Currently scoped to `notes` (the internal-note
-// textarea on the dashboard modal); add more fields here as needed. Notes here
-// persist across subscriptions if the customer ever resubscribes, which is
-// why this lives on customers and not subscriptions.
+// Edit customer-level fields from the dashboard modal: the internal `notes`,
+// plus Contact & Address (name, phone, email, install_*). Notes/contact live on
+// the customer (not the subscription) so they persist if the customer ever
+// resubscribes. Editing install_state to FL switches the customer to the
+// "S.E. Bates Electric" DBA branding on future emails/receipts (companyName()).
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 router.patch('/customers/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { notes } = req.body || {};
+    const body = req.body || {};
+    const { notes, name, phone, email, install_address, install_city, install_state, install_zip } = body;
 
     const updates = {};
     if (notes !== undefined) updates.notes = notes;
+
+    // Core contact fields are required-not-empty when supplied (a blank name or
+    // email would break receipts/branding). Address parts are trimmed as given.
+    if (name !== undefined) {
+      const v = String(name).trim();
+      if (!v) return res.status(400).json({ error: 'Name cannot be empty.' });
+      updates.name = v;
+    }
+    if (email !== undefined) {
+      const v = String(email).trim();
+      if (!v) return res.status(400).json({ error: 'Email cannot be empty.' });
+      if (!EMAIL_RE.test(v)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+      updates.email = v;
+    }
+    if (phone !== undefined) {
+      const v = String(phone).trim();
+      if (!v) return res.status(400).json({ error: 'Phone cannot be empty.' });
+      updates.phone = v;
+    }
+    if (install_address !== undefined) updates.install_address = String(install_address).trim();
+    if (install_city !== undefined) updates.install_city = String(install_city).trim();
+    // Normalize state to a clean 2-letter uppercase code — drives FL branding.
+    if (install_state !== undefined) updates.install_state = String(install_state).trim().toUpperCase().slice(0, 2);
+    if (install_zip !== undefined) updates.install_zip = String(install_zip).trim();
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'no editable fields provided' });
     }
@@ -742,6 +775,27 @@ router.patch('/customers/:id', async (req, res) => {
       .single();
     if (custErr) throw custErr;
     if (!updated) return res.status(404).json({ error: 'customer not found' });
+
+    // Best-effort sync of email + phone to the Stripe customer so records stay
+    // consistent (Stripe receipts, Customer Portal). NOT the address: per the
+    // generator-webhook design note, Stripe holds the BILLING address while
+    // install_address is the generator's physical/service location — they may
+    // legitimately differ, so we never overwrite one with the other. A Stripe
+    // hiccup must not block the local save (the DB update above already stuck).
+    const contactChanged = updates.email !== undefined || updates.phone !== undefined || updates.name !== undefined;
+    if (contactChanged && updated.stripe_customer_id) {
+      try {
+        const stripeUpdates = {};
+        if (updates.email !== undefined) stripeUpdates.email = updated.email;
+        if (updates.phone !== undefined) stripeUpdates.phone = updated.phone;
+        if (updates.name !== undefined) stripeUpdates.name = updated.name;
+        if (Object.keys(stripeUpdates).length) {
+          await stripe.customers.update(updated.stripe_customer_id, stripeUpdates);
+        }
+      } catch (e) {
+        console.error('[generator-care] Stripe customer sync failed (saved locally anyway):', e && e.message);
+      }
+    }
 
     res.json({ ok: true, customer: updated });
   } catch (err) {
@@ -962,6 +1016,18 @@ function buildRefundNote(refundAmountCents, originalAmountCents, reason, stripeR
   return note;
 }
 
+// Sum of prior refunds recorded in a row's notes (mirrors the frontend parser).
+// Lets the addon/adhoc refund endpoints cap a second partial refund server-side
+// instead of relying solely on Stripe rejecting an over-refund.
+function parseRefundedFromNotes(notes) {
+  if (!notes) return 0;
+  let total = 0;
+  for (const m of String(notes).matchAll(/REFUNDED \$(\d+(?:\.\d+)?)/g)) {
+    total += Math.round(parseFloat(m[1]) * 100);
+  }
+  return total;
+}
+
 
 // POST /api/generator-care/addons/:id/refund
 // Body: { amount_cents?, reason? }
@@ -986,11 +1052,13 @@ router.post('/addons/:id/refund', async (req, res) => {
       return res.status(400).json({ error: 'addon has no stripe_payment_intent_id; refund must be issued from Stripe Dashboard' });
     }
 
+    const alreadyRefundedCents = parseRefundedFromNotes(addon.notes);
     let result;
     try {
       result = await executeStripeRefund({
         paymentIntentId: addon.stripe_payment_intent_id,
         originalAmountCents: addon.amount_cents,
+        alreadyRefundedCents,
         requestedAmountCents: amount_cents,
         reason,
       });
@@ -1006,6 +1074,8 @@ router.post('/addons/:id/refund', async (req, res) => {
       ok: true,
       refund_id: result.refund.id,
       amount_cents: result.refundAmount,
+      total_refunded_cents: alreadyRefundedCents + result.refundAmount,
+      original_amount_cents: addon.amount_cents,
       stripe_status: result.refund.status,
     });
   } catch (err) {
@@ -1516,11 +1586,13 @@ router.post('/adhoc-charges/:id/refund', async (req, res) => {
       return res.status(400).json({ error: 'charge has no stripe_payment_intent_id; refund must be issued from Stripe Dashboard' });
     }
 
+    const alreadyRefundedCents = parseRefundedFromNotes(charge.notes);
     let result;
     try {
       result = await executeStripeRefund({
         paymentIntentId: charge.stripe_payment_intent_id,
         originalAmountCents: charge.amount_cents,
+        alreadyRefundedCents,
         requestedAmountCents: amount_cents,
         reason,
       });
@@ -1536,6 +1608,8 @@ router.post('/adhoc-charges/:id/refund', async (req, res) => {
       ok: true,
       refund_id: result.refund.id,
       amount_cents: result.refundAmount,
+      total_refunded_cents: alreadyRefundedCents + result.refundAmount,
+      original_amount_cents: charge.amount_cents,
       stripe_status: result.refund.status,
     });
   } catch (err) {
@@ -1613,6 +1687,8 @@ router.post('/invoices/:invoiceId/refund', async (req, res) => {
       ok: true,
       refund_id: result.refund.id,
       amount_cents: result.refundAmount,
+      total_refunded_cents: alreadyRefundedCents + result.refundAmount,
+      original_amount_cents: originalAmountCents,
       stripe_status: result.refund.status,
       invoice_id: invoiceId,
     });

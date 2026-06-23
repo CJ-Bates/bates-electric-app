@@ -140,6 +140,34 @@
     .gc-wo-input { width: 130px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem; font-family: inherit; background: #fff; color: #111827; }
     .gc-note-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 
+    /* Refund mini-dialog (Part A) */
+    .gc-rd-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .gc-rd-panel { background: #fff; border-radius: 14px; width: 100%; max-width: 420px; padding: 20px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.25); max-height: calc(100vh - 32px); overflow-y: auto; }
+    .gc-rd-title { margin: 0 0 2px; font-size: 1.05rem; color: #111827; }
+    .gc-rd-sub { color: #6b7280; font-size: 0.85rem; margin-bottom: 14px; }
+    .gc-rd-summary { background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+    .gc-rd-line { display: flex; justify-content: space-between; font-size: 0.85rem; color: #374151; padding: 3px 0; }
+    .gc-rd-line-strong { font-weight: 700; color: #111827; border-top: 1px solid #e5e7eb; margin-top: 4px; padding-top: 7px; }
+    .gc-rd-field { display: block; margin-bottom: 12px; }
+    .gc-rd-field > span { display: block; font-size: 0.8rem; color: #6b7280; font-weight: 600; margin-bottom: 5px; }
+    .gc-rd-field input { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; font-size: 0.95rem; color: #111827; background: #fff; }
+    .gc-rd-field input:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.12); }
+    .gc-rd-error { color: #b91c1c; font-size: 0.78rem; font-weight: 600; margin: -6px 0 12px; }
+    .gc-rd-card { font-size: 0.85rem; color: #374151; background: #eef2f7; border-radius: 8px; padding: 8px 11px; margin-bottom: 12px; }
+    .gc-rd-note { font-size: 0.76rem; line-height: 1.5; color: #6b7280; margin: 0 0 16px; }
+    .gc-rd-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+    /* Contact & Address edit form (Part B) */
+    .gc-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 12px; }
+    .gc-edit-field { display: flex; flex-direction: column; }
+    .gc-edit-field.gc-edit-full { grid-column: 1 / -1; }
+    .gc-edit-field > span { font-size: 0.8rem; color: #6b7280; font-weight: 600; margin-bottom: 5px; }
+    .gc-edit-input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.9rem; color: #111827; background: #fff; }
+    .gc-edit-input:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.1); }
+    select.gc-edit-input { cursor: pointer; }
+    .gc-edit-error { color: #b91c1c; font-size: 0.8rem; font-weight: 600; margin-bottom: 10px; }
+    @media (max-width: 640px) { .gc-edit-grid { grid-template-columns: 1fr; } }
+
     /* Skeleton loader */
     @keyframes gc-skeleton-pulse { 0%, 100% { background-color: #e5e7eb; } 50% { background-color: #f3f4f6; } }
     .gc-skeleton { display: inline-block; background: #e5e7eb; border-radius: 4px; animation: gc-skeleton-pulse 1.5s ease-in-out infinite; min-height: 1em; }
@@ -229,6 +257,20 @@
     html.dark .gc-note-editor textarea { border-color: var(--glass-border); }
     html.dark .gc-packet { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
     html.dark .gc-wo-input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
+
+    /* Refund dialog + contact edit form */
+    html.dark .gc-rd-panel { background: var(--bg-secondary); color: var(--text-primary); }
+    html.dark .gc-rd-title { color: var(--text-primary); }
+    html.dark .gc-rd-sub { color: var(--text-secondary); }
+    html.dark .gc-rd-summary { background: var(--bg-tertiary); border-color: var(--glass-border); }
+    html.dark .gc-rd-line { color: var(--text-secondary); }
+    html.dark .gc-rd-line-strong { color: var(--text-primary); border-top-color: var(--glass-border); }
+    html.dark .gc-rd-field > span { color: var(--text-secondary); }
+    html.dark .gc-rd-field input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .gc-rd-card { background: var(--bg-tertiary); color: var(--text-secondary); }
+    html.dark .gc-rd-note { color: var(--text-tertiary); }
+    html.dark .gc-edit-field > span { color: var(--text-secondary); }
+    html.dark .gc-edit-input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
 
     /* Danger zone + canceled banner */
     html.dark .gc-danger-zone { background: rgba(220,38,38,0.13); border-color: rgba(220,38,38,0.4); }
