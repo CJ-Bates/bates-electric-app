@@ -22,6 +22,14 @@
   let activeFilter = 'all';
   let searchQuery = '';
   let currentUserEmail = null;
+  // Card on file for the open customer, set by loadStripeData. Used as the card
+  // label in the refund dialog for ad-hoc/addon charges (which don't carry a
+  // per-charge card client-side); invoices pass their exact card explicitly.
+  let cardOnFile = null;
+
+  // US states + DC for the Contact & Address state dropdown. 2-letter codes only
+  // (matches the signup form) so install_state stays clean — FL branding keys off it.
+  const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
 
   // ---- Role check (must be office) ----
   async function checkRole() {
@@ -290,7 +298,10 @@
       </div>`;
   }
 
-  function renderContactCard(customer) {
+  // Read view of the Contact & Address info (swapped in/out of #gc-contact-region
+  // when Amy toggles Edit). The internal-note editor lives outside this region so
+  // an in-progress note isn't lost when entering edit mode.
+  function renderContactRead(customer) {
     const addrLine = [customer.install_address, customer.install_city, customer.install_state, customer.install_zip].filter(Boolean).join(', ');
     const fl = isFlorida(customer.install_state);
     // Florida customers operate under the S.E. Bates Electric DBA — surface it so
@@ -300,12 +311,51 @@
       ? `<div class="gc-card-row"><span class="gc-meta-label">Operating as</span><span class="gc-meta-value">${flBadge}</span></div>`
       : '';
     return `
+      <h3 class="gc-card-h"><span>Contact &amp; Address</span><button type="button" class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-contact-edit-btn">Edit</button></h3>
+      <div class="gc-card-row"><span class="gc-meta-label">Name</span><span class="gc-meta-value">${escapeHtml(customer.name) || '&mdash;'}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(customer.phone) || '&mdash;'}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
+      ${operatingRow}`;
+  }
+
+  // US-state dropdown for the edit form; preserves a legacy non-code value if one
+  // is stored, so editing another field can't silently wipe it.
+  function stateSelectHtml(selected) {
+    const sel = (selected || '').trim().toUpperCase();
+    const known = US_STATES.includes(sel);
+    const placeholder = !sel ? `<option value="" selected>&mdash; Select &mdash;</option>` : '';
+    const legacy = (!known && sel) ? `<option value="${escapeHtml(sel)}" selected>${escapeHtml(sel)} (current)</option>` : '';
+    const opts = US_STATES.map(code => `<option value="${code}"${code === sel ? ' selected' : ''}>${code}</option>`).join('');
+    return `<select id="gc-edit-state" class="gc-edit-input">${placeholder}${legacy}${opts}</select>`;
+  }
+
+  // Edit form for Contact & Address. Name/phone/email + install address parts;
+  // State is the clean 2-letter dropdown. Card stays out of here on purpose —
+  // the customer updates their card via the secure "Send Card-Update Link".
+  function renderContactEdit(customer) {
+    return `
+      <h3 class="gc-card-h"><span>Edit Contact &amp; Address</span></h3>
+      <div class="gc-edit-grid">
+        <label class="gc-edit-field gc-edit-full"><span>Full name</span><input type="text" id="gc-edit-name" class="gc-edit-input" value="${escapeHtml(customer.name || '')}"></label>
+        <label class="gc-edit-field"><span>Phone</span><input type="tel" id="gc-edit-phone" class="gc-edit-input" value="${escapeHtml(customer.phone || '')}"></label>
+        <label class="gc-edit-field"><span>Email</span><input type="email" id="gc-edit-email" class="gc-edit-input" value="${escapeHtml(customer.email || '')}"></label>
+        <label class="gc-edit-field gc-edit-full"><span>Street address</span><input type="text" id="gc-edit-addr" class="gc-edit-input" value="${escapeHtml(customer.install_address || '')}"></label>
+        <label class="gc-edit-field"><span>City</span><input type="text" id="gc-edit-city" class="gc-edit-input" value="${escapeHtml(customer.install_city || '')}"></label>
+        <label class="gc-edit-field"><span>State</span>${stateSelectHtml(customer.install_state)}</label>
+        <label class="gc-edit-field"><span>Zip</span><input type="text" id="gc-edit-zip" class="gc-edit-input" value="${escapeHtml(customer.install_zip || '')}"></label>
+      </div>
+      <div class="gc-edit-error" id="gc-contact-error" hidden></div>
+      <div class="gc-note-editor-actions">
+        <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-contact-cancel-btn">Cancel</button>
+        <button type="button" class="gc-btn gc-btn-primary gc-btn-sm" id="gc-contact-save-btn">Save changes</button>
+      </div>`;
+  }
+
+  function renderContactCard(customer) {
+    return `
       <div class="gc-card">
-        <h3 class="gc-card-h">Contact &amp; Address</h3>
-        <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(customer.phone) || '&mdash;'}</span></div>
-        <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
-        <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
-        ${operatingRow}
+        <div id="gc-contact-region">${renderContactRead(customer)}</div>
         <div class="gc-note-editor">
           <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Internal note (office only)</span>
           <textarea id="gc-customer-note" data-customer-id="${customer.id}" placeholder="Anything Amy or Brenda should know about this customer.">${escapeHtml(customer.notes || '')}</textarea>
@@ -603,6 +653,9 @@
     modal.hidden = false;
     title.textContent = 'Loading…';
     body.innerHTML = renderInitialSkeleton();
+    // Clear last customer's card so a failed stripe-data load can't mislabel
+    // this customer's refund dialog; loadStripeData repopulates it below.
+    cardOnFile = null;
 
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${id}`, {
@@ -668,6 +721,9 @@
 
       const saveNoteBtn = body.querySelector('#gc-save-note-btn');
       if (saveNoteBtn) saveNoteBtn.addEventListener('click', () => saveCustomerNote(c.id, saveNoteBtn));
+
+      const contactEditBtn = body.querySelector('#gc-contact-edit-btn');
+      if (contactEditBtn) contactEditBtn.addEventListener('click', () => enterContactEdit(c, id));
 
       // ---- Jonas hand-off buttons ----
       const woBtn = body.querySelector('#gc-wo-created-btn');
@@ -1286,6 +1342,9 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
 
+      // Remember the card on file for the refund dialog's card label.
+      cardOnFile = data.payment_method || null;
+
       // Payment method row
       const pmEl = body.querySelector('#gc-payment-method-value');
       if (pmEl) {
@@ -1325,7 +1384,7 @@
             // Refund button only when the backend says it's refundable (paid, has a
             // charge, not already fully refunded). Hidden on open/refunded invoices.
             const refundBtn = inv.refundable
-              ? `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-invoice="${inv.id}" data-charge-amount="${chargeAmt}" data-refunded="${refunded}" data-amount="${amt}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`
+              ? `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-invoice="${inv.id}" data-charge-amount="${chargeAmt}" data-refunded="${refunded}" data-amount="${amt}" data-card-brand="${escapeHtml(inv.card_brand || '')}" data-card-last4="${escapeHtml(inv.card_last4 || '')}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`
               : '';
             return `<div class="gc-card-row">
               <div>
@@ -1347,7 +1406,9 @@
               btn.dataset.refundInvoice,
               parseInt(btn.dataset.chargeAmount, 10) || 0,
               parseInt(btn.dataset.refunded, 10) || 0,
-              subscriptionId
+              subscriptionId,
+              btn.dataset.cardBrand || null,
+              btn.dataset.cardLast4 || null
             ));
           });
         }
@@ -1368,6 +1429,77 @@
       if (ltEl) ltEl.innerHTML = fail;
       const invEl = body.querySelector('#gc-invoices-body');
       if (invEl) invEl.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load invoices &mdash; refresh to retry.</div>`;
+    }
+  }
+
+  // Swap the contact region into edit mode and wire Save/Cancel.
+  function enterContactEdit(customer, subId) {
+    const region = document.getElementById('gc-contact-region');
+    if (!region) return;
+    region.innerHTML = renderContactEdit(customer);
+
+    const cancelBtn = document.getElementById('gc-contact-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => {
+      region.innerHTML = renderContactRead(customer);
+      const editBtn = document.getElementById('gc-contact-edit-btn');
+      if (editBtn) editBtn.addEventListener('click', () => enterContactEdit(customer, subId));
+    });
+
+    const saveBtn = document.getElementById('gc-contact-save-btn');
+    if (saveBtn) saveBtn.addEventListener('click', () => saveContactEdit(customer, subId, saveBtn));
+
+    const firstInput = document.getElementById('gc-edit-name');
+    if (firstInput) firstInput.focus();
+  }
+
+  async function saveContactEdit(customer, subId, btn) {
+    const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+    const errEl = document.getElementById('gc-contact-error');
+    const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.hidden = false; } };
+
+    const payload = {
+      name: val('gc-edit-name'),
+      phone: val('gc-edit-phone'),
+      email: val('gc-edit-email'),
+      install_address: val('gc-edit-addr'),
+      install_city: val('gc-edit-city'),
+      install_state: val('gc-edit-state'),
+      install_zip: val('gc-edit-zip'),
+    };
+
+    // Required-not-empty on the core fields + email-format check.
+    if (!payload.name) return showErr('Full name is required.');
+    if (!payload.phone) return showErr('Phone is required.');
+    if (!payload.email) return showErr('Email is required.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) return showErr('Please enter a valid email address.');
+    if (!payload.install_address) return showErr('Street address is required.');
+    if (!payload.install_city) return showErr('City is required.');
+    if (!payload.install_state) return showErr('State is required.');
+    if (!payload.install_zip) return showErr('Zip is required.');
+
+    const original = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/customers/${customer.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showErr(data.error || `HTTP ${r.status}`);
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        return;
+      }
+      showStatus('Contact & address updated.', 'success');
+      // Re-render list + modal so the name in the title/header and the FL branding
+      // badge reflect the change immediately (no full page reload).
+      await loadSubscriptions();
+      showDetail(subId);
+    } catch (err) {
+      console.error('Save contact failed:', err);
+      showErr(err.message);
+      if (btn) { btn.disabled = false; btn.textContent = original; }
     }
   }
 
@@ -1444,38 +1576,120 @@
     return String(notes).split('\n').filter(line => !line.trim().startsWith('REFUNDED ')).join('\n').trim();
   }
 
+  // Human card label, e.g. "Mastercard ••3981" — falls back when card unknown.
+  function cardLabel(brand, last4) {
+    if (!last4) return 'the card on file';
+    const b = brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : 'Card';
+    return `${b} ••${last4}`;
+  }
+
+  // Inline refund mini-dialog. Resolves with { amountCents, reason } after the
+  // office user confirms, or null if they cancel. The amount pre-fills to the
+  // full refundable balance and is editable down for a partial; amounts <= $0
+  // or over the balance are blocked before the confirm step.
+  function openRefundDialog({ label, originalCents, alreadyRefundedCents, cardBrand, cardLast4 }) {
+    return new Promise((resolve) => {
+      const already = alreadyRefundedCents || 0;
+      const remaining = (originalCents || 0) - already;
+      const remainingDollars = (remaining / 100).toFixed(2);
+      const cardText = cardLabel(cardBrand, cardLast4);
+      const shortCard = cardLast4 ? `••${cardLast4}` : 'the card on file';
+
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay';
+      const alreadyRow = already > 0
+        ? `<div class="gc-rd-line"><span>Already refunded</span><span>$${(already / 100).toFixed(2)}</span></div>`
+        : '';
+      overlay.innerHTML = `
+        <div class="gc-rd-panel" role="dialog" aria-modal="true" aria-label="Issue refund">
+          <h3 class="gc-rd-title">Refund</h3>
+          <div class="gc-rd-sub">${escapeHtml(label || '')}</div>
+          <div class="gc-rd-summary">
+            <div class="gc-rd-line"><span>Original charge</span><span>$${((originalCents || 0) / 100).toFixed(2)}</span></div>
+            ${alreadyRow}
+            <div class="gc-rd-line gc-rd-line-strong"><span>Refundable balance</span><span>$${remainingDollars}</span></div>
+          </div>
+          <label class="gc-rd-field"><span>Amount to refund ($)</span>
+            <input type="number" class="gc-rd-amount" step="0.01" min="0.01" max="${remainingDollars}" value="${remainingDollars}" inputmode="decimal">
+          </label>
+          <div class="gc-rd-error" hidden></div>
+          <label class="gc-rd-field"><span>Reason (optional)</span>
+            <input type="text" class="gc-rd-reason" placeholder="e.g. duplicate charge, courtesy">
+          </label>
+          <div class="gc-rd-card">Refunds to <strong>${escapeHtml(cardText)}</strong></div>
+          <p class="gc-rd-note">Refunding does <strong>not</strong> cancel the plan &mdash; use &ldquo;Cancel Subscription&rdquo; for that. Stripe keeps its original processing fee on refunds (it isn&rsquo;t returned).</p>
+          <div class="gc-rd-actions">
+            <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm gc-rd-cancel">Cancel</button>
+            <button type="button" class="gc-btn gc-btn-primary gc-btn-sm gc-rd-submit">Refund $${remainingDollars}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      const amountEl = overlay.querySelector('.gc-rd-amount');
+      const reasonEl = overlay.querySelector('.gc-rd-reason');
+      const errEl = overlay.querySelector('.gc-rd-error');
+      const submitEl = overlay.querySelector('.gc-rd-submit');
+      const cancelEl = overlay.querySelector('.gc-rd-cancel');
+
+      function close(result) {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(result);
+      }
+      function onKey(e) { if (e.key === 'Escape') close(null); }
+      document.addEventListener('keydown', onKey);
+
+      function currentCents() {
+        const num = parseFloat((amountEl.value || '').trim());
+        if (!Number.isFinite(num)) return NaN;
+        return Math.round(num * 100);
+      }
+      function validate() {
+        const cents = currentCents();
+        let msg = '';
+        if (!Number.isFinite(cents) || cents <= 0) msg = 'Enter an amount greater than $0.00.';
+        else if (cents > remaining) msg = `Amount can’t exceed the $${remainingDollars} refundable balance.`;
+        if (msg) {
+          errEl.textContent = msg; errEl.hidden = false;
+          submitEl.disabled = true; submitEl.textContent = 'Refund';
+        } else {
+          errEl.hidden = true;
+          submitEl.disabled = false; submitEl.textContent = `Refund $${(cents / 100).toFixed(2)}`;
+        }
+      }
+      amountEl.addEventListener('input', validate);
+      validate();
+
+      cancelEl.addEventListener('click', () => close(null));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+      submitEl.addEventListener('click', () => {
+        const cents = currentCents();
+        if (!Number.isFinite(cents) || cents <= 0 || cents > remaining) { validate(); return; }
+        // Confirmation step — this moves money; guard against accidental clicks.
+        if (!confirm(`Refund $${(cents / 100).toFixed(2)} to ${shortCard}? This posts to the customer's card within a few business days and can't be undone.`)) return;
+        close({ amountCents: cents, reason: (reasonEl.value || '').trim() || null });
+      });
+
+      setTimeout(() => { amountEl.focus(); amountEl.select(); }, 30);
+    });
+  }
+
   async function refundCharge(rowType, rowId, originalAmountCents, alreadyRefundedCents, label, subscriptionId) {
-    const remaining = originalAmountCents - alreadyRefundedCents;
+    const remaining = originalAmountCents - (alreadyRefundedCents || 0);
     if (remaining <= 0) {
       alert('Already fully refunded.');
       return;
     }
-    const remainingDollars = (remaining / 100).toFixed(2);
-    const origDollars = (originalAmountCents / 100).toFixed(2);
-
-    const promptMsg = alreadyRefundedCents > 0
-      ? `Refund "${label}".\n\nOriginal: $${origDollars}\nAlready refunded: $${(alreadyRefundedCents/100).toFixed(2)}\nMax additional refund: $${remainingDollars}\n\nAmount (blank = full $${remainingDollars}):`
-      : `Refund "${label}".\n\nOriginal charge: $${origDollars}\n\nAmount (blank = full $${origDollars}):`;
-
-    const amtStr = prompt(promptMsg, '');
-    if (amtStr === null) return;
-
-    let amount_cents = null;
-    const trimmed = (amtStr || '').trim();
-    if (trimmed) {
-      const num = parseFloat(trimmed);
-      if (!Number.isFinite(num) || num <= 0 || Math.round(num * 100) > remaining) {
-        alert(`Invalid amount. Must be between 0.01 and ${remainingDollars}.`);
-        return;
-      }
-      amount_cents = Math.round(num * 100);
-    }
-
-    const reasonStr = prompt('Optional reason for refund (or leave blank):', '');
-    if (reasonStr === null) return;
-
-    const confirmAmt = amount_cents ? (amount_cents / 100).toFixed(2) : remainingDollars;
-    if (!confirm(`Refund $${confirmAmt} via Stripe?\n\nThis posts to the customer's card within a few business days. Cannot be undone (you would have to recharge them).`)) return;
+    // Ad-hoc/addon charges don't carry a per-charge card client-side; the refund
+    // posts to the original card server-side regardless — show the card on file.
+    const result = await openRefundDialog({
+      label,
+      originalCents: originalAmountCents,
+      alreadyRefundedCents,
+      cardBrand: cardOnFile && cardOnFile.brand,
+      cardLast4: cardOnFile && cardOnFile.last4,
+    });
+    if (!result) return;
 
     const endpoint = rowType === 'addon'
       ? `${API_BASE}/api/generator-care/addons/${rowId}/refund`
@@ -1485,7 +1699,7 @@
       const r = await BatesAuth.authFetch(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount_cents, reason: (reasonStr || '').trim() || null }),
+        body: JSON.stringify({ amount_cents: result.amountCents, reason: result.reason }),
       });
       const data = await r.json();
       if (!r.ok) {
@@ -1503,43 +1717,27 @@
 
   // Refund a paid subscription/plan invoice. Independent of cancellation — the
   // confirm copy makes that explicit so Amy doesn't conflate the two.
-  async function refundInvoice(invoiceId, chargeAmountCents, alreadyRefundedCents, subscriptionId) {
+  async function refundInvoice(invoiceId, chargeAmountCents, alreadyRefundedCents, subscriptionId, cardBrand, cardLast4) {
     const remaining = (chargeAmountCents || 0) - (alreadyRefundedCents || 0);
     if (remaining <= 0) {
       alert('This invoice is already fully refunded.');
       return;
     }
-    const remainingDollars = (remaining / 100).toFixed(2);
-    const fullDollars = ((chargeAmountCents || 0) / 100).toFixed(2);
-
-    const promptMsg = alreadyRefundedCents > 0
-      ? `Refund plan charge.\n\nInvoice total: $${fullDollars}\nAlready refunded: $${(alreadyRefundedCents / 100).toFixed(2)}\nMax additional refund: $${remainingDollars}\n\nAmount (blank = full $${remainingDollars}):`
-      : `Refund plan charge.\n\nInvoice total: $${fullDollars}\n\nAmount (blank = full $${fullDollars}):`;
-    const amtStr = prompt(promptMsg, '');
-    if (amtStr === null) return;
-
-    let amount_cents = null;
-    const trimmed = (amtStr || '').trim();
-    if (trimmed) {
-      const num = parseFloat(trimmed);
-      if (!Number.isFinite(num) || num <= 0 || Math.round(num * 100) > remaining) {
-        alert(`Invalid amount. Must be between 0.01 and ${remainingDollars}.`);
-        return;
-      }
-      amount_cents = Math.round(num * 100);
-    }
-
-    const reasonStr = prompt('Optional reason for refund (or leave blank):', '');
-    if (reasonStr === null) return;
-
-    const confirmAmt = amount_cents ? (amount_cents / 100).toFixed(2) : remainingDollars;
-    if (!confirm(`Refund this $${confirmAmt} plan charge to the customer's card? This does not cancel their subscription.\n\nRefunding and canceling are separate actions - the customer keeps their plan unless you cancel it in the Danger Zone. The refund posts to the card within a few business days and cannot be undone (you would have to re-charge them).`)) return;
+    const result = await openRefundDialog({
+      label: 'Plan charge (subscription invoice)',
+      originalCents: chargeAmountCents,
+      alreadyRefundedCents,
+      // Exact card from the invoice's charge; fall back to the card on file.
+      cardBrand: cardBrand || (cardOnFile && cardOnFile.brand),
+      cardLast4: cardLast4 || (cardOnFile && cardOnFile.last4),
+    });
+    if (!result) return;
 
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/invoices/${invoiceId}/refund`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount_cents, reason: (reasonStr || '').trim() || null }),
+        body: JSON.stringify({ amount_cents: result.amountCents, reason: result.reason }),
       });
       const data = await r.json();
       if (!r.ok) {
