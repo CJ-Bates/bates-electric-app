@@ -8,7 +8,7 @@
 const express = require('express');
 const Stripe = require('stripe');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
-const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildReceiptEmail } = require('../lib/emails');
+const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildReceiptEmail, buildRefundReceiptEmail } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -77,6 +77,8 @@ router.post('/', async (req, res) => {
       await handleCustomerUpdated(event.data.object);
     } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
       await handleInvoicePaid(event.data.object);
+    } else if (event.type === 'charge.refunded') {
+      await handleChargeRefunded(event.data.object);
     } else if (event.type === 'invoice.payment_failed') {
       await handleInvoicePaymentFailed(event.data.object);
     } else if (event.type === 'invoice.upcoming') {
@@ -537,6 +539,91 @@ async function sendReceiptEmail(invoice) {
     return sendEmail({ to: customer.email, subject, html, text, logTag: '[receipt-email]', companyState: customer.install_state });
   } catch (e) {
     console.error('[receipt-email] build/send error:', e && e.message);
+    return { sent: false, reason: 'error' };
+  }
+}
+
+async function handleChargeRefunded(charge) {
+  // Send OUR OWN refund confirmation, branded by the customer's state, so CJ can
+  // turn off Stripe's account-level "Bates Electric" refund email (which can't
+  // vary per customer). Non-blocking; a mail hiccup must never fail the webhook
+  // (Stripe retries 500s).
+  sendRefundReceiptEmail(charge).catch((e) => console.error('[refund-receipt-email] unexpected:', e && e.message));
+}
+
+// Build + send our state-branded refund confirmation for a refunded charge.
+async function sendRefundReceiptEmail(charge) {
+  try {
+    if (!charge || !charge.customer) return { sent: false, reason: 'no customer' };
+
+    // The amount for THIS refund — use the latest refund object, not the charge's
+    // cumulative amount_refunded (which would over-state a second partial refund).
+    // Webhook payloads may not expand `refunds`, so fall back to the API.
+    let latestRefund = null;
+    if (charge.refunds && Array.isArray(charge.refunds.data) && charge.refunds.data.length) {
+      latestRefund = charge.refunds.data[0];
+    } else {
+      try {
+        const refunds = await stripeGet(`/refunds?charge=${charge.id}&limit=1`);
+        latestRefund = refunds && refunds.data && refunds.data[0];
+      } catch (e) {
+        console.error('[refund-receipt-email] refund lookup failed:', e && e.message);
+      }
+    }
+
+    const amountCents = (latestRefund && typeof latestRefund.amount === 'number')
+      ? latestRefund.amount
+      : (typeof charge.amount_refunded === 'number' ? charge.amount_refunded : 0);
+    if (amountCents <= 0) {
+      console.log('[refund-receipt-email] refund amount is 0, skipping');
+      return { sent: false, reason: 'zero amount' };
+    }
+
+    // Partial = refunded less than the original charge total.
+    const isPartial = typeof charge.amount === 'number' && amountCents < charge.amount;
+
+    // Only generator customers are in our table; non-generator charges won't match.
+    const { data: customer, error: custErr } = await supabase
+      .from('generator_customers')
+      .select('name, email, install_state')
+      .eq('stripe_customer_id', charge.customer)
+      .maybeSingle();
+    if (custErr) {
+      console.error('[refund-receipt-email] customer lookup error:', custErr.message);
+      return { sent: false, reason: 'lookup error' };
+    }
+    if (!customer || !customer.email) {
+      console.log('[refund-receipt-email] no matching customer or email, skipping');
+      return { sent: false, reason: 'no customer email' };
+    }
+
+    const refundTs = (latestRefund && latestRefund.created) || charge.created;
+    const refundDate = refundTs ? new Date(refundTs * 1000).toISOString().slice(0, 10) : null;
+
+    // Card brand + last-4 are on the charge payload (no extra call needed).
+    let cardBrand = null;
+    let cardLast4 = null;
+    const card = charge.payment_method_details && charge.payment_method_details.card;
+    if (card) { cardBrand = card.brand || null; cardLast4 = card.last4 || null; }
+
+    const description = charge.description || 'Generator Care';
+    // Original charge/receipt reference, if Stripe has one.
+    const originalReceiptNumber = charge.receipt_number || charge.id || null;
+
+    const { subject, html, text } = buildRefundReceiptEmail({
+      customer,
+      companyState: customer.install_state,
+      amountCents,
+      refundDate,
+      cardBrand,
+      cardLast4,
+      description,
+      originalReceiptNumber,
+      isPartial,
+    });
+    return sendEmail({ to: customer.email, subject, html, text, logTag: '[refund-receipt-email]', companyState: customer.install_state });
+  } catch (e) {
+    console.error('[refund-receipt-email] build/send error:', e && e.message);
     return { sent: false, reason: 'error' };
   }
 }
