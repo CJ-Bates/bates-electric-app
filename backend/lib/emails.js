@@ -33,13 +33,14 @@ const BRAND = {
   eyebrow: '#DFE6F0',       // pale blue eyebrow text on navy header
   fromEmail: 'no-reply@bates-electric.com',
   fromName: 'Bates Electric Generator Care',
-  // Florida DBA logo (the "S.E. Bates Electric" wordmark). Set via env once the
-  // asset is deployed to the static host, e.g.
-  //   GENERATOR_SE_LOGO_URL=https://app.bates-electric.com/se-bates-electric-logo.png
-  // When unset, Florida emails gracefully fall back to the text name only —
-  // never a broken image. Per the settlement (§2b) the S.E. logo is used as
-  // provided (scaled proportionally, never recolored/cropped/de-emphasized).
-  seLogoUrl: process.env.GENERATOR_SE_LOGO_URL || null,
+  // Florida DBA logo (the "S.E. Bates Electric" wordmark), served from the
+  // frontend static host (Netlify) at app.bates-electric.com. Absolute URL is
+  // required — emails can't use relative paths. GENERATOR_SE_LOGO_URL overrides
+  // it if ever set; if the image can't load, the header still shows the text
+  // name (never a broken-looking header). Per the settlement (§2b) the logo is
+  // used as provided — scaled proportionally only, never recolored/cropped/
+  // de-emphasized.
+  seLogoUrl: process.env.GENERATOR_SE_LOGO_URL || 'https://app.bates-electric.com/se-bates-electric-logo.jpg',
 };
 
 // Resolve the per-customer brand from an install-address state. Florida =>
@@ -201,8 +202,14 @@ function renderHeader(brand) {
   // (FL with the asset not yet configured), show the text name only.
   const logoImg = b.logoUrl
     ? (b.logoIsWordmark
+        // Wordmark (FL S.E. logo) is used as-provided — only scaled
+        // proportionally. It ships on a white background (JPEG, no transparency),
+        // so it sits on a white tile rather than as a raw rectangle on the navy
+        // band. The tile is container presentation only; the logo is untouched.
         ? `<img src="${b.logoUrl}" alt="${escHtml(company)}" width="240" ` +
-            `style="display:block;margin:0 auto 12px;max-width:240px;width:240px;height:auto;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">`
+            `style="display:block;margin:0 auto 12px;max-width:240px;width:240px;height:auto;` +
+            `background:#FFFFFF;padding:12px 16px;border-radius:8px;border:0;outline:none;` +
+            `text-decoration:none;-ms-interpolation-mode:bicubic;">`
         : `<img src="${b.logoUrl}" alt="${escHtml(company)}" width="56" height="56" ` +
             `style="display:block;margin:0 auto 12px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">`)
     : '';
