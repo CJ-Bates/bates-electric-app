@@ -8,6 +8,7 @@
 const express = require('express');
 const Stripe = require('stripe');
 const { supabaseAdmin: supabase } = require('../lib/supabase');
+const catalog = require('../lib/generator-catalog');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildReceiptEmail, buildRefundReceiptEmail } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
@@ -294,6 +295,20 @@ async function handleSubscriptionUpdated(subscription) {
   const updates = { status: dbStatus };
   // Reactivation clears the cancellation stamp so it isn't counted as churned.
   if (dbStatus === 'active') updates.canceled_at = null;
+
+  // Sync plan + yearly price from the current line items. This is how a scheduled
+  // cadence change (Semi-Annual <-> Annual) lands in our DB: when the schedule
+  // advances at renewal, Stripe fires subscription.updated with the new price.
+  // planForPriceId returns null for non-generator subs, so this is a no-op there.
+  const items = (subscription.items && subscription.items.data) || [];
+  const planItem = items.find((it) => it.price && catalog.isPlanPriceId(it.price.id));
+  if (planItem) {
+    const info = catalog.planForPriceId(planItem.price.id);
+    const hasFleet = items.some((it) => it.price && catalog.isFleetPriceId(it.price.id));
+    updates.plan = info.plan;
+    const annual = catalog.annualPriceCents(info.gen_class, info.plan, hasFleet);
+    if (annual != null) updates.annual_price_cents = annual;
+  }
 
   const { data, error } = await supabase
     .from('generator_subscriptions')
