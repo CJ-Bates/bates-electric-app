@@ -6,6 +6,7 @@ const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const catalog = require('../lib/generator-catalog');
+const { sendReceiptEmail } = require('../lib/receipts');
 
 const router = express.Router();
 
@@ -741,55 +742,51 @@ router.post('/subscriptions/:id/revert-plan-change', async (req, res) => {
 });
 
 
-// POST /api/generator-care/subscriptions/:id/resend-invoice
-// Resends the most recent invoice (paid or open) via Stripe. Useful when a
-// customer says they never got their receipt or needs a copy for their
-// records. Stripe's own email goes out -- not one of our branded templates.
-router.post('/subscriptions/:id/resend-invoice', async (req, res) => {
+// POST /api/generator-care/subscriptions/:id/resend-receipt
+// Body: { invoice_id }
+// Re-sends OUR state-branded receipt for that paid invoice's charge, reusing the
+// exact same builder + data path as the automatic invoice.paid receipt (real
+// amount/date/last-4/description/receipt number; branded by the customer's CURRENT
+// install_state; sent to their CURRENT email). Does NOT resend a Stripe-hosted
+// invoice. Office-gated; ownership-checked.
+router.post('/subscriptions/:id/resend-receipt', async (req, res) => {
   try {
+    const { id } = req.params;
+    const { invoice_id } = req.body || {};
+    if (!invoice_id) return res.status(400).json({ error: 'invoice_id required' });
+
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
       .select('stripe_customer_id')
-      .eq('id', req.params.id)
+      .eq('id', id)
       .single();
     if (subErr) throw subErr;
     if (!sub || !sub.stripe_customer_id) {
-      return res.status(400).json({ error: 'No Stripe customer linked to this subscription.' });
+      return res.status(404).json({ error: 'subscription not found' });
     }
 
-    const invoices = await stripe.invoices.list({
-      customer: sub.stripe_customer_id,
-      limit: 1,
-    });
-    const invoice = invoices.data[0];
-    if (!invoice) {
-      return res.status(404).json({ error: 'No invoices on file for this customer yet.' });
+    let invoice;
+    try {
+      invoice = await stripe.invoices.retrieve(invoice_id);
+    } catch (e) {
+      return res.status(404).json({ error: 'invoice not found in Stripe' });
+    }
+    // Ownership guard: the invoice must belong to this subscription's customer.
+    const invCustomer = typeof invoice.customer === 'string' ? invoice.customer : (invoice.customer && invoice.customer.id);
+    if (!invCustomer || invCustomer !== sub.stripe_customer_id) {
+      return res.status(403).json({ error: 'invoice does not belong to this customer' });
+    }
+    if (invoice.status !== 'paid') {
+      return res.status(400).json({ error: 'can only resend a receipt for a paid invoice' });
     }
 
-    // sendInvoice works on open invoices; for already-paid ones it returns
-    // the invoice unchanged (no email re-sent). Surface that distinction.
-    if (invoice.status === 'paid') {
-      // For a paid invoice, the right action is to email the receipt URL.
-      // We don't have a dedicated Stripe API for "resend paid receipt" --
-      // best we can do is point the customer at the hosted invoice URL.
-      return res.json({
-        ok: true,
-        invoice_id: invoice.id,
-        status: invoice.status,
-        note: 'Most recent invoice is already paid. No re-send needed -- share hosted_invoice_url with the customer if they want a copy.',
-        hosted_invoice_url: invoice.hosted_invoice_url || null,
-      });
+    const result = await sendReceiptEmail(invoice);
+    if (!result || !result.sent) {
+      return res.status(502).json({ ok: false, error: (result && result.reason) || 'receipt send failed' });
     }
-
-    const sent = await stripe.invoices.sendInvoice(invoice.id);
-    res.json({
-      ok: true,
-      invoice_id: invoice.id,
-      status: sent.status,
-      hosted_invoice_url: sent.hosted_invoice_url || null,
-    });
+    return res.json({ ok: true, sent: true });
   } catch (err) {
-    console.error('[generator-care] resend-invoice error:', err);
+    console.error('[generator-care] resend-receipt error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

@@ -1482,10 +1482,14 @@
               </div>
             </div>`;
           }).join('');
-          const resendBtn = `<div class="gc-card-actions"><button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-invoice-btn" data-sub-id="${subscriptionId}">Resend last invoice</button></div>`;
+          // "Resend receipt" re-sends OUR branded receipt for the most recent
+          // (paid) invoice — recent_invoices is newest-first and paid-only.
+          const last = invoices[0];
+          const custEmail = (subscription && subscription.customer && subscription.customer.email) || '';
+          const resendBtn = `<div class="gc-card-actions"><button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-receipt-btn" data-invoice="${last.id}" data-date="${last.created || ''}" data-amount="${last.amount_paid || 0}" data-email="${escapeHtml(custEmail)}">Resend receipt</button></div>`;
           invEl.innerHTML = rows + resendBtn;
-          const resend = body.querySelector('#gc-resend-invoice-btn');
-          if (resend) resend.addEventListener('click', () => resendLastInvoice(subscriptionId, resend));
+          const resend = body.querySelector('#gc-resend-receipt-btn');
+          if (resend) resend.addEventListener('click', () => resendReceipt(subscriptionId, resend));
           body.querySelectorAll('[data-refund-invoice]').forEach(btn => {
             btn.addEventListener('click', () => refundInvoice(
               btn.dataset.refundInvoice,
@@ -1610,36 +1614,35 @@
     }
   }
 
-  async function resendLastInvoice(subscriptionId, btn) {
-    if (!confirm('Resend the most recent invoice to the customer via Stripe? (Stripe sends its own email — separate from our Bates-branded templates.)')) return;
-    const original = btn ? btn.textContent : null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  // Re-send OUR branded receipt for the most recent paid invoice (same template +
+  // data the customer got automatically when the charge settled).
+  async function resendReceipt(subscriptionId, btn) {
+    const invoiceId = btn.dataset.invoice;
+    const dateStr = btn.dataset.date
+      ? new Date(parseInt(btn.dataset.date, 10) * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : '';
+    const amt = '$' + ((parseInt(btn.dataset.amount, 10) || 0) / 100).toFixed(2);
+    const email = btn.dataset.email || '';
+    if (!confirm(`Resend the receipt for ${dateStr} · ${amt} to ${email || 'the customer'}?`)) return;
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
     try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-invoice`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/resend-receipt`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice_id: invoiceId }),
       });
       const data = await r.json();
-      if (!r.ok) {
+      if (!r.ok || !data.sent) {
         showStatus(`Resend failed: ${data.error || `HTTP ${r.status}`}`, 'error');
         return;
       }
-      if (data.note) {
-        // Paid invoice case — no email re-sent. Show the hosted URL so Amy
-        // can copy/paste it to the customer.
-        const url = data.hosted_invoice_url || '';
-        alert(`${data.note}\n\n${url ? 'Hosted invoice URL: ' + url : ''}`);
-        if (url) {
-          try { await navigator.clipboard.writeText(url); showStatus('Invoice URL copied to clipboard.', 'success'); } catch (_) {}
-        }
-      } else {
-        showStatus('Invoice resent via Stripe.', 'success');
-      }
+      showStatus(`Receipt resent${email ? ' to ' + email : ''}.`, 'success');
     } catch (err) {
-      console.error('Resend invoice failed:', err);
+      console.error('Resend receipt failed:', err);
       showStatus(`Resend failed: ${err.message}`, 'error');
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = original; }
+      btn.disabled = false; btn.textContent = original;
     }
   }
 
