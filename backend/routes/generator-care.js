@@ -570,14 +570,19 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
 // (expanded with its schedule). Amounts are best-effort display values from the
 // catalog; the actual charge is always whatever the Stripe price is.
 function computePlanBilling(subscription) {
+  const items = (subscription.items && subscription.items.data) || [];
+  // current_period_end was removed from the Subscription object in recent Stripe
+  // API versions (stripe-node 18 pins 2025-03-31.basil) and now lives on each
+  // item. Fall back so the renewal date + pending-change detection keep working.
+  const periodEnd = subscription.current_period_end
+    || (items[0] && items[0].current_period_end)
+    || null;
+
   const out = {
-    current_period_end: subscription.current_period_end
-      ? new Date(subscription.current_period_end * 1000).toISOString().slice(0, 10)
-      : null,
+    current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
     current_renewal_amount_cents: null,
     pending_change: null,
   };
-  const items = (subscription.items && subscription.items.data) || [];
   const curPlanItem = items.find((it) => catalog.isPlanPriceId(it.price.id));
   const curHasFleet = items.some((it) => catalog.isFleetPriceId(it.price.id));
   if (curPlanItem) {
@@ -589,9 +594,15 @@ function computePlanBilling(subscription) {
   const sched = subscription.schedule;
   if (sched && typeof sched === 'object' && (sched.status === 'active' || sched.status === 'not_started')) {
     const priceIdOf = (i) => (typeof i.price === 'string' ? i.price : (i.price && i.price.id) || null);
-    // The pending phase is the one that starts at/after the current period end.
+    // The switch lands when the current schedule phase ends; the pending phase is
+    // the one starting then. Use the schedule's own current_phase boundary (the
+    // most reliable signal), falling back to the subscription period end.
+    const boundary = (sched.current_phase && sched.current_phase.end_date) || periodEnd || null;
+    if (!out.current_period_end && boundary) {
+      out.current_period_end = new Date(boundary * 1000).toISOString().slice(0, 10);
+    }
     const future = (sched.phases || []).find(
-      (p) => subscription.current_period_end && p.start_date >= subscription.current_period_end
+      (p) => boundary && p.start_date >= boundary
     );
     if (future) {
       const fItem = (future.items || []).find((i) => catalog.isPlanPriceId(priceIdOf(i)));
@@ -1298,9 +1309,11 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const periodEnd = stripeSub.current_period_end
-      ? new Date(stripeSub.current_period_end * 1000).toISOString().slice(0, 10)
-      : null;
+    // current_period_end moved to the item level in recent Stripe API versions.
+    const periodEndTs = stripeSub.current_period_end
+      || (stripeSub.items && stripeSub.items.data && stripeSub.items.data[0] && stripeSub.items.data[0].current_period_end)
+      || null;
+    const periodEnd = periodEndTs ? new Date(periodEndTs * 1000).toISOString().slice(0, 10) : null;
 
     // Send the cancellation confirmation NOW. The cancel is at period end, so
     // customer.subscription.deleted won't fire until that date (potentially months
