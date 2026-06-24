@@ -206,6 +206,21 @@
     if (!dateStr) return '—';
     return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
+  // Appointment date+time (absolute instant stored as timestamptz) -> local display.
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  // Absolute instant -> a datetime-local input value in the viewer's local tz.
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
   function dueLabel(sub) {
     const d = daysUntil(sub.next_visit_due);
     if (d === null) return '—';
@@ -233,7 +248,7 @@
         </td>
         <td>${escapeHtml(planLabel(sub.plan))} ${fleet}</td>
         <td>${dueLabel(sub)}</td>
-        <td>${badgeForBucket(b)}</td>
+        <td>${listStatusBadge(sub)}</td>
       </tr>
     `;
   }
@@ -250,9 +265,9 @@
             <div class="gc-card-name">${escapeHtml(cust.name)}</div>
             <div class="gc-card-meta">${escapeHtml(cust.install_city)} · ${escapeHtml(genClassLabel(sub.gen_class))} · ${escapeHtml(planLabel(sub.plan))}</div>
           </div>
-          ${badgeForBucket(b)}
+          ${listStatusBadge(sub)}
         </div>
-        <div class="gc-card-due ${dueClass}">Next visit: ${dueLabel(sub)}</div>
+        <div class="gc-card-due ${dueClass}">Due: ${dueLabel(sub)}</div>
       </div>
     `;
   }
@@ -261,6 +276,23 @@
     if (b === 'overdue') return '<span class="gc-badge gc-badge-overdue">Overdue</span>';
     if (b === 'soon') return '<span class="gc-badge gc-badge-soon">Soon</span>';
     return '<span class="gc-badge gc-badge-active">Active</span>';
+  }
+
+  // List STATUS column: surface visit scheduling state at a glance. Booked
+  // appointment -> "Scheduled <date>"; otherwise "Needs scheduling" colored by
+  // due urgency (red overdue / amber soon / gray future). Inline-styled so it
+  // doesn't depend on new CSS classes.
+  function listStatusBadge(sub) {
+    const pill = (bg, fg, text) => `<span class="gc-badge" style="background:${bg};color:${fg};">${escapeHtml(text)}</span>`;
+    if (sub.status !== 'active') return pill('#E5E7EB', '#374151', (sub.status || 'inactive').replace(/^\w/, c => c.toUpperCase()));
+    const ov = sub.open_visit;
+    if (ov && ov.appointment_at) {
+      return pill('#DCFCE7', '#166534', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`);
+    }
+    const b = bucket(sub);
+    if (b === 'overdue') return pill('#FEE2E2', '#991B1B', 'Needs scheduling');
+    if (b === 'soon') return pill('#FEF3C7', '#92400E', 'Needs scheduling');
+    return pill('#F3F4F6', '#4B5563', 'Needs scheduling');
   }
 
   // ---- Detail modal ----
@@ -492,32 +524,55 @@
       </div>`;
   }
 
-  function renderVisitsCard(visits) {
+  // Three clear states per visit: Needs scheduling (due, not booked) / Scheduled
+  // (booked appointment date+time) / Completed. The plan-driven DUE date stays
+  // separate and is shown as context.
+  function renderVisitsCard(visits, subscription) {
+    const dueCtx = (v) => {
+      const d = (subscription && subscription.next_visit_due) || v.scheduled_date || null;
+      return d ? fmtDate(d) : null;
+    };
     const rows = (visits || []).map(v => {
-      const date = v.completed_date
-        ? `Completed ${fmtDate(v.completed_date)}`
-        : v.status === 'tentative'
-          ? `Tentative &mdash; ${fmtDate(v.scheduled_date)} (needs confirmation)`
-          : `Scheduled ${fmtDate(v.scheduled_date)}`;
-      let action;
-      if (v.status === 'tentative') {
-        action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="gc-btn gc-btn-secondary gc-btn-sm" data-confirm-visit="${v.id}">Confirm</button>
-          <button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>
-        </div>`;
-      } else if (v.status === 'scheduled') {
-        action = `<button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>`;
-      } else if (v.status === 'completed') {
-        action = `<span class="gc-chip gc-chip-completed">Completed</span>`;
+      const completed = !!(v.completed_date || v.status === 'completed');
+      const scheduled = !completed && !!v.appointment_at;
+
+      let badge;
+      if (completed) {
+        badge = `<span class="gc-chip gc-chip-completed">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
+      } else if (scheduled) {
+        badge = `<span class="gc-chip" style="background:#DCFCE7;color:#166534;">Scheduled &middot; ${escapeHtml(fmtDateTime(v.appointment_at))}</span>`;
       } else {
-        action = `<span class="gc-chip">${escapeHtml(v.status)}</span>`;
+        badge = `<span class="gc-chip" style="background:#FEF3C7;color:#92400E;">Needs scheduling</span>`;
       }
-      return `<div class="gc-card-row">
-        <div>
-          <div class="gc-meta-value">${escapeHtml(v.visit_type === 'regular_service' ? 'Regular service' : 'On-demand')}</div>
-          <div class="gc-meta-label" style="margin-top:2px;">${date}</div>
+
+      // Audit trail (who/when), like the Jonas hand-off stamps.
+      const audit = [];
+      if (v.scheduled_by && (scheduled || completed)) {
+        audit.push(`Booked by ${escapeHtml(v.scheduled_by)}${v.scheduled_at ? ' on ' + fmtDate(String(v.scheduled_at).slice(0, 10)) : ''}`);
+      }
+      if (completed && v.completed_by) audit.push(`Completed by ${escapeHtml(v.completed_by)}`);
+
+      let actions = '';
+      if (!completed) {
+        const localVal = v.appointment_at ? toLocalInput(v.appointment_at) : '';
+        actions = `
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+            <input type="datetime-local" class="gc-appt-input" data-visit="${v.id}" value="${localVal}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+            <button class="gc-btn gc-btn-secondary gc-btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
+            <button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>
+          </div>`;
+      }
+      const due = !completed ? dueCtx(v) : null;
+      return `<div class="gc-card-row" style="display:block;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div>
+            <div class="gc-meta-value">${escapeHtml(v.visit_type === 'regular_service' ? 'Regular service' : 'On-demand')}</div>
+            ${due ? `<div class="gc-meta-label" style="margin-top:2px;">Due ${escapeHtml(due)}</div>` : ''}
+            ${audit.length ? `<div class="gc-meta-label" style="margin-top:2px;opacity:0.85;">${audit.join(' &middot; ')}</div>` : ''}
+          </div>
+          <div style="flex-shrink:0;">${badge}</div>
         </div>
-        <div>${action}</div>
+        ${actions}
       </div>`;
     }).join('');
     const body = rows || `<div class="gc-meta-label" style="padding:6px 0;">No visits on record.</div>`;
@@ -678,7 +733,7 @@
         renderContactCard(c) +
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons) +
-        renderVisitsCard(visits) +
+        renderVisitsCard(visits, subscription) +
         renderAddonsCard(pending_addons, isCanceled) +
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
@@ -688,8 +743,8 @@
       body.querySelectorAll('[data-complete-visit]').forEach(btn => {
         btn.addEventListener('click', () => completeVisit(btn.dataset.completeVisit, id));
       });
-      body.querySelectorAll('[data-confirm-visit]').forEach(btn => {
-        btn.addEventListener('click', () => confirmVisit(btn.dataset.confirmVisit, id));
+      body.querySelectorAll('[data-schedule-visit]').forEach(btn => {
+        btn.addEventListener('click', () => scheduleAppointment(btn.dataset.scheduleVisit, id));
       });
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
@@ -1035,38 +1090,37 @@
     }
   }
 
-  async function confirmVisit(visitId, subscriptionId) {
-    const dateStr = prompt(
-      'Confirm the actual scheduled date for this visit.\n\nFormat: YYYY-MM-DD\n(Press OK to keep the current date.)',
-      ''
-    );
-    if (dateStr === null) return; // user cancelled
-    const trimmed = (dateStr || '').trim();
-    let body = {};
-    if (trimmed) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-        alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-15). Leave blank to keep current.');
-        return;
-      }
-      body.scheduled_date = trimmed;
+  // Book (or reschedule) an appointment date+time -> the visit becomes "Scheduled".
+  // Reads the inline datetime-local input next to the visit. The single backend
+  // "schedule" action is where a future SMS confirmation will hang.
+  async function scheduleAppointment(visitId, subscriptionId) {
+    const input = document.querySelector(`.gc-appt-input[data-visit="${visitId}"]`);
+    if (!input || !input.value) {
+      showStatus('Pick an appointment date and time first.', 'error');
+      return;
+    }
+    // datetime-local is local wall-clock; convert to an absolute instant to store.
+    const when = new Date(input.value);
+    if (isNaN(when.getTime())) {
+      showStatus('That date/time isn’t valid.', 'error');
+      return;
     }
     try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/confirm`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/schedule`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ appointment_at: when.toISOString() }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Could not confirm visit: ${reason}`, 'error');
-      } else {
-        showStatus('Visit confirmed.', 'success');
+        showStatus(`Could not schedule: ${data.error || `HTTP ${r.status}`}`, 'error');
+        return;
       }
+      showStatus('Appointment booked.', 'success');
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
-      console.error('Confirm visit failed:', err);
+      console.error('Schedule appointment failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }

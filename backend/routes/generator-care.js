@@ -109,11 +109,26 @@ router.get('/subscriptions', async (req, res) => {
         fleet_monitoring, status, annual_price_cents,
         signup_date, next_visit_due, last_visit_date,
         stripe_subscription_id, stripe_customer_id, notes, created_at,
-        customer:generator_customers(id, name, email, phone, install_address, install_city, install_state, install_zip)
+        customer:generator_customers(id, name, email, phone, install_address, install_city, install_state, install_zip),
+        visits:generator_service_visits(id, status, appointment_at, completed_date, scheduled_date, visit_type)
       `)
       .order('next_visit_due', { ascending: true, nullsFirst: false });
     if (error) throw error;
-    res.json({ subscriptions: data || [] });
+    // Attach each sub's current OPEN (un-completed) visit so the list STATUS
+    // column can show Needs scheduling vs Scheduled — without shipping every visit.
+    const subscriptions = (data || []).map((s) => {
+      const open = (s.visits || [])
+        .filter((v) => v.status !== 'completed' && !v.completed_date)
+        .sort((a, b) => String(a.appointment_at || a.scheduled_date || '').localeCompare(String(b.appointment_at || b.scheduled_date || '')))[0] || null;
+      const { visits, ...rest } = s;
+      return {
+        ...rest,
+        open_visit: open
+          ? { id: open.id, status: open.status, appointment_at: open.appointment_at, scheduled_date: open.scheduled_date }
+          : null,
+      };
+    });
+    res.json({ subscriptions });
   } catch (err) {
     console.error('[generator-care] subscriptions error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -799,6 +814,7 @@ router.post('/visits/:id/complete', async (req, res) => {
     const id = req.params.id;
     const { notes, addons_performed, technician_id } = req.body || {};
     const today = (req.body && req.body.completed_date) || new Date().toISOString().slice(0, 10);
+    const completedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
 
     // 1. Update the visit
     const { data: updated, error: updErr } = await supabaseAdmin
@@ -806,6 +822,7 @@ router.post('/visits/:id/complete', async (req, res) => {
       .update({
         status: 'completed',
         completed_date: today,
+        completed_by: completedBy,
         notes: notes || null,
         addons_performed: addons_performed || null,
         technician_id: technician_id || req.user.id,
@@ -990,39 +1007,47 @@ router.patch('/customers/:id', async (req, res) => {
 });
 
 
-// POST /api/generator-care/visits/:id/confirm
-// Promote a tentative visit to scheduled. Optionally update the scheduled_date in the same call.
-router.post('/visits/:id/confirm', async (req, res) => {
+// POST /api/generator-care/visits/:id/schedule
+// Book (or reschedule) an appointment date+time for a visit -> "Scheduled".
+// Distinct from the plan-driven DUE date (which stays on the subscription): this
+// is the actual booked slot Amy confirmed with the customer by phone. Records who
+// booked it + when (audit). This is the single, clear "schedule appointment"
+// action and the intended seam for a future SMS confirmation/reminder (NOT built
+// here). Office-gated; the actor is recorded (not hard-coded), so a future
+// field-tech role could reuse this endpoint without a rewrite.
+router.post('/visits/:id/schedule', async (req, res) => {
   try {
     const { id } = req.params;
-    const { scheduled_date } = req.body || {};
+    const { appointment_at } = req.body || {};
+    if (!appointment_at) return res.status(400).json({ error: 'appointment_at (date + time) is required' });
+    const when = new Date(appointment_at);
+    if (isNaN(when.getTime())) return res.status(400).json({ error: 'appointment_at is not a valid date/time' });
 
-    const updates = { status: 'scheduled' };
-    if (scheduled_date) updates.scheduled_date = scheduled_date;
+    const bookedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
 
     const { data: updated, error: vErr } = await supabaseAdmin
       .from('generator_service_visits')
-      .update(updates)
+      .update({
+        appointment_at: when.toISOString(),
+        scheduled_by: bookedBy,
+        scheduled_at: new Date().toISOString(),
+        status: 'scheduled',
+      })
       .eq('id', id)
+      .neq('status', 'completed')
       .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email, install_state))')
-      .single();
+      .maybeSingle();
     if (vErr) throw vErr;
+    if (!updated) return res.status(404).json({ error: 'visit not found or already completed' });
 
-    // If date was updated, keep subscription.next_visit_due in sync
-    if (scheduled_date && updated.subscription) {
-      await supabaseAdmin
-        .from('generator_subscriptions')
-        .update({ next_visit_due: scheduled_date })
-        .eq('id', updated.subscription.id);
-    }
-
-    // Email the customer a confirmation (fire-and-forget).
+    // Notify the customer their appointment is booked (existing template). Future
+    // SMS confirmation hangs off THIS point. Pass the date part — template-safe.
     const sub = updated.subscription;
     const customer = sub && sub.customer;
     if (customer && customer.email) {
       const { subject, html, text } = buildVisitScheduledEmail({
         customer,
-        scheduledDate: updated.scheduled_date,
+        scheduledDate: updated.appointment_at ? updated.appointment_at.slice(0, 10) : null,
         planLabel: planLabelFor(sub && sub.plan),
       });
       sendEmail({
@@ -1037,7 +1062,7 @@ router.post('/visits/:id/confirm', async (req, res) => {
 
     res.json({ ok: true, visit: updated });
   } catch (err) {
-    console.error('[generator-care] confirm visit error:', err);
+    console.error('[generator-care] schedule visit error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });
