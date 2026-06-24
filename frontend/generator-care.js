@@ -26,6 +26,9 @@
   // label in the refund dialog for ad-hoc/addon charges (which don't carry a
   // per-charge card client-side); invoices pass their exact card explicitly.
   let cardOnFile = null;
+  // Next-renewal + pending-plan-change info for the open customer, set by
+  // loadStripeData. Used by the Change-plan confirm dialog (for the renewal date).
+  let planBilling = null;
 
   // US states + DC for the Contact & Address state dropdown. 2-letter codes only
   // (matches the signup form) so install_state stays clean — FL branding keys off it.
@@ -371,6 +374,7 @@
     const lastVisitText = subscription.last_visit_date ? fmtDate(subscription.last_visit_date) : '&mdash; (none yet)';
     const accountActions = isCanceled ? '' : `
       <div class="gc-card-actions">
+        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-change-plan-btn" data-plan="${escapeHtml(subscription.plan)}" data-genclass="${escapeHtml(subscription.gen_class)}">Change plan</button>
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-welcome-btn">Resend Welcome</button>
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
       </div>`;
@@ -378,10 +382,12 @@
       <div class="gc-card">
         <h3 class="gc-card-h">Plan &amp; Billing</h3>
         <div class="gc-card-row"><span class="gc-meta-label">Plan</span><span class="gc-meta-value">${escapeHtml(planLabel(subscription.plan))}</span></div>
+        <div id="gc-plan-pending" style="display:none;"></div>
         <div class="gc-card-row"><span class="gc-meta-label">Generator</span><span class="gc-meta-value">${escapeHtml(genClassLabel(subscription.gen_class))} &mdash; ${escapeHtml(subscription.gen_model || 'model n/a')}</span></div>
         ${subscription.gen_serial ? `<div class="gc-card-row"><span class="gc-meta-label">Serial</span><span class="gc-meta-value">${escapeHtml(subscription.gen_serial)}</span></div>` : ''}
         <div class="gc-card-row"><span class="gc-meta-label">Fleet Monitoring</span><span class="gc-meta-value">${subscription.fleet_monitoring ? 'Yes' : 'No'}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Annual price</span><span class="gc-meta-value">${annual}</span></div>
+        <div class="gc-card-row" id="gc-renews-row" style="display:none;"><span class="gc-meta-label">Renews at</span><span class="gc-meta-value" id="gc-renews-value"></span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Signed up</span><span class="gc-meta-value">${fmtDate(subscription.signup_date)}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Last visit</span><span class="gc-meta-value">${lastVisitText}</span></div>
         <div class="gc-card-row">
@@ -718,6 +724,9 @@
 
       const resendWelcomeBtn = body.querySelector('#gc-resend-welcome-btn');
       if (resendWelcomeBtn) resendWelcomeBtn.addEventListener('click', () => resendWelcomeEmail(id, resendWelcomeBtn));
+
+      const changePlanBtn = body.querySelector('#gc-change-plan-btn');
+      if (changePlanBtn) changePlanBtn.addEventListener('click', () => changePlan(id, changePlanBtn.dataset.plan, changePlanBtn.dataset.genclass));
 
       const saveNoteBtn = body.querySelector('#gc-save-note-btn');
       if (saveNoteBtn) saveNoteBtn.addEventListener('click', () => saveCustomerNote(c.id, saveNoteBtn));
@@ -1332,6 +1341,49 @@
   // Fetches payment method + lifetime billed + last 5 invoices, replaces
   // the matching skeletons in the open modal. Fails quietly with a small
   // "couldn't load" message in each section.
+  // Switch the customer between Semi-Annual and Annual, effective at their next
+  // renewal. No charge today (server schedules it via a Stripe subscription
+  // schedule with proration disabled).
+  async function changePlan(subscriptionId, currentPlan, genClass) {
+    const target = currentPlan === 'semi_annual' ? 'annual' : 'semi_annual';
+    const targetLabel = planLabel(target);
+    const renewsOn = planBilling && planBilling.current_period_end ? planBilling.current_period_end : null;
+    const whenText = renewsOn ? `their next renewal on ${fmtDate(renewsOn)}` : 'their next renewal';
+    if (!confirm(`Switch this customer to ${targetLabel} starting at ${whenText}?\n\nNo charge today. The new ${targetLabel} price and billing cadence take effect at renewal; they stay on their current plan until then.`)) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/change-plan`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_plan: target }),
+      });
+      const data = await r.json();
+      if (!r.ok) { showStatus(`Couldn't change plan: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(`Scheduled switch to ${targetLabel} at renewal (${fmtDate(data.effective_date)}). No charge today.`, 'success');
+      showDetail(subscriptionId);
+    } catch (e) {
+      console.error('change-plan failed:', e);
+      showStatus(`Couldn't change plan: ${e.message}`, 'error');
+    }
+  }
+
+  // Cancel a not-yet-effective plan change (releases the Stripe schedule).
+  async function revertPlanChange(subscriptionId) {
+    if (!confirm('Cancel the pending plan change and keep the customer on their current plan? No charge either way.')) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/revert-plan-change`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json();
+      if (!r.ok) { showStatus(`Couldn't revert: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus('Pending plan change cancelled. Customer stays on their current plan.', 'success');
+      showDetail(subscriptionId);
+    } catch (e) {
+      console.error('revert-plan-change failed:', e);
+      showStatus(`Couldn't revert: ${e.message}`, 'error');
+    }
+  }
+
   async function loadStripeData(subscriptionId, subscription, pendingAddons) {
     const body = document.getElementById('modal-body');
     if (!body) return;
@@ -1359,6 +1411,39 @@
       if (ltEl) {
         const amt = data.lifetime_billed_cents || 0;
         ltEl.textContent = `$${(amt / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+
+      // Plan billing: "Renews at" amount + any pending (scheduled) plan change.
+      planBilling = data.plan_billing || null;
+      const pb = planBilling;
+      const cadenceText = (plan) => plan === 'semi_annual' ? 'every 6 months' : 'annually';
+      const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+      const renewsRow = body.querySelector('#gc-renews-row');
+      const renewsEl = body.querySelector('#gc-renews-value');
+      if (renewsRow && renewsEl && pb) {
+        if (pb.pending_change) {
+          renewsEl.innerHTML = `${money(pb.pending_change.new_renewal_amount_cents)} ${cadenceText(pb.pending_change.new_plan)} <span style="color:#6b7280;font-weight:500;">(from ${fmtDate(pb.pending_change.effective_date)})</span>`;
+          renewsRow.style.display = '';
+        } else if (pb.current_renewal_amount_cents != null) {
+          renewsEl.innerHTML = `${money(pb.current_renewal_amount_cents)} ${cadenceText(subscription.plan)}${pb.current_period_end ? ` <span style="color:#6b7280;font-weight:500;">(next: ${fmtDate(pb.current_period_end)})</span>` : ''}`;
+          renewsRow.style.display = '';
+        }
+      }
+      // Pending-change banner + "Keep current plan" (revert) control.
+      const pendingEl = body.querySelector('#gc-plan-pending');
+      if (pendingEl) {
+        if (pb && pb.pending_change) {
+          const pc = pb.pending_change;
+          pendingEl.innerHTML = `<div style="margin:6px 0 2px;padding:9px 11px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;font-size:0.83rem;color:#92400E;line-height:1.45;">`
+            + `Switching to <strong>${escapeHtml(planLabel(pc.new_plan))}</strong> at renewal (${fmtDate(pc.effective_date)}). No charge until then.`
+            + ` <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-revert-plan-btn" style="margin-left:4px;">Keep current plan</button></div>`;
+          pendingEl.style.display = '';
+          const revertBtn = body.querySelector('#gc-revert-plan-btn');
+          if (revertBtn) revertBtn.addEventListener('click', () => revertPlanChange(subscriptionId));
+        } else {
+          pendingEl.style.display = 'none';
+          pendingEl.innerHTML = '';
+        }
       }
 
       // Invoices card body
