@@ -422,12 +422,15 @@
         <div class="gc-card-row" id="gc-renews-row" style="display:none;"><span class="gc-meta-label">Renews at</span><span class="gc-meta-value" id="gc-renews-value"></span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Signed up</span><span class="gc-meta-value">${fmtDate(subscription.signup_date)}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Last visit</span><span class="gc-meta-value">${lastVisitText}</span></div>
-        <div class="gc-card-row">
-          <span class="gc-meta-label">Next visit due</span>
-          <span class="gc-meta-value">
-            <input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
-            <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-next-visit-save" style="margin-left:6px;">Save</button>
-          </span>
+        <div class="gc-card-row" style="display:block;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <span class="gc-meta-label">Next due (target)</span>
+            <span class="gc-meta-value">
+              <input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+              <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-next-visit-save" style="margin-left:6px;">Save</button>
+            </span>
+          </div>
+          <div class="gc-meta-label" style="margin-top:4px;opacity:0.8;font-size:0.78rem;">Auto-set from the plan cadence. Book the actual appointment in Service Visits below.</div>
         </div>
         <div class="gc-card-row" id="gc-payment-method-row"><span class="gc-meta-label">Payment method</span><span class="gc-meta-value" id="gc-payment-method-value"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span></span></div>
         <div class="gc-card-row" id="gc-lifetime-row"><span class="gc-meta-label">Lifetime billed</span><span class="gc-meta-value" id="gc-lifetime-value"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></span></div>
@@ -1132,7 +1135,7 @@
     const today = new Date().toISOString().slice(0, 10);
     const res = await openPrompt({
       title: 'Mark visit complete',
-      message: 'The next visit will be scheduled relative to the date performed.',
+      message: "The next visit will be scheduled on the plan's regular cadence (every 6 or 12 months from signup) — not relative to today.",
       fields: [
         { name: 'date', label: 'Date performed', type: 'date', value: today, required: true },
         { name: 'notes', label: 'Notes for the customer (optional)', type: 'textarea', placeholder: 'What we did, anything they should know…', hint: 'Appears in the visit-complete email under “Notes from the visit.”' },
