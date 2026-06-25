@@ -722,7 +722,8 @@ async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annu
     html,
     text,
     logTag: '[welcome-email]',
-    companyState: (meta && meta.install_state),
+    // From display name: current customer state first, signup meta as fallback.
+    companyState: (customer && customer.install_state) || (meta && meta.install_state),
   });
 }
 
