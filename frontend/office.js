@@ -160,10 +160,10 @@
     });
 
     container.querySelectorAll('.delete-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
-        if (confirm('Are you sure you want to delete this inspection? This cannot be undone.')) {
+        if (await openConfirm({ title: 'Delete inspection?', message: 'This cannot be undone.', confirmText: 'Delete', danger: true })) {
           deleteInspection(id);
         }
       });
@@ -508,8 +508,8 @@
   // Modal close buttons
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
   document.getElementById('modal-close-btn2').addEventListener('click', closeModal);
-  document.getElementById('modal-delete-btn').addEventListener('click', () => {
-    if (currentDetailId && confirm('Delete this inspection?')) {
+  document.getElementById('modal-delete-btn').addEventListener('click', async () => {
+    if (currentDetailId && await openConfirm({ title: 'Delete inspection?', message: 'This cannot be undone.', confirmText: 'Delete', danger: true })) {
       deleteInspection(currentDetailId);
     }
   });

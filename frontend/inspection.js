@@ -704,8 +704,8 @@
 
   // ---------- actions ----------
   function wireActions() {
-    document.getElementById('reset-btn').addEventListener('click', () => {
-      if (!confirm('Reset the entire inspection? This cannot be undone.')) return;
+    document.getElementById('reset-btn').addEventListener('click', async () => {
+      if (!await openConfirm({ title: 'Reset inspection?', message: 'This clears the entire form. This cannot be undone.', confirmText: 'Reset', danger: true })) return;
       document.getElementById('inspection-form').reset();
       clearDraft();
       Object.values(signatures).forEach((s) => s.clear());

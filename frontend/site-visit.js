@@ -233,13 +233,13 @@ function svUploadFile(file, promptId, extraId) {
         var errObj = JSON.parse(xhr.responseText);
         errMsg = errObj.error && errObj.error.message ? errObj.error.message : xhr.responseText.slice(0, 200);
       } catch (e) {}
-      alert('Upload failed: ' + errMsg);
+      showStatus('Upload failed: ' + errMsg, 'error');
       if (prog) prog.style.display = 'none';
     }
   };
 
   xhr.onerror = function() {
-    alert('Upload error - check connection.');
+    showStatus('Upload error — check your connection.', 'error');
     if (prog) prog.style.display = 'none';
   };
 

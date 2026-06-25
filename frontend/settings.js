@@ -126,7 +126,7 @@
   }
 
   async function clearCache() {
-    const ok = window.confirm('Clear offline cache and reload? Any unsaved drafts stay in place.');
+    const ok = await openConfirm({ title: 'Clear cache?', message: 'Clear offline cache and reload? Any unsaved drafts stay in place.', confirmText: 'Clear cache' });
     if (!ok) return;
     toast('Clearing cache…');
     try {
