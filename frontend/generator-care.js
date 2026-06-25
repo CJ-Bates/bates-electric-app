@@ -1478,10 +1478,19 @@
 
     const through = preview.period_end ? fmtDate(preview.period_end) : 'the next renewal';
     const cad = preview.plan === 'semi_annual' ? 'per 6 months' : 'per year';
+    const charge = preview.proration_cents;
+    // If a coupon/credit reduced the charge below the time-based proration, say so.
+    let reducedNote = '';
+    if ((preview.reduced_by_credit || preview.reduced_by_discount)
+        && typeof preview.expected_gross_cents === 'number' && preview.expected_gross_cents > charge) {
+      const why = preview.reduced_by_credit && preview.reduced_by_discount ? 'an account credit and a discount'
+        : preview.reduced_by_credit ? 'an account credit' : 'a discount';
+      reducedNote = ` (Reduced from ${money(preview.expected_gross_cents)} by ${why} on the account.)`;
+    }
     const ok = await openConfirm({
       title: 'Add Fleet Monitoring?',
-      message: `A prorated charge of ${money(preview.proration_cents)} will be billed to the card on file now, covering Fleet Monitoring through ${through}. After that it renews together with the plan — the next renewal will be ${money(preview.combined_renewal_cents)} on ${through} (includes Fleet Monitoring ${money(preview.fleet_renewal_cents)} ${cad}).`,
-      confirmText: `Charge ${money(preview.proration_cents)} & add`,
+      message: `A prorated charge of ${money(charge)} will be billed to the card on file now, covering Fleet Monitoring through ${through}.${reducedNote} After that it renews together with the plan — the next renewal will be ${money(preview.combined_renewal_cents)} on ${through} (includes Fleet Monitoring ${money(preview.fleet_renewal_cents)} ${cad}).`,
+      confirmText: `Charge ${money(charge)} & add`,
     });
     if (!ok) return;
 
@@ -1489,7 +1498,7 @@
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-fleet`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customer_id: customerId }),
+        body: JSON.stringify({ customer_id: customerId, proration_date: preview.proration_date }),
       });
       const data = await r.json();
       if (!r.ok) { showStatus(`Couldn't add Fleet Monitoring: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
