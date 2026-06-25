@@ -407,6 +407,7 @@
     const accountActions = isCanceled ? '' : `
       <div class="gc-card-actions">
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-change-plan-btn" data-plan="${escapeHtml(subscription.plan)}" data-genclass="${escapeHtml(subscription.gen_class)}">Change plan</button>
+        <span id="gc-fleet-action"></span>
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-welcome-btn">Resend Welcome</button>
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
       </div>`;
@@ -417,7 +418,7 @@
         <div id="gc-plan-pending" style="display:none;"></div>
         <div class="gc-card-row"><span class="gc-meta-label">Generator</span><span class="gc-meta-value">${escapeHtml(genClassLabel(subscription.gen_class))} &mdash; ${escapeHtml(subscription.gen_model || 'model n/a')}</span></div>
         ${subscription.gen_serial ? `<div class="gc-card-row"><span class="gc-meta-label">Serial</span><span class="gc-meta-value">${escapeHtml(subscription.gen_serial)}</span></div>` : ''}
-        <div class="gc-card-row"><span class="gc-meta-label">Fleet Monitoring</span><span class="gc-meta-value">${subscription.fleet_monitoring ? 'Yes' : 'No'}</span></div>
+        <div class="gc-card-row"><span class="gc-meta-label">Fleet Monitoring</span><span class="gc-meta-value" id="gc-fleet-value">${subscription.fleet_monitoring ? 'Yes' : 'No'}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Annual price</span><span class="gc-meta-value">${annual}</span></div>
         <div class="gc-card-row" id="gc-renews-row" style="display:none;"><span class="gc-meta-label">Renews at</span><span class="gc-meta-value" id="gc-renews-value"></span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Signed up</span><span class="gc-meta-value">${fmtDate(subscription.signup_date)}</span></div>
@@ -786,6 +787,10 @@
       const changePlanBtn = body.querySelector('#gc-change-plan-btn');
       if (changePlanBtn) changePlanBtn.addEventListener('click', () => changePlan(id, changePlanBtn.dataset.plan, changePlanBtn.dataset.genclass));
 
+      // Fleet add/remove button — initial label from the DB flag; loadStripeData
+      // re-renders it from the live Stripe items (source of truth) once loaded.
+      if (!isCanceled) renderFleetAction(id, c.id, !!subscription.fleet_monitoring, null);
+
       const saveNoteBtn = body.querySelector('#gc-save-note-btn');
       if (saveNoteBtn) saveNoteBtn.addEventListener('click', () => saveCustomerNote(c.id, saveNoteBtn));
 
@@ -832,7 +837,7 @@
 
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
       // and the work-order packet's actual signup charge)
-      loadStripeData(id, subscription, pending_addons);
+      loadStripeData(id, subscription, pending_addons, c.id);
 
     } catch (err) {
       console.error('Detail load failed:', err);
@@ -1418,23 +1423,112 @@
 
   // Cancel a not-yet-effective plan change (releases the Stripe schedule).
   async function revertPlanChange(subscriptionId) {
-    if (!await openConfirm({ title: 'Keep current plan?', message: 'Cancel the pending plan change and keep the customer on their current plan. No charge either way.', confirmText: 'Keep current plan' })) return;
+    if (!await openConfirm({ title: 'Undo the pending change?', message: 'Cancel the change scheduled for renewal and keep things exactly as they are now. No charge either way.', confirmText: 'Undo it' })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/revert-plan-change`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
       const data = await r.json();
-      if (!r.ok) { showStatus(`Couldn't revert: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus('Pending plan change cancelled. Customer stays on their current plan.', 'success');
+      if (!r.ok) { showStatus(`Couldn't undo: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus('Pending change cancelled. Nothing changes at renewal.', 'success');
       showDetail(subscriptionId);
     } catch (e) {
       console.error('revert-plan-change failed:', e);
-      showStatus(`Couldn't revert: ${e.message}`, 'error');
+      showStatus(`Couldn't undo: ${e.message}`, 'error');
     }
   }
 
-  async function loadStripeData(subscriptionId, subscription, pendingAddons) {
+  // ---- Fleet Monitoring add/remove (folded into the one subscription) --------
+  // Renders the Add/Remove button into #gc-fleet-action based on the live fleet
+  // state. When a change is already pending at renewal, the banner carries the
+  // undo, so the button is hidden to avoid a conflicting action.
+  function renderFleetAction(subscriptionId, customerId, hasFleet, pendingChange) {
+    const wrap = document.getElementById('gc-fleet-action');
+    if (!wrap) return;
+    if (pendingChange && (pendingChange.fleet_change || pendingChange.plan_changed)) { wrap.innerHTML = ''; return; }
+    if (hasFleet) {
+      wrap.innerHTML = `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-remove-fleet-btn">Remove Fleet Monitoring</button>`;
+      const b = document.getElementById('gc-remove-fleet-btn');
+      if (b) b.addEventListener('click', () => removeFleet(subscriptionId, customerId));
+    } else {
+      wrap.innerHTML = `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-fleet-btn">Add Fleet Monitoring</button>`;
+      const b = document.getElementById('gc-add-fleet-btn');
+      if (b) b.addEventListener('click', () => addFleet(subscriptionId, customerId));
+    }
+  }
+
+  // Add Fleet: preview the prorated charge first, confirm inline, then charge.
+  async function addFleet(subscriptionId, customerId) {
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    let preview;
+    try {
+      const q = customerId ? `?customer_id=${encodeURIComponent(customerId)}` : '';
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/fleet-preview${q}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      preview = await r.json();
+      if (!r.ok) { showStatus(`Couldn't preview: ${preview.error || ('HTTP ' + r.status)}`, 'error'); return; }
+    } catch (e) {
+      console.error('fleet-preview failed:', e);
+      showStatus(`Couldn't preview: ${e.message}`, 'error');
+      return;
+    }
+    if (preview.already_has_fleet) { showStatus('Fleet Monitoring is already active.', 'info'); showDetail(subscriptionId); return; }
+
+    const through = preview.period_end ? fmtDate(preview.period_end) : 'the next renewal';
+    const cad = preview.plan === 'semi_annual' ? 'per 6 months' : 'per year';
+    const ok = await openConfirm({
+      title: 'Add Fleet Monitoring?',
+      message: `A prorated charge of ${money(preview.proration_cents)} will be billed to the card on file now, covering Fleet Monitoring through ${through}. After that it renews together with the plan — the next renewal will be ${money(preview.combined_renewal_cents)} on ${through} (includes Fleet Monitoring ${money(preview.fleet_renewal_cents)} ${cad}).`,
+      confirmText: `Charge ${money(preview.proration_cents)} & add`,
+    });
+    if (!ok) return;
+
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-fleet`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_id: customerId }),
+      });
+      const data = await r.json();
+      if (!r.ok) { showStatus(`Couldn't add Fleet Monitoring: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus('Fleet Monitoring added — prorated charge billed to the card on file.', 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (e) {
+      console.error('add-fleet failed:', e);
+      showStatus(`Couldn't add Fleet Monitoring: ${e.message}`, 'error');
+    }
+  }
+
+  // Remove Fleet: schedule it to drop at renewal (no proration, no refund).
+  async function removeFleet(subscriptionId, customerId) {
+    const renewsOn = (planBilling && planBilling.current_period_end) ? fmtDate(planBilling.current_period_end) : 'the next renewal';
+    const ok = await openConfirm({
+      title: 'Remove Fleet Monitoring?',
+      message: `Fleet Monitoring stays active through the period already paid for and drops off at renewal (${renewsOn}). No refund or charge now. You can undo this until then.`,
+      confirmText: 'Remove at renewal',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/remove-fleet`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_id: customerId }),
+      });
+      const data = await r.json();
+      if (!r.ok) { showStatus(`Couldn't remove Fleet Monitoring: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(`Fleet Monitoring will end at renewal (${fmtDate(data.effective_date)}).`, 'success');
+      showDetail(subscriptionId);
+    } catch (e) {
+      console.error('remove-fleet failed:', e);
+      showStatus(`Couldn't remove Fleet Monitoring: ${e.message}`, 'error');
+    }
+  }
+
+  async function loadStripeData(subscriptionId, subscription, pendingAddons, customerId) {
     const body = document.getElementById('modal-body');
     if (!body) return;
     try {
@@ -1479,14 +1573,34 @@
           renewsRow.style.display = '';
         }
       }
-      // Pending-change banner + "Keep current plan" (revert) control.
+      // Fleet Monitoring Yes/No reflects the live Stripe items, and the add/remove
+      // button is re-rendered from that truth (the DB flag may briefly lag).
+      if (pb) {
+        const fleetValEl = body.querySelector('#gc-fleet-value');
+        if (fleetValEl) fleetValEl.textContent = pb.current_has_fleet ? 'Yes' : 'No';
+        renderFleetAction(subscriptionId, customerId, !!pb.current_has_fleet, pb.pending_change);
+      }
+
+      // Pending-change banner + undo control. Handles a plan switch, a Fleet
+      // add/remove at renewal, or both. Undo = release the schedule (revert).
       const pendingEl = body.querySelector('#gc-plan-pending');
       if (pendingEl) {
         if (pb && pb.pending_change) {
           const pc = pb.pending_change;
+          let msg, undoLabel;
+          if (pc.fleet_change === 'removing' && !pc.plan_changed) {
+            msg = `<strong>Fleet Monitoring</strong> ends at renewal (${fmtDate(pc.effective_date)}). It stays active until then — no refund or charge now.`;
+            undoLabel = 'Keep Fleet Monitoring';
+          } else if (pc.fleet_change === 'adding' && !pc.plan_changed) {
+            msg = `<strong>Fleet Monitoring</strong> starts at renewal (${fmtDate(pc.effective_date)}).`;
+            undoLabel = 'Cancel';
+          } else {
+            msg = `Switching to <strong>${escapeHtml(planLabel(pc.new_plan))}</strong>${pc.fleet_change === 'removing' ? ' (Fleet Monitoring ends)' : pc.fleet_change === 'adding' ? ' (Fleet Monitoring added)' : ''} at renewal (${fmtDate(pc.effective_date)}). No charge until then.`;
+            undoLabel = 'Keep current plan';
+          }
           pendingEl.innerHTML = `<div style="margin:6px 0 2px;padding:9px 11px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;font-size:0.83rem;color:#92400E;line-height:1.45;">`
-            + `Switching to <strong>${escapeHtml(planLabel(pc.new_plan))}</strong> at renewal (${fmtDate(pc.effective_date)}). No charge until then.`
-            + ` <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-revert-plan-btn" style="margin-left:4px;">Keep current plan</button></div>`;
+            + msg
+            + ` <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-revert-plan-btn" style="margin-left:4px;">${undoLabel}</button></div>`;
           pendingEl.style.display = '';
           const revertBtn = body.querySelector('#gc-revert-plan-btn');
           if (revertBtn) revertBtn.addEventListener('click', () => revertPlanChange(subscriptionId));
