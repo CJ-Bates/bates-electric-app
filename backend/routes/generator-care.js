@@ -807,8 +807,26 @@ router.post('/subscriptions/:id/resend-receipt', async (req, res) => {
 });
 
 
+// Next visit-due on the plan's fixed cadence grid (signup + k*interval), so it
+// tracks payments instead of drifting with late completions. Returns the earliest
+// grid point strictly AFTER both the just-completed visit's due (priorDueStr) and
+// the date performed (performedStr). Anchoring strictly-after the prior due is what
+// advances exactly one cycle on a normal/early completion; the performed check then
+// skips any grid points missed by a very-late completion. All UTC, date-only.
+function gridAnchoredNextDue(anchorStr, priorDueStr, performedStr, intervalMonths) {
+  if (!anchorStr) return null;
+  const d = new Date(anchorStr + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return null;
+  const priorMs = priorDueStr ? new Date(priorDueStr + 'T00:00:00Z').getTime() : -Infinity;
+  const performedMs = performedStr ? new Date(performedStr + 'T00:00:00Z').getTime() : -Infinity;
+  let guard = 0;
+  while (d.getTime() <= priorMs && guard++ < 4000) d.setUTCMonth(d.getUTCMonth() + intervalMonths);
+  while (d.getTime() <= performedMs && guard++ < 4000) d.setUTCMonth(d.getUTCMonth() + intervalMonths);
+  return d.toISOString().slice(0, 10);
+}
+
 // POST /api/generator-care/visits/:id/complete
-// Mark a service visit completed and roll the subscription's next_visit_due forward.
+// Mark a service visit completed; the next visit-due is anchored to the billing grid.
 router.post('/visits/:id/complete', async (req, res) => {
   try {
     const id = req.params.id;
@@ -828,18 +846,26 @@ router.post('/visits/:id/complete', async (req, res) => {
         technician_id: technician_id || req.user.id,
       })
       .eq('id', id)
-      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email, install_state))')
+      .select('*, subscription:generator_subscriptions(id, plan, signup_date, next_visit_due, customer:generator_customers(name, email, install_state))')
       .single();
     if (updErr) throw updErr;
 
-    // 2. Roll the subscription forward + schedule the NEXT visit
+    // 2. Anchor the NEXT visit-due to the plan's fixed cadence grid (every 6/12
+    // months from signup), NOT to the date performed — so it tracks the payment
+    // schedule and never drifts when a visit is completed late.
     const sub = updated.subscription;
     let nextStr = null;
     if (sub) {
       const monthsAhead = sub.plan === 'semi_annual' ? 6 : 12;
-      const next = new Date(today);
-      next.setMonth(next.getMonth() + monthsAhead);
-      nextStr = next.toISOString().slice(0, 10);
+      const anchorStr = sub.signup_date || updated.scheduled_date || sub.next_visit_due || today;
+      const priorDueStr = updated.scheduled_date || sub.next_visit_due || null;
+      nextStr = gridAnchoredNextDue(anchorStr, priorDueStr, today, monthsAhead);
+      if (!nextStr) {
+        // Last-resort fallback only if no anchor at all: performed + interval.
+        const f = new Date(today + 'T00:00:00Z');
+        f.setUTCMonth(f.getUTCMonth() + monthsAhead);
+        nextStr = f.toISOString().slice(0, 10);
+      }
 
       await supabaseAdmin
         .from('generator_subscriptions')
