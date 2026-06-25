@@ -2613,7 +2613,8 @@ router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
       html,
       text,
       logTag: '[resend-welcome]',
-      companyState: meta.install_state,
+      // From display name: brand on the customer's CURRENT state, not signup meta.
+      companyState: customer.install_state || meta.install_state,
     });
 
     return res.json({

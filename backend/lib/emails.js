@@ -313,7 +313,13 @@ const TABLE_VALUE = `padding:8px 0;font-weight:600;color:${BRAND.textBody};font-
 
 function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPriceCents, fleetMonitoring, paidAmountCents, paidDate, companyState }) {
   const safeMeta = meta || {};
-  const state = (companyState != null) ? companyState : safeMeta.install_state;
+  // Brand on the customer's CURRENT install_state (like the receipt + every other
+  // email), NOT the signup-time state in raw_metadata/meta — otherwise an FL
+  // customer whose state was set/edited after signup gets the wrong (non-S.E.)
+  // logo and name. meta.install_state is only a last-resort fallback.
+  const state = (companyState != null)
+    ? companyState
+    : ((customer && customer.install_state) || safeMeta.install_state);
   const company = companyName(state);
   // Payment-confirmation line: our own proof of payment, since Stripe's customer
   // invoice/receipt email is turned off (Jonas is the invoice system of record).
