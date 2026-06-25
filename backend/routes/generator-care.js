@@ -597,10 +597,12 @@ function computePlanBilling(subscription) {
   const out = {
     current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
     current_renewal_amount_cents: null,
+    current_has_fleet: false,
     pending_change: null,
   };
   const curPlanItem = items.find((it) => catalog.isPlanPriceId(it.price.id));
   const curHasFleet = items.some((it) => catalog.isFleetPriceId(it.price.id));
+  out.current_has_fleet = curHasFleet; // Stripe items are the source of truth for fleet.
   if (curPlanItem) {
     const info = catalog.planForPriceId(curPlanItem.price.id);
     out.current_renewal_amount_cents =
@@ -623,15 +625,23 @@ function computePlanBilling(subscription) {
     if (future) {
       const fItem = (future.items || []).find((i) => catalog.isPlanPriceId(priceIdOf(i)));
       const fId = fItem ? priceIdOf(fItem) : null;
-      const info = fId && catalog.planForPriceId(fId);
+      const fInfo = fId && catalog.planForPriceId(fId);
       const curId = curPlanItem ? curPlanItem.price.id : null;
-      if (info && fId !== curId) {
-        const fHasFleet = (future.items || []).some((i) => catalog.isFleetPriceId(priceIdOf(i)));
+      const fHasFleet = (future.items || []).some((i) => catalog.isFleetPriceId(priceIdOf(i)));
+      // The effective future plan (the schedule may only change fleet, leaving the
+      // plan price as-is — then fInfo is the same plan as today).
+      const effInfo = fInfo || (curPlanItem && catalog.planForPriceId(curPlanItem.price.id));
+      const planChanged = !!(fInfo && fId !== curId);
+      const fleetChanged = fHasFleet !== curHasFleet;
+      if (effInfo && (planChanged || fleetChanged)) {
         out.pending_change = {
-          new_plan: info.plan,
+          new_plan: effInfo.plan,
+          plan_changed: planChanged,
+          fleet_change: fleetChanged ? (fHasFleet ? 'adding' : 'removing') : null,
+          new_has_fleet: fHasFleet,
           effective_date: new Date(future.start_date * 1000).toISOString().slice(0, 10),
           new_renewal_amount_cents:
-            info.amount_cents + (fHasFleet ? catalog.FLEET_CATALOG[info.plan].amount_cents : 0),
+            effInfo.amount_cents + (fHasFleet ? catalog.FLEET_CATALOG[effInfo.plan].amount_cents : 0),
         };
       }
     }
@@ -752,6 +762,218 @@ router.post('/subscriptions/:id/revert-plan-change', async (req, res) => {
     return res.json({ ok: true, released: released.status });
   } catch (err) {
     console.error('[generator-care] revert-plan-change error:', err && err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- Fleet Monitoring add-on, folded into the existing subscription ----------
+// One subscription, one renewal date. The Fleet price MUST match the plan's
+// billing interval (Stripe can't mix intervals in one sub), so we always pick the
+// matching-cadence Fleet price from the SAME catalog the signup flow uses.
+
+// Resolve { plan, fleet, planItem } from a live Stripe subscription's items, using
+// the actual plan price on the sub (authoritative cadence), not the DB column.
+function fleetContext(subscription) {
+  const items = (subscription.items && subscription.items.data) || [];
+  const planItem = items.find((it) => catalog.isPlanPriceId(it.price.id));
+  const plan = planItem ? catalog.planForPriceId(planItem.price.id).plan : null;
+  const fleet = plan ? catalog.FLEET_CATALOG[plan] : null;
+  const hasFleet = items.some((it) => catalog.isFleetPriceId(it.price.id));
+  return { items, planItem, plan, fleet, hasFleet };
+}
+
+// GET /api/generator-care/subscriptions/:id/fleet-preview
+// Office-gated. Previews the prorated charge for adding the matching-cadence Fleet
+// price now (no change made), plus the combined renewal. Optional ?customer_id=
+// IDOR guard. Returns { already_has_fleet } if it's already attached.
+router.get('/subscriptions/:id/fleet-preview', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('customer_id, stripe_subscription_id, stripe_customer_id, gen_class, plan, status')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (req.query.customer_id && sub.customer_id !== req.query.customer_id) {
+      return res.status(403).json({ error: 'subscription does not belong to that customer' });
+    }
+    if (!sub.stripe_subscription_id) return res.status(400).json({ error: 'no Stripe subscription linked' });
+
+    const subscription = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+    if (subscription.status === 'canceled') return res.status(400).json({ error: 'subscription is canceled' });
+    const { items, planItem, plan, fleet, hasFleet } = fleetContext(subscription);
+    if (hasFleet) return res.json({ already_has_fleet: true });
+    if (!planItem || !fleet) return res.status(400).json({ error: 'no recognized plan price on subscription' });
+
+    const periodEnd = subscription.current_period_end || planItem.current_period_end || null;
+    const periodStart = subscription.current_period_start || planItem.current_period_start || null;
+
+    // Ask Stripe to preview the proration it would bill now for adding the fleet item.
+    let prorationCents = null;
+    try {
+      const previewItems = items
+        .map((it) => ({ id: it.id, price: it.price.id, quantity: it.quantity || 1 }))
+        .concat([{ price: fleet.price_id, quantity: 1 }]);
+      const preview = await stripe.invoices.createPreview({
+        customer: sub.stripe_customer_id,
+        subscription: sub.stripe_subscription_id,
+        subscription_details: { items: previewItems, proration_behavior: 'create_prorations' },
+      });
+      prorationCents = ((preview.lines && preview.lines.data) || [])
+        .filter((l) => l.proration)
+        .reduce((s, l) => s + (l.amount || 0), 0);
+    } catch (e) {
+      console.error('[fleet-preview] createPreview failed, using time-proration fallback:', e && e.message);
+    }
+    // Fallback: Stripe prorates linearly by time; compute the same stub ourselves.
+    if ((prorationCents == null || isNaN(prorationCents)) && periodStart && periodEnd) {
+      const now = Math.floor(Date.now() / 1000);
+      const frac = Math.max(0, Math.min(1, (periodEnd - now) / (periodEnd - periodStart)));
+      prorationCents = Math.round(fleet.amount_cents * frac);
+    }
+
+    const planEntry = catalog.planEntry(sub.gen_class, plan);
+    return res.json({
+      already_has_fleet: false,
+      plan,
+      proration_cents: prorationCents,
+      fleet_renewal_cents: fleet.amount_cents,
+      combined_renewal_cents: (planEntry ? planEntry.amount_cents : 0) + fleet.amount_cents,
+      period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
+    });
+  } catch (err) {
+    console.error('[generator-care] fleet-preview error:', err && err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/subscriptions/:id/add-fleet
+// Office-gated. Adds the matching-cadence Fleet price as a new subscription item,
+// invoicing the proration NOW (charges the card on file) and aligning Fleet to the
+// existing renewal date. Body: { customer_id? } (IDOR guard).
+router.post('/subscriptions/:id/add-fleet', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customer_id } = req.body || {};
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('customer_id, stripe_subscription_id, gen_class, plan, status')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (customer_id && sub.customer_id !== customer_id) {
+      return res.status(403).json({ error: 'subscription does not belong to that customer' });
+    }
+    if (sub.status === 'canceled') return res.status(400).json({ error: 'subscription is canceled; cannot add Fleet Monitoring' });
+    if (!sub.stripe_subscription_id) return res.status(400).json({ error: 'no Stripe subscription linked' });
+
+    const subscription = await stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] });
+    if (subscription.status === 'canceled') return res.status(400).json({ error: 'Stripe subscription is canceled' });
+    const { planItem, plan, fleet, hasFleet } = fleetContext(subscription);
+    if (hasFleet) return res.status(400).json({ error: 'Fleet Monitoring is already on this subscription' });
+    if (!planItem || !fleet) return res.status(400).json({ error: 'no recognized plan price on subscription' });
+
+    // A pending scheduled change makes a mid-cycle add ambiguous; resolve it first.
+    const sched = subscription.schedule;
+    const schedStatus = sched && typeof sched === 'object' ? sched.status : (sched ? 'active' : null);
+    if (sched && (schedStatus === 'active' || schedStatus === 'not_started')) {
+      return res.status(409).json({ error: 'This customer has a pending change at renewal. Undo it first, then add Fleet Monitoring.' });
+    }
+
+    // Add the matching-interval Fleet price; always_invoice bills the proration now.
+    await stripe.subscriptionItems.create({
+      subscription: sub.stripe_subscription_id,
+      price: fleet.price_id,
+      quantity: 1,
+      proration_behavior: 'always_invoice',
+    });
+
+    // Reflect immediately (the subscription.updated webhook also syncs from items).
+    const combined = catalog.annualPriceCents(sub.gen_class, plan, true);
+    await supabaseAdmin
+      .from('generator_subscriptions')
+      .update(Object.assign({ fleet_monitoring: true }, combined != null ? { annual_price_cents: combined } : {}))
+      .eq('id', id);
+
+    const planEntry = catalog.planEntry(sub.gen_class, plan);
+    const periodEnd = subscription.current_period_end || planItem.current_period_end || null;
+    return res.json({
+      ok: true,
+      plan,
+      combined_renewal_cents: (planEntry ? planEntry.amount_cents : 0) + fleet.amount_cents,
+      period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
+    });
+  } catch (err) {
+    console.error('[generator-care] add-fleet error:', err && err.message);
+    return res.status(500).json({ error: (err && err.message) || 'Server error' });
+  }
+});
+
+// POST /api/generator-care/subscriptions/:id/remove-fleet
+// Office-gated. Schedules Fleet removal effective at the NEXT renewal (no proration,
+// no refund — fleet stays active through the paid period, then drops off). Mirrors
+// the change-plan "at renewal" pattern; undo via revert-plan-change (release).
+// Body: { customer_id? } (IDOR guard).
+router.post('/subscriptions/:id/remove-fleet', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customer_id } = req.body || {};
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('customer_id, stripe_subscription_id, gen_class, plan, status')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (customer_id && sub.customer_id !== customer_id) {
+      return res.status(403).json({ error: 'subscription does not belong to that customer' });
+    }
+    if (sub.status === 'canceled') return res.status(400).json({ error: 'subscription is canceled' });
+    if (!sub.stripe_subscription_id) return res.status(400).json({ error: 'no Stripe subscription linked' });
+
+    const subscription = await stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] });
+    if (subscription.status === 'canceled') return res.status(400).json({ error: 'Stripe subscription is canceled' });
+    const { items, planItem, plan } = fleetContext(subscription);
+    if (!items.some((it) => catalog.isFleetPriceId(it.price.id))) {
+      return res.status(400).json({ error: 'Fleet Monitoring is not on this subscription' });
+    }
+
+    // Phase 0 = current items (Fleet stays through the paid period). Phase 1 = same
+    // items minus Fleet, starting at renewal. No proration, no refund.
+    const phase0Items = items.map((it) => ({ price: it.price.id, quantity: it.quantity || 1 }));
+    const phase1Items = items
+      .filter((it) => !catalog.isFleetPriceId(it.price.id))
+      .map((it) => ({ price: it.price.id, quantity: it.quantity || 1 }));
+
+    let scheduleId = subscription.schedule
+      && (typeof subscription.schedule === 'string' ? subscription.schedule : subscription.schedule.id);
+    if (!scheduleId) {
+      const created = await stripe.subscriptionSchedules.create({ from_subscription: sub.stripe_subscription_id });
+      scheduleId = created.id;
+    }
+    const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+    const curPhase = schedule.phases[0];
+    await stripe.subscriptionSchedules.update(scheduleId, {
+      end_behavior: 'release',
+      proration_behavior: 'none',
+      phases: [
+        { items: phase0Items, start_date: curPhase.start_date, end_date: curPhase.end_date },
+        { items: phase1Items },
+      ],
+    });
+
+    const planEntry = plan && catalog.planEntry(sub.gen_class, plan);
+    return res.json({
+      ok: true,
+      effective_date: new Date(curPhase.end_date * 1000).toISOString().slice(0, 10),
+      schedule_id: scheduleId,
+      new_renewal_amount_cents: planEntry ? planEntry.amount_cents : null,
+    });
+  } catch (err) {
+    console.error('[generator-care] remove-fleet error:', err && err.message);
     return res.status(500).json({ error: 'Server error' });
   }
 });
