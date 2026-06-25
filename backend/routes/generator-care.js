@@ -810,35 +810,70 @@ router.get('/subscriptions/:id/fleet-preview', async (req, res) => {
     const periodEnd = subscription.current_period_end || planItem.current_period_end || null;
     const periodStart = subscription.current_period_start || planItem.current_period_start || null;
 
-    // Ask Stripe to preview the proration it would bill now for adding the fleet item.
-    let prorationCents = null;
+    // Preview the proration with the SAME behavior the add uses (always_invoice),
+    // pinned to a proration_date we hand back so the actual charge equals this
+    // preview exactly. amount_due is the real card charge — it already reflects any
+    // coupon discount and customer credit balance. (createPreview with
+    // create_prorations would show ~$0 due now because it defers the proration to
+    // the next cycle; and the old line.proration flag moved under
+    // line.parent.*_details.proration in the 2025-03-31.basil API.)
+    const prorationDate = Math.floor(Date.now() / 1000);
+    let preview;
     try {
       const previewItems = items
         .map((it) => ({ id: it.id, price: it.price.id, quantity: it.quantity || 1 }))
         .concat([{ price: fleet.price_id, quantity: 1 }]);
-      const preview = await stripe.invoices.createPreview({
+      preview = await stripe.invoices.createPreview({
         customer: sub.stripe_customer_id,
         subscription: sub.stripe_subscription_id,
-        subscription_details: { items: previewItems, proration_behavior: 'create_prorations' },
+        subscription_details: {
+          items: previewItems,
+          proration_behavior: 'always_invoice',
+          proration_date: prorationDate,
+        },
       });
-      prorationCents = ((preview.lines && preview.lines.data) || [])
-        .filter((l) => l.proration)
-        .reduce((s, l) => s + (l.amount || 0), 0);
     } catch (e) {
-      console.error('[fleet-preview] createPreview failed, using time-proration fallback:', e && e.message);
+      console.error('[fleet-preview] createPreview failed:', e && e.message);
+      return res.status(502).json({ error: 'Could not preview the prorated charge from Stripe. Please try again.' });
     }
-    // Fallback: Stripe prorates linearly by time; compute the same stub ourselves.
-    if ((prorationCents == null || isNaN(prorationCents)) && periodStart && periodEnd) {
-      const now = Math.floor(Date.now() / 1000);
-      const frac = Math.max(0, Math.min(1, (periodEnd - now) / (periodEnd - periodStart)));
-      prorationCents = Math.round(fleet.amount_cents * frac);
+
+    const charge = typeof preview.amount_due === 'number' ? preview.amount_due : null;
+    // What a full-period add would cost vs. what we expect for the remaining time
+    // (Stripe prorates linearly by time) — used only to sanity-check `charge`.
+    const frac = (periodStart && periodEnd)
+      ? Math.max(0, Math.min(1, (periodEnd - prorationDate) / (periodEnd - periodStart)))
+      : null;
+    const expectedGross = frac != null ? Math.round(fleet.amount_cents * frac) : null;
+    const daysRemaining = periodEnd ? Math.round((periodEnd - prorationDate) / 86400) : null;
+    const hasCredit = typeof preview.starting_balance === 'number' && preview.starting_balance < 0;
+    const hasDiscount = Array.isArray(preview.total_discount_amounts)
+      && preview.total_discount_amounts.some((d) => (d.amount || 0) > 0);
+
+    // Upper sanity bound: an immediate proration can't exceed one whole fleet period
+    // (+ a little tax/rounding). A much larger number means the preview returned the
+    // wrong invoice (e.g. a full next-cycle invoice) — don't show it.
+    const upperSane = fleet.amount_cents + Math.round(fleet.amount_cents * 0.2) + 100;
+    if (charge == null || charge > upperSane) {
+      return res.status(502).json({ error: 'Stripe returned an unexpected preview amount; not showing a charge. Please retry.' });
+    }
+    // Lower guard: a ~$0 charge while meaningful time remains and no coupon/credit
+    // explains it is a computation problem, not a real free add — block it.
+    if (charge < 50 && expectedGross != null && expectedGross >= 100
+        && (daysRemaining == null || daysRemaining > 14) && !hasCredit && !hasDiscount) {
+      return res.status(422).json({
+        error: `Computed a ~$0 charge, but about $${(expectedGross / 100).toFixed(2)} of proration is expected with ${daysRemaining} days left and no coupon or account credit explains it. Not charging $0 — check the subscription in Stripe and retry.`,
+      });
     }
 
     const planEntry = catalog.planEntry(sub.gen_class, plan);
     return res.json({
       already_has_fleet: false,
       plan,
-      proration_cents: prorationCents,
+      proration_cents: charge,            // the exact amount the card will be charged
+      expected_gross_cents: expectedGross, // time-based, before any coupon/credit
+      reduced_by_credit: hasCredit,
+      reduced_by_discount: hasDiscount,
+      proration_date: prorationDate,       // echo to add-fleet for an exact match
       fleet_renewal_cents: fleet.amount_cents,
       combined_renewal_cents: (planEntry ? planEntry.amount_cents : 0) + fleet.amount_cents,
       period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
@@ -852,11 +887,12 @@ router.get('/subscriptions/:id/fleet-preview', async (req, res) => {
 // POST /api/generator-care/subscriptions/:id/add-fleet
 // Office-gated. Adds the matching-cadence Fleet price as a new subscription item,
 // invoicing the proration NOW (charges the card on file) and aligning Fleet to the
-// existing renewal date. Body: { customer_id? } (IDOR guard).
+// existing renewal date. Body: { customer_id?, proration_date? } — proration_date
+// is echoed from fleet-preview so the charge equals the previewed amount exactly.
 router.post('/subscriptions/:id/add-fleet', async (req, res) => {
   try {
     const { id } = req.params;
-    const { customer_id } = req.body || {};
+    const { customer_id, proration_date } = req.body || {};
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
       .select('customer_id, stripe_subscription_id, gen_class, plan, status')
@@ -884,12 +920,13 @@ router.post('/subscriptions/:id/add-fleet', async (req, res) => {
     }
 
     // Add the matching-interval Fleet price; always_invoice bills the proration now.
-    await stripe.subscriptionItems.create({
+    // Pin the same proration_date the preview used so the charge matches exactly.
+    await stripe.subscriptionItems.create(Object.assign({
       subscription: sub.stripe_subscription_id,
       price: fleet.price_id,
       quantity: 1,
       proration_behavior: 'always_invoice',
-    });
+    }, proration_date ? { proration_date: Number(proration_date) } : {}));
 
     // Reflect immediately (the subscription.updated webhook also syncs from items).
     const combined = catalog.annualPriceCents(sub.gen_class, plan, true);
