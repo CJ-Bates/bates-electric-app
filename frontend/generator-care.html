@@ -150,8 +150,9 @@
     .gc-rd-line-strong { font-weight: 700; color: #111827; border-top: 1px solid #e5e7eb; margin-top: 4px; padding-top: 7px; }
     .gc-rd-field { display: block; margin-bottom: 12px; }
     .gc-rd-field > span { display: block; font-size: 0.8rem; color: #6b7280; font-weight: 600; margin-bottom: 5px; }
-    .gc-rd-field input { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; font-size: 0.95rem; color: #111827; background: #fff; }
-    .gc-rd-field input:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.12); }
+    .gc-rd-field input, .gc-rd-field select, .gc-rd-field textarea { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; font-size: 0.95rem; color: #111827; background: #fff; }
+    .gc-rd-field input:focus, .gc-rd-field select:focus, .gc-rd-field textarea:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.12); }
+    .gc-rd-field textarea { resize: vertical; min-height: 60px; }
     .gc-rd-error { color: #b91c1c; font-size: 0.78rem; font-weight: 600; margin: -6px 0 12px; }
     .gc-rd-card { font-size: 0.85rem; color: #374151; background: #eef2f7; border-radius: 8px; padding: 8px 11px; margin-bottom: 12px; }
     .gc-rd-note { font-size: 0.76rem; line-height: 1.5; color: #6b7280; margin: 0 0 16px; }
@@ -266,7 +267,7 @@
     html.dark .gc-rd-line { color: var(--text-secondary); }
     html.dark .gc-rd-line-strong { color: var(--text-primary); border-top-color: var(--glass-border); }
     html.dark .gc-rd-field > span { color: var(--text-secondary); }
-    html.dark .gc-rd-field input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .gc-rd-field input, html.dark .gc-rd-field select, html.dark .gc-rd-field textarea { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
     html.dark .gc-rd-card { background: var(--bg-tertiary); color: var(--text-secondary); }
     html.dark .gc-rd-note { color: var(--text-tertiary); }
     html.dark .gc-edit-field > span { color: var(--text-secondary); }

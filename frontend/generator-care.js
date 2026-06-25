@@ -850,7 +850,7 @@
   }
 
   async function removeAddon(addonId, label, subscriptionId) {
-    if (!confirm(`Remove "${label}" from this subscription?\n\nThe add-on will be marked canceled. You can always add it back via "+ Add Add-on".`)) return;
+    if (!await openConfirm({ title: 'Remove add-on?', message: `"${label}" will be marked canceled. You can always add it back via "+ Add Add-on".`, confirmText: 'Remove', danger: true })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/remove`, {
         method: 'POST',
@@ -874,16 +874,14 @@
 
   async function markPerformed(addonId, amount, label, subscriptionId) {
     const today = new Date().toISOString().slice(0, 10);
-    const dateStr = prompt(
-      `Mark "${label}" (${amount}) as performed?\n\nThis adds the charge to the customer's next renewal invoice. They will NOT be charged immediately.\n\nDate performed (YYYY-MM-DD):`,
-      today
-    );
-    if (dateStr === null) return;
-    const performedDate = (dateStr || '').trim() || today;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(performedDate)) {
-      alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-03).');
-      return;
-    }
+    const res = await openPrompt({
+      title: `Mark "${label}" performed`,
+      message: `${amount} — this adds the charge to the customer's next renewal invoice. They will NOT be charged immediately.`,
+      fields: [{ name: 'date', label: 'Date performed', type: 'date', value: today, required: true }],
+      confirmText: 'Mark performed',
+    });
+    if (res === null) return;
+    const performedDate = (res.date || '').trim() || today;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/mark-performed`, {
         method: 'POST',
@@ -906,7 +904,7 @@
   }
 
   async function unmarkPerformed(addonId, subscriptionId) {
-    if (!confirm('Undo "performed" status? This removes it from the upcoming invoice. Only works before the invoice is finalized.')) return;
+    if (!await openConfirm({ title: 'Undo performed?', message: 'This removes it from the upcoming invoice. Only works before the invoice is finalized.', confirmText: 'Undo' })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/unmark-performed`, {
         method: 'POST',
@@ -929,44 +927,42 @@
   }
 
   async function addAdhocCharge(subscriptionId, visits) {
-    const description = prompt('Describe the work or item (shown on customer receipt):', '');
-    if (description === null) return;
-    if (!description.trim()) {
-      showStatus('Description required.', 'error');
-      return;
-    }
-    const amountStr = prompt(`Amount in dollars (e.g. 125.50):`, '');
-    if (amountStr === null) return;
-    const amount = parseFloat(amountStr);
-    if (isNaN(amount) || amount <= 0) {
-      showStatus('Amount must be a positive number.', 'error');
-      return;
-    }
+    // Optional "link to a visit" select, built from this customer's visits.
+    const visitOptions = [{ value: '', label: 'Not tied to a specific visit' }];
+    (visits || [])
+      .filter(v => ['scheduled', 'tentative', 'completed'].includes(v.status))
+      .forEach(v => {
+        const d = v.completed_date || v.appointment_at || v.scheduled_date || '';
+        const dLabel = d ? ' — ' + String(d).slice(0, 10) : '';
+        visitOptions.push({ value: v.id, label: `${v.visit_type === 'regular_service' ? 'Regular Service' : 'On-Demand'}${dLabel} (${v.status})` });
+      });
+
+    const res = await openPrompt({
+      title: 'Add other charge',
+      message: 'Charge the saved card now, or bundle it onto the next renewal invoice.',
+      fields: [
+        { name: 'description', label: 'Description (shown on customer receipt)', type: 'text', required: true },
+        { name: 'amount', label: 'Amount ($)', type: 'number', step: '0.01', min: '0.01', inputmode: 'decimal', required: true, placeholder: 'e.g. 125.50' },
+        { name: 'method', label: 'How to bill', type: 'select', value: 'immediate', options: [
+          { value: 'immediate', label: 'Charge now (hits the saved card today)' },
+          { value: 'renewal', label: 'Add to next renewal invoice' },
+        ] },
+        ...(visitOptions.length > 1 ? [{ name: 'visit', label: 'Link to a visit (optional)', type: 'select', value: '', options: visitOptions }] : []),
+      ],
+      confirmText: 'Add charge',
+      validate: (v) => {
+        const num = parseFloat(v.amount);
+        if (!Number.isFinite(num) || num <= 0) return 'Amount must be a positive number.';
+        return null;
+      },
+    });
+    if (res === null) return;
+    const amount = parseFloat(res.amount);
     const amount_cents = Math.round(amount * 100);
-    const methodStr = prompt(`How to bill?\n\n1. Charge now (immediate, hits the saved card today)\n2. Add to next renewal invoice (bundles with subscription)\n\nEnter 1 or 2:`, '1');
-    if (methodStr === null) return;
-    const billing_method = methodStr.trim() === '2' ? 'renewal' : 'immediate';
-    
-    let service_visit_id = null;
-    if (visits && visits.length > 0) {
-      const scheduledOrCompleted = visits.filter(v => ['scheduled','tentative','completed'].includes(v.status));
-      if (scheduledOrCompleted.length > 0) {
-        const lines = scheduledOrCompleted.map((v, i) => {
-          const d = v.completed_date || v.scheduled_date || '';
-          return `${i+1}. ${v.visit_type === 'regular_service' ? 'Regular Service' : 'On-Demand'} - ${d} (${v.status})`;
-        });
-        const visitStr = prompt(`Link to a specific visit? (optional)\n\n0. Not tied to a specific visit\n${lines.join('\n')}\n\nEnter number:`, '0');
-        if (visitStr === null) return;
-        const visitIdx = parseInt(visitStr, 10) - 1;
-        if (!isNaN(visitIdx) && visitIdx >= 0 && visitIdx < scheduledOrCompleted.length) {
-          service_visit_id = scheduledOrCompleted[visitIdx].id;
-        }
-      }
-    }
-    
-    const methodLabel = billing_method === 'immediate' ? 'charge now' : 'add to next renewal';
-    if (!confirm(`Confirm:\n\n"${description.trim()}" - ${amount.toFixed(2)}\nMethod: ${methodLabel}\n\nProceed?`)) return;
-    
+    const billing_method = res.method === 'renewal' ? 'renewal' : 'immediate';
+    const service_visit_id = res.visit || null;
+    const description = (res.description || '').trim();
+
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/adhoc-charge`, {
         method: 'POST',
@@ -996,7 +992,7 @@
   }
 
   async function cancelAdhocCharge(chargeId, desc, subscriptionId) {
-    if (!confirm(`Cancel charge "${desc}"?\n\nIf pending, this removes it. If it was already charged, it cannot be canceled here (refund must be handled separately).`)) return;
+    if (!await openConfirm({ title: 'Cancel charge?', message: `"${desc}"\n\nIf pending, this removes it. If it was already charged, it cannot be canceled here (refund must be handled separately).`, confirmText: 'Cancel charge', danger: true })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/adhoc-charges/${chargeId}/cancel`, {
         method: 'POST',
@@ -1034,17 +1030,17 @@
         showStatus('No add-ons available for this generator class.', 'error');
         return;
       }
-      // Build numbered prompt
-      const lines = addons.map((a, i) => `${i+1}. ${a.label} (${(a.amount_cents/100).toFixed(2)})`);
-      const sel = prompt(`Which add-on to add?\n\n${lines.join('\n')}\n\nEnter the number (1-${addons.length}):`, '1');
-      if (sel === null) return;
-      const idx = parseInt(sel, 10) - 1;
-      if (isNaN(idx) || idx < 0 || idx >= addons.length) {
-        showStatus('Invalid selection.', 'error');
-        return;
-      }
-      const choice = addons[idx];
-      if (!confirm(`Add "${choice.label}" (${(choice.amount_cents/100).toFixed(2)}) to this subscription as a pending add-on?\n\nIt will be charged at the next renewal once marked performed.`)) return;
+      // Inline select dialog instead of a numbered prompt.
+      const choiceOptions = addons.map((a) => ({ value: a.addon_type, label: `${a.label} ($${(a.amount_cents / 100).toFixed(2)})` }));
+      const res = await openPrompt({
+        title: 'Add add-on',
+        message: 'Adds a pending add-on. It will be charged at the next renewal once marked performed.',
+        fields: [{ name: 'addon', label: 'Add-on', type: 'select', value: choiceOptions[0].value, options: choiceOptions }],
+        confirmText: 'Add add-on',
+      });
+      if (res === null) return;
+      const choice = addons.find((a) => a.addon_type === res.addon);
+      if (!choice) { showStatus('Invalid selection.', 'error'); return; }
       const addR = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-addon`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -1065,14 +1061,21 @@
   }
 
   async function cancelSubscription(subscriptionId) {
-    if (!confirm('Cancel this subscription?\n\nCustomer keeps service through their paid-through date. Stripe will NOT auto-renew at the end of the period.\n\nYou can add an optional reason in the next prompt.')) return;
-    const reason = prompt('Optional: reason for cancellation (or leave blank):', '');
-    if (reason === null) return; // user hit Cancel on the reason prompt
+    const res = await openPrompt({
+      title: 'Cancel subscription?',
+      message: 'Customer keeps service through their paid-through date. Stripe will NOT auto-renew at the end of the period.',
+      fields: [{ name: 'reason', label: 'Reason (optional)', type: 'textarea', placeholder: 'e.g. moved, sold the generator' }],
+      confirmText: 'Cancel subscription',
+      cancelText: 'Keep subscription',
+      danger: true,
+    });
+    if (res === null) return;
+    const reason = (res.reason || '').trim() || null;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/cancel`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: reason.trim() || null }),
+        body: JSON.stringify({ reason }),
       });
       const data = await r.json();
       if (!r.ok) {
@@ -1127,23 +1130,18 @@
 
   async function completeVisit(visitId, subscriptionId) {
     const today = new Date().toISOString().slice(0, 10);
-    const dateStr = prompt(
-      'What date was this visit actually performed?\n\nFormat: YYYY-MM-DD\n(The next visit will be scheduled relative to this date.)',
-      today
-    );
-    if (dateStr === null) return; // user cancelled
-    const completed_date = (dateStr || '').trim() || today;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(completed_date)) {
-      alert('Date must be in YYYY-MM-DD format (e.g. 2026-06-02).');
-      return;
-    }
-    // Optional notes — included in the customer's "visit complete" email if provided.
-    const notesInput = prompt(
-      'Notes for the customer (optional).\n\nWhat we did, anything they should know about, etc. Will appear in the visit-complete email under "Notes from the visit." Leave blank to skip.',
-      ''
-    );
-    if (notesInput === null) return; // user cancelled
-    const notes = (notesInput || '').trim() || null;
+    const res = await openPrompt({
+      title: 'Mark visit complete',
+      message: 'The next visit will be scheduled relative to the date performed.',
+      fields: [
+        { name: 'date', label: 'Date performed', type: 'date', value: today, required: true },
+        { name: 'notes', label: 'Notes for the customer (optional)', type: 'textarea', placeholder: 'What we did, anything they should know…', hint: 'Appears in the visit-complete email under “Notes from the visit.”' },
+      ],
+      confirmText: 'Mark complete',
+    });
+    if (res === null) return;
+    const completed_date = (res.date || '').trim() || today;
+    const notes = (res.notes || '').trim() || null;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
         method: 'POST',
@@ -1219,15 +1217,15 @@
       const data = await r.json();
       if (!r.ok || !data.sent) {
         const reason = data.error || data.email_status || `HTTP ${r.status}`;
-        alert(`Couldn't resend welcome email: ${reason}`);
+        showStatus(`Couldn't resend welcome email: ${reason}`, 'error');
         return;
       }
       const who = data.customer_name ? ` to ${data.customer_name}` : '';
       const emailAddr = data.customer_email ? ` (${data.customer_email})` : '';
-      alert(`Welcome email re-sent${who}${emailAddr}.`);
+      showStatus(`Welcome email re-sent${who}${emailAddr}.`, 'success');
     } catch (err) {
       console.error('Resend welcome failed:', err);
-      alert(`Failed: ${err.message}`);
+      showStatus(`Failed: ${err.message}`, 'error');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
@@ -1244,7 +1242,7 @@
       return;
     }
     if (validation) validation.style.display = 'none';
-    if (!confirm(`Mark the Jonas work order created (WO# ${woNumber})?\n\nThis notifies Accounts Receivable (ar@bates-electric.com) that it’s ready to invoice, with the work-order packet.`)) return;
+    if (!await openConfirm({ title: 'Mark work order created?', message: `WO# ${woNumber}\n\nThis notifies Accounts Receivable (ar@bates-electric.com) that it’s ready to invoice, with the work-order packet.`, confirmText: 'Mark created' })) return;
     if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/work-order-created`, {
@@ -1287,7 +1285,7 @@
   }
 
   async function undoHandoff(subscriptionId, which, confirmMsg) {
-    if (!confirm(confirmMsg)) return;
+    if (!await openConfirm({ title: 'Undo?', message: confirmMsg, confirmText: 'Undo', danger: true })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/${which}/undo`, {
         method: 'POST',
@@ -1329,13 +1327,16 @@
       const who = data.customer_name ? ` to ${data.customer_name}` : '';
       const emailAddr = data.customer_email ? ` (${data.customer_email})` : '';
       if (data.email_sent) {
-        alert(`Card-update link emailed${who}${emailAddr}.\n\nThe customer can use it to update their card, see invoices, or change contact info. Link expires in about an hour.`);
+        showStatus(`Card-update link emailed${who}${emailAddr}. Link expires in about an hour.`, 'success');
       } else {
-        // Fallback if SendGrid is down or the customer has no email on file
-        try { await navigator.clipboard.writeText(data.url); } catch (_) {}
+        // Fallback if SendGrid is down or the customer has no email on file: copy
+        // the link to the clipboard so Amy can paste it to the customer.
+        let copied = false;
+        try { await navigator.clipboard.writeText(data.url); copied = true; } catch (_) {}
         const reason = data.email_status ? ' (' + data.email_status + ')' : '';
         const target = data.customer_email || 'the customer';
-        alert(`Couldn't auto-send the email${reason}.\n\nLink copied to clipboard \u2014 text or email it to ${target}:\n\n${data.url}\n\nLink expires in about an hour.`);
+        showStatus(`Couldn't auto-send the email${reason}.${copied ? ' Link copied to clipboard' : ' Copy the link from the console'} \u2014 send it to ${target}. Expires in ~1 hour.`, 'info');
+        if (!copied) console.log('[portal-link] card-update URL:', data.url);
       }
     } catch (err) {
       console.error('Portal link failed:', err);
@@ -1403,7 +1404,7 @@
     const targetLabel = planLabel(target);
     const renewsOn = planBilling && planBilling.current_period_end ? planBilling.current_period_end : null;
     const whenText = renewsOn ? `their next renewal on ${fmtDate(renewsOn)}` : 'their next renewal';
-    if (!confirm(`Switch this customer to ${targetLabel} starting at ${whenText}?\n\nNo charge today. The new ${targetLabel} price and billing cadence take effect at renewal; they stay on their current plan until then.`)) return;
+    if (!await openConfirm({ title: `Switch to ${targetLabel}?`, message: `Starting at ${whenText}. No charge today — the new ${targetLabel} price and billing cadence take effect at renewal; they stay on their current plan until then.`, confirmText: `Switch to ${targetLabel}` })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/change-plan`, {
         method: 'POST',
@@ -1422,7 +1423,7 @@
 
   // Cancel a not-yet-effective plan change (releases the Stripe schedule).
   async function revertPlanChange(subscriptionId) {
-    if (!confirm('Cancel the pending plan change and keep the customer on their current plan? No charge either way.')) return;
+    if (!await openConfirm({ title: 'Keep current plan?', message: 'Cancel the pending plan change and keep the customer on their current plan. No charge either way.', confirmText: 'Keep current plan' })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/revert-plan-change`, {
         method: 'POST',
@@ -1677,7 +1678,7 @@
       : '';
     const amt = '$' + ((parseInt(btn.dataset.amount, 10) || 0) / 100).toFixed(2);
     const email = btn.dataset.email || '';
-    if (!confirm(`Resend the receipt for ${dateStr} · ${amt} to ${email || 'the customer'}?`)) return;
+    if (!await openConfirm({ title: 'Resend receipt?', message: `For ${dateStr} · ${amt}\n\nSends to ${email || 'the customer'}.`, confirmText: 'Resend receipt' })) return;
     const original = btn.textContent;
     btn.disabled = true; btn.textContent = 'Sending…';
     try {
@@ -1729,6 +1730,101 @@
   // office user confirms, or null if they cancel. The amount pre-fills to the
   // full refundable balance and is editable down for a partial; amounts <= $0
   // or over the balance are blocked before the confirm step.
+  // Styled inline confirm dialog (replaces window.confirm). Reuses the same
+  // gc-rd-* chrome as the refund dialog. Resolves true (confirm) / false (cancel).
+  function openConfirm({ title = 'Are you sure?', message = '', confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay';
+      overlay.innerHTML = `
+        <div class="gc-rd-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+          <h3 class="gc-rd-title">${escapeHtml(title)}</h3>
+          ${message ? `<div class="gc-rd-sub" style="white-space:pre-line;">${escapeHtml(message)}</div>` : ''}
+          <div class="gc-rd-actions">
+            <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm gc-rd-cancel">${escapeHtml(cancelText)}</button>
+            <button type="button" class="gc-btn ${danger ? 'gc-btn-destructive' : 'gc-btn-primary'} gc-btn-sm gc-rd-submit">${escapeHtml(confirmText)}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const submitEl = overlay.querySelector('.gc-rd-submit');
+      const cancelEl = overlay.querySelector('.gc-rd-cancel');
+      function close(result) { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(result); }
+      function onKey(e) { if (e.key === 'Escape') close(false); else if (e.key === 'Enter') close(true); }
+      document.addEventListener('keydown', onKey);
+      cancelEl.addEventListener('click', () => close(false));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+      submitEl.addEventListener('click', () => close(true));
+      setTimeout(() => submitEl.focus(), 30);
+    });
+  }
+
+  // Styled inline prompt dialog (replaces window.prompt, incl. multi-field flows).
+  // fields: [{ name, label, type?, value?, placeholder?, options?, required?, step?, min?, inputmode?, hint? }]
+  // Resolves a { name: value } object on confirm, or null on cancel.
+  function openPrompt({ title, message = '', fields = [], confirmText = 'Save', cancelText = 'Cancel', validate, danger = false } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay';
+      const fieldHtml = fields.map((f, i) => {
+        const id = `gc-pf-${i}`;
+        const nameAttr = `data-name="${escapeHtml(f.name)}"`;
+        const hint = f.hint ? `<small style="display:block;color:var(--text-tertiary);margin-top:2px;">${escapeHtml(f.hint)}</small>` : '';
+        let control;
+        if (f.type === 'select') {
+          const opts = (f.options || []).map(o =>
+            `<option value="${escapeHtml(String(o.value))}"${String(o.value) === String(f.value) ? ' selected' : ''}>${escapeHtml(o.label)}</option>`).join('');
+          control = `<select id="${id}" ${nameAttr}>${opts}</select>`;
+        } else if (f.type === 'textarea') {
+          control = `<textarea id="${id}" ${nameAttr} rows="3" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>`;
+        } else {
+          const t = f.type || 'text';
+          const extra = `${f.step ? ` step="${f.step}"` : ''}${f.min != null ? ` min="${f.min}"` : ''}${f.inputmode ? ` inputmode="${f.inputmode}"` : ''}`;
+          control = `<input id="${id}" ${nameAttr} type="${t}" value="${escapeHtml(f.value != null ? String(f.value) : '')}" placeholder="${escapeHtml(f.placeholder || '')}"${extra}>`;
+        }
+        return `<label class="gc-rd-field"><span>${escapeHtml(f.label)}</span>${control}${hint}</label>`;
+      }).join('');
+      overlay.innerHTML = `
+        <div class="gc-rd-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title || 'Enter details')}">
+          <h3 class="gc-rd-title">${escapeHtml(title || '')}</h3>
+          ${message ? `<div class="gc-rd-sub" style="white-space:pre-line;">${escapeHtml(message)}</div>` : ''}
+          ${fieldHtml}
+          <div class="gc-rd-error" hidden></div>
+          <div class="gc-rd-actions">
+            <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm gc-rd-cancel">${escapeHtml(cancelText)}</button>
+            <button type="button" class="gc-btn ${danger ? 'gc-btn-destructive' : 'gc-btn-primary'} gc-btn-sm gc-rd-submit">${escapeHtml(confirmText)}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const errEl = overlay.querySelector('.gc-rd-error');
+      const submitEl = overlay.querySelector('.gc-rd-submit');
+      const cancelEl = overlay.querySelector('.gc-rd-cancel');
+      function close(result) { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(result); }
+      function onKey(e) { if (e.key === 'Escape') close(null); }
+      document.addEventListener('keydown', onKey);
+      cancelEl.addEventListener('click', () => close(null));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+      function values() {
+        const out = {};
+        overlay.querySelectorAll('[data-name]').forEach((el) => { out[el.dataset.name] = el.value; });
+        return out;
+      }
+      submitEl.addEventListener('click', () => {
+        const vals = values();
+        for (const f of fields) {
+          if (f.required && !String(vals[f.name] == null ? '' : vals[f.name]).trim()) {
+            errEl.textContent = `${f.label} is required.`; errEl.hidden = false; return;
+          }
+        }
+        if (typeof validate === 'function') {
+          const msg = validate(vals);
+          if (msg) { errEl.textContent = msg; errEl.hidden = false; return; }
+        }
+        close(vals);
+      });
+      setTimeout(() => { const first = overlay.querySelector('[data-name]'); if (first) first.focus(); }, 30);
+    });
+  }
+
   function openRefundDialog({ label, originalCents, alreadyRefundedCents, cardBrand, cardLast4 }) {
     return new Promise((resolve) => {
       const already = alreadyRefundedCents || 0;
@@ -1807,8 +1903,8 @@
       submitEl.addEventListener('click', () => {
         const cents = currentCents();
         if (!Number.isFinite(cents) || cents <= 0 || cents > remaining) { validate(); return; }
-        // Confirmation step — this moves money; guard against accidental clicks.
-        if (!confirm(`Refund $${(cents / 100).toFixed(2)} to ${shortCard}? This posts to the customer's card within a few business days and can't be undone.`)) return;
+        // The dialog (amount + "Refund $X" button + can't-undo note) IS the
+        // confirmation — no extra native popup.
         close({ amountCents: cents, reason: (reasonEl.value || '').trim() || null });
       });
 
@@ -1819,7 +1915,7 @@
   async function refundCharge(rowType, rowId, originalAmountCents, alreadyRefundedCents, label, subscriptionId) {
     const remaining = originalAmountCents - (alreadyRefundedCents || 0);
     if (remaining <= 0) {
-      alert('Already fully refunded.');
+      showStatus('Already fully refunded.', 'error');
       return;
     }
     // Ad-hoc/addon charges don't carry a per-charge card client-side; the refund
@@ -1862,7 +1958,7 @@
   async function refundInvoice(invoiceId, chargeAmountCents, alreadyRefundedCents, subscriptionId, cardBrand, cardLast4) {
     const remaining = (chargeAmountCents || 0) - (alreadyRefundedCents || 0);
     if (remaining <= 0) {
-      alert('This invoice is already fully refunded.');
+      showStatus('This invoice is already fully refunded.', 'error');
       return;
     }
     const result = await openRefundDialog({
