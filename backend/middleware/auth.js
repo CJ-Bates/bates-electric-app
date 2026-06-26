@@ -25,6 +25,12 @@ async function requireAuth(req, res, next) {
     return res.status(403).json({ error: 'No profile found for this user' });
   }
 
+  // A deactivated account (e.g. a former tech) keeps its login but loses all
+  // access. `active` defaults to true, so existing accounts are unaffected.
+  if (profile.active === false) {
+    return res.status(403).json({ error: 'This account has been deactivated. Contact the office.' });
+  }
+
   req.user = userData.user;
   req.profile = profile;
   req.token = token;

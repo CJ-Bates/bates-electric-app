@@ -42,6 +42,15 @@
     desc: 'Customers + scheduled service visits',
     href: 'generator-care.html',
   };
+
+  // Tech-only: the field-tech's assigned generator service visits.
+  const MY_VISITS_FEATURED = {
+    id: 'my-visits',
+    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    title: 'My Visits',
+    desc: 'Your assigned generator service visits',
+    href: 'tech.html',
+  };
   // Quick links for all users
   const QUICK_LINKS = [
     { id: 'site-visit',    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
@@ -285,6 +294,8 @@
         desc: 'Create report',
       }));
     } else {
+      // Techs land on the hub; their generator visits are the primary card.
+      grid.appendChild(makeFeaturedCard(MY_VISITS_FEATURED));
       grid.appendChild(makeFeaturedCard(TECH_FEATURED));
     }
   }

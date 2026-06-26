@@ -135,6 +135,7 @@
       section: 'Main',
       items: [
         { label: 'Home', icon: 'house', href: 'home.html', id: 'drawer-home' },
+        { label: 'My Visits', icon: 'zap', href: 'tech.html', id: 'drawer-tech', techOnly: true },
         { label: 'Inspections', icon: 'clipboardCheck', href: 'inspection.html', id: 'drawer-inspection' },
         { label: 'Dashboard', icon: 'layoutDashboard', href: 'office.html', id: 'drawer-dashboard', officeOnly: true },
         { label: 'Generator Care', icon: 'zap', href: 'generator-care.html', id: 'drawer-generator', officeOnly: true }
@@ -236,8 +237,11 @@
       <div class="shared-drawer-section">
         <h3 class="shared-drawer-section-label">${group.section}</h3>
         ${group.items.map(item => {
-          // Skip Dashboard if not office role
+          // Skip office-only items for techs, and tech-only items for office.
           if (item.officeOnly && !isOffice) {
+            return '';
+          }
+          if (item.techOnly && isOffice) {
             return '';
           }
 

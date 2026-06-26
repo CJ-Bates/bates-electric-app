@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth');
 const inspectionRoutes = require('./routes/inspections');
 const generatorWebhookRouter = require('./routes/generator-webhook');
 const generatorCareRouter = require('./routes/generator-care');
+const generatorTechRouter = require('./routes/generator-tech');
 const generatorCareCronRouter = require('./routes/generator-care-cron');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
 
@@ -70,6 +71,10 @@ app.use('/inspections', inspectionRoutes);
 // Serve the frontend as static files (after API routes so they take priority)
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
+// Tech router BEFORE the office router: both share the /api/generator-care prefix,
+// but /tech/* is tech-gated and must not be shadowed by the office router's
+// office-only middleware.
+app.use('/api/generator-care/tech', generatorTechRouter);
 app.use('/api/generator-care', generatorCareRouter);
 app.use('/api/cron/generator-care', generatorCareCronRouter);
 
