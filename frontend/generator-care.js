@@ -29,6 +29,39 @@
   // Next-renewal + pending-plan-change info for the open customer, set by
   // loadStripeData. Used by the Change-plan confirm dialog (for the renewal date).
   let planBilling = null;
+  // Active + inactive tech accounts, loaded once for the per-visit assign picker
+  // and the manage-techs screen. id -> name lookups use this.
+  let techList = [];
+
+  const techName = (id) => {
+    const t = techList.find((x) => x.id === id);
+    return t ? (t.full_name || t.email) : 'Unknown tech';
+  };
+  // <select> options for the assign picker: "Unassigned" + each ACTIVE tech, with
+  // the currently-assigned one selected (kept even if since deactivated).
+  function techOptions(selectedId) {
+    const opts = ['<option value="">— Unassigned —</option>'];
+    for (const t of techList) {
+      if (t.active === false && t.id !== selectedId) continue; // hide deactivated unless already on this visit
+      const sel = t.id === selectedId ? ' selected' : '';
+      const label = escapeHtml((t.full_name || t.email) + (t.active === false ? ' (inactive)' : ''));
+      opts.push(`<option value="${escapeHtml(t.id)}"${sel}>${label}</option>`);
+    }
+    return opts.join('');
+  }
+
+  async function loadTechs() {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return;
+      const data = await r.json();
+      techList = data.techs || [];
+    } catch (e) {
+      console.error('loadTechs failed', e);
+    }
+  }
 
   // US states + DC for the Contact & Address state dropdown. 2-letter codes only
   // (matches the signup form) so install_state stays clean — FL branding keys off it.
@@ -556,16 +589,29 @@
       }
       if (completed && v.completed_by) audit.push(`Completed by ${escapeHtml(v.completed_by)}`);
 
+      // Dispatch: who's assigned (shown for open visits; completed shows completed_by).
+      if (!completed && v.assigned_tech_id) audit.push(`Assigned: ${escapeHtml(techName(v.assigned_tech_id))}`);
+
       let actions = '';
       if (!completed) {
         const localVal = v.appointment_at ? toLocalInput(v.appointment_at) : '';
         actions = `
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+            <label class="gc-meta-label" style="display:flex;align-items:center;gap:5px;">Assign tech:
+              <select class="gc-assign-select" data-assign-visit="${v.id}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;">${techOptions(v.assigned_tech_id)}</select>
+            </label>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
             <input type="datetime-local" class="gc-appt-input" data-visit="${v.id}" value="${localVal}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
             <button class="gc-btn gc-btn-secondary gc-btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
             <button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>
           </div>`;
       }
+      // Notes: customer-visible (on completed) + internal (office/tech only).
+      const noteLines = [];
+      if (completed && v.notes) noteLines.push(`<div class="gc-meta-label" style="margin-top:4px;">Customer note: ${escapeHtml(v.notes)}</div>`);
+      if (v.internal_note) noteLines.push(`<div class="gc-meta-label" style="margin-top:4px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:5px 8px;color:#92400E;">Internal: ${escapeHtml(v.internal_note)}</div>`);
+
       const due = !completed ? dueCtx(v) : null;
       return `<div class="gc-card-row" style="display:block;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -576,6 +622,7 @@
           </div>
           <div style="flex-shrink:0;">${badge}</div>
         </div>
+        ${noteLines.join('')}
         ${actions}
       </div>`;
     }).join('');
@@ -749,6 +796,9 @@
       });
       body.querySelectorAll('[data-schedule-visit]').forEach(btn => {
         btn.addEventListener('click', () => scheduleAppointment(btn.dataset.scheduleVisit, id));
+      });
+      body.querySelectorAll('[data-assign-visit]').forEach(sel => {
+        sel.addEventListener('change', () => assignVisit(sel.dataset.assignVisit, sel.value || null, id));
       });
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
@@ -1144,17 +1194,19 @@
       fields: [
         { name: 'date', label: 'Date performed', type: 'date', value: today, required: true },
         { name: 'notes', label: 'Notes for the customer (optional)', type: 'textarea', placeholder: 'What we did, anything they should know…', hint: 'Appears in the visit-complete email under “Notes from the visit.”' },
+        { name: 'internal', label: 'Internal note (office + techs only)', type: 'textarea', placeholder: 'Parts used, follow-ups, access notes…', hint: 'Never shown to the customer.' },
       ],
       confirmText: 'Mark complete',
     });
     if (res === null) return;
     const completed_date = (res.date || '').trim() || today;
     const notes = (res.notes || '').trim() || null;
+    const internal_note = (res.internal || '').trim() || null;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/complete`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ completed_date, notes }),
+        body: JSON.stringify({ completed_date, notes, internal_note }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -1171,6 +1223,115 @@
     }
   }
 
+  // Dispatch a tech to (or clear) a visit. Office-gated server-side.
+  async function assignVisit(visitId, techId, subscriptionId) {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/assign`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assigned_tech_id: techId }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Couldn't assign: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(techId ? `Assigned to ${techName(techId)}.` : 'Assignment cleared.', 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('assign visit failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  // ---- Manage techs ----
+  async function openTechsModal() {
+    document.getElementById('techsModal').hidden = false;
+    document.getElementById('techs-list').innerHTML = '<p class="gc-meta-label">Loading…</p>';
+    await loadTechs();
+    renderTechsList();
+  }
+  function closeTechsModal() { document.getElementById('techsModal').hidden = true; }
+
+  function renderTechsList() {
+    const el = document.getElementById('techs-list');
+    if (!el) return;
+    if (!techList.length) { el.innerHTML = '<p class="gc-meta-label">No tech accounts yet.</p>'; return; }
+    el.innerHTML = techList.map((t) => {
+      const inactive = t.active === false;
+      return `<div class="gc-card-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;${inactive ? 'opacity:0.6;' : ''}">
+        <div>
+          <div class="gc-meta-value">${escapeHtml(t.full_name || '(no name)')}${inactive ? ' <span class="gc-meta-label">— inactive</span>' : ''}</div>
+          <div class="gc-meta-label">${escapeHtml(t.email)}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <button class="gc-btn gc-btn-secondary gc-btn-sm" data-resend-tech="${escapeHtml(t.id)}">Resend link</button>
+          <button class="gc-btn ${inactive ? 'gc-btn-primary' : 'gc-btn-secondary'} gc-btn-sm" data-toggle-tech="${escapeHtml(t.id)}" data-active="${inactive ? '1' : '0'}">${inactive ? 'Reactivate' : 'Deactivate'}</button>
+        </div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('[data-toggle-tech]').forEach((b) => {
+      b.addEventListener('click', () => setTechActive(b.dataset.toggleTech, b.dataset.active === '1'));
+    });
+    el.querySelectorAll('[data-resend-tech]').forEach((b) => {
+      b.addEventListener('click', () => resendTechInvite(b.dataset.resendTech));
+    });
+  }
+
+  async function addTech() {
+    const name = (document.getElementById('new-tech-name').value || '').trim();
+    const email = (document.getElementById('new-tech-email').value || '').trim();
+    if (!name || !email) { showStatus('Enter a name and email.', 'error'); return; }
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); return; }
+      showStatus(data.warning || `Invited ${name}. They'll get a set-password email.`, data.warning ? 'warning' : 'success');
+      document.getElementById('new-tech-name').value = '';
+      document.getElementById('new-tech-email').value = '';
+      await loadTechs();
+      renderTechsList();
+    } catch (e) {
+      console.error('add tech failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+  }
+
+  async function setTechActive(id, active) {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs/${id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); return; }
+      showStatus(active ? 'Tech reactivated.' : 'Tech deactivated.', 'success');
+      await loadTechs();
+      renderTechsList();
+    } catch (e) {
+      console.error('toggle tech failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+  }
+
+  async function resendTechInvite(id) {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs/${id}/resend-invite`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); return; }
+      showStatus('Set-password link re-sent.', 'success');
+    } catch (e) {
+      console.error('resend invite failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+  }
+
   function closeModal() {
     document.getElementById('detailsModal').hidden = true;
   }
@@ -1181,6 +1342,7 @@
   }
   // ---- Init ----
   checkRole();
+  loadTechs();
 
   document.getElementById('refresh-btn').addEventListener('click', loadSubscriptions);
 
@@ -1202,6 +1364,13 @@
   document.getElementById('modal-close-btn2').addEventListener('click', closeModal);
   document.querySelector('#detailsModal .modal-overlay').addEventListener('click', closeModal);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+  // Manage techs modal
+  document.getElementById('manage-techs-btn').addEventListener('click', openTechsModal);
+  document.getElementById('techs-close-btn').addEventListener('click', closeTechsModal);
+  document.getElementById('techs-close-btn2').addEventListener('click', closeTechsModal);
+  document.getElementById('techs-overlay').addEventListener('click', closeTechsModal);
+  document.getElementById('add-tech-btn').addEventListener('click', addTech);
 
   loadSubscriptions();
 

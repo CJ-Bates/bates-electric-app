@@ -274,6 +274,7 @@
       <a href="home.html" class="btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care</h1>
       <div class="dashboard-header-actions">
         <span id="result-count" class="result-count"></span>
+        <button type="button" id="manage-techs-btn" class="btn-secondary btn-sm">Manage techs</button>
         <button type="button" id="refresh-btn" class="btn-secondary btn-sm">Refresh</button>
       </div>
     </div>
@@ -368,6 +369,33 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn-secondary" id="modal-close-btn2">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage techs modal -->
+  <div id="techsModal" class="modal" hidden>
+    <div class="modal-overlay" id="techs-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Field techs</h2>
+        <button type="button" class="modal-close" id="techs-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="gc-meta-label" style="margin-top:0;">Create a tech account (they get a set-password email) and dispatch them to visits from each customer's Service Visits. Tech emails must be a <strong>*.bateselectric@gmail.com</strong> address.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:12px 0 16px;">
+          <label style="flex:1;min-width:140px;"><span class="gc-meta-label">Name</span>
+            <input type="text" id="new-tech-name" placeholder="Jordan Tech" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit;" />
+          </label>
+          <label style="flex:1.4;min-width:180px;"><span class="gc-meta-label">Email</span>
+            <input type="email" id="new-tech-email" placeholder="jordan.bateselectric@gmail.com" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit;" />
+          </label>
+          <button type="button" class="gc-btn gc-btn-primary gc-btn-sm" id="add-tech-btn">Create + invite</button>
+        </div>
+        <div id="techs-list"><p class="gc-meta-label">Loading…</p></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" id="techs-close-btn2">Close</button>
       </div>
     </div>
   </div>

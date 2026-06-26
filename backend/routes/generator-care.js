@@ -3,10 +3,11 @@
 // All endpoints require office role.
 
 const express = require('express');
-const { supabaseAdmin } = require('../lib/supabase');
+const { supabaseAdmin, supabaseAnon } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const catalog = require('../lib/generator-catalog');
 const { sendReceiptEmail } = require('../lib/receipts');
+const { completeServiceVisit } = require('../lib/completeVisit');
 
 const router = express.Router();
 
@@ -1066,100 +1067,22 @@ router.post('/subscriptions/:id/resend-receipt', async (req, res) => {
 });
 
 
-// Next visit-due on the plan's fixed cadence grid (signup + k*interval), so it
-// tracks payments instead of drifting with late completions. Returns the earliest
-// grid point strictly AFTER both the just-completed visit's due (priorDueStr) and
-// the date performed (performedStr). Anchoring strictly-after the prior due is what
-// advances exactly one cycle on a normal/early completion; the performed check then
-// skips any grid points missed by a very-late completion. All UTC, date-only.
-function gridAnchoredNextDue(anchorStr, priorDueStr, performedStr, intervalMonths) {
-  if (!anchorStr) return null;
-  const d = new Date(anchorStr + 'T00:00:00Z');
-  if (isNaN(d.getTime())) return null;
-  const priorMs = priorDueStr ? new Date(priorDueStr + 'T00:00:00Z').getTime() : -Infinity;
-  const performedMs = performedStr ? new Date(performedStr + 'T00:00:00Z').getTime() : -Infinity;
-  let guard = 0;
-  while (d.getTime() <= priorMs && guard++ < 4000) d.setUTCMonth(d.getUTCMonth() + intervalMonths);
-  while (d.getTime() <= performedMs && guard++ < 4000) d.setUTCMonth(d.getUTCMonth() + intervalMonths);
-  return d.toISOString().slice(0, 10);
-}
-
 // POST /api/generator-care/visits/:id/complete
-// Mark a service visit completed; the next visit-due is anchored to the billing grid.
+// Office marks a service visit completed (actor-aware). Shared logic lives in
+// lib/completeVisit.js so the field-tech endpoint behaves identically.
 router.post('/visits/:id/complete', async (req, res) => {
   try {
-    const id = req.params.id;
-    const { notes, addons_performed, technician_id } = req.body || {};
-    const today = (req.body && req.body.completed_date) || new Date().toISOString().slice(0, 10);
-    const completedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
-
-    // 1. Update the visit
-    const { data: updated, error: updErr } = await supabaseAdmin
-      .from('generator_service_visits')
-      .update({
-        status: 'completed',
-        completed_date: today,
-        completed_by: completedBy,
-        notes: notes || null,
-        addons_performed: addons_performed || null,
-        technician_id: technician_id || req.user.id,
-      })
-      .eq('id', id)
-      .select('*, subscription:generator_subscriptions(id, plan, signup_date, next_visit_due, customer:generator_customers(name, email, install_state))')
-      .single();
-    if (updErr) throw updErr;
-
-    // 2. Anchor the NEXT visit-due to the plan's fixed cadence grid (every 6/12
-    // months from signup), NOT to the date performed — so it tracks the payment
-    // schedule and never drifts when a visit is completed late.
-    const sub = updated.subscription;
-    let nextStr = null;
-    if (sub) {
-      const monthsAhead = sub.plan === 'semi_annual' ? 6 : 12;
-      const anchorStr = sub.signup_date || updated.scheduled_date || sub.next_visit_due || today;
-      const priorDueStr = updated.scheduled_date || sub.next_visit_due || null;
-      nextStr = gridAnchoredNextDue(anchorStr, priorDueStr, today, monthsAhead);
-      if (!nextStr) {
-        // Last-resort fallback only if no anchor at all: performed + interval.
-        const f = new Date(today + 'T00:00:00Z');
-        f.setUTCMonth(f.getUTCMonth() + monthsAhead);
-        nextStr = f.toISOString().slice(0, 10);
-      }
-
-      await supabaseAdmin
-        .from('generator_subscriptions')
-        .update({ last_visit_date: today, next_visit_due: nextStr })
-        .eq('id', sub.id);
-
-      await supabaseAdmin.from('generator_service_visits').insert({
-        subscription_id: sub.id,
-        visit_type: 'regular_service',
-        scheduled_date: nextStr,
-        status: 'tentative',
-      });
-    }
-
-    // 3. Email the customer a completion confirmation (fire-and-forget).
-    const customer = sub && sub.customer;
-    if (customer && customer.email) {
-      const { subject, html, text } = buildVisitCompletedEmail({
-        customer,
-        completedDate: today,
-        nextVisitDate: nextStr,
-        planLabel: planLabelFor(sub.plan),
-        notes,
-      });
-      sendEmail({
-        to: customer.email,
-        subject,
-        html,
-        text,
-        logTag: '[visit-complete-email]',
-        companyState: customer.install_state,
-      }).catch((e) => console.error('[visit-complete-email] unexpected:', e && e.message));
-    }
-
-    res.json({ ok: true, visit: updated });
+    const { notes, internal_note, addons_performed, technician_id } = req.body || {};
+    const result = await completeServiceVisit({
+      visitId: req.params.id,
+      completedDate: (req.body && req.body.completed_date) || null,
+      notes,
+      internalNote: internal_note,
+      addonsPerformed: addons_performed,
+      actorName: (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office',
+      actorId: technician_id || (req.user && req.user.id),
+    });
+    res.json({ ok: true, visit: result.visit });
   } catch (err) {
     console.error('[generator-care] visit complete error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -3093,6 +3016,171 @@ router.post('/admin/send-test-email', async (req, res) => {
   } catch (err) {
     console.error('[admin/send-test-email] error:', err);
     return res.status(500).json({ error: err.message || 'unknown error' });
+  }
+});
+
+// ============================================================================
+// FIELD-TECH MANAGEMENT (office-gated, like the rest of this router)
+// ============================================================================
+
+// A tech account is a profile whose role is 'tech'. Role is assigned by the DB
+// trigger from the email domain, so a tech's email MUST be *.bateselectric@gmail.com.
+function isTechEmail(email) {
+  return !!email && /\.bateselectric@gmail\.com$/i.test(String(email).trim());
+}
+
+// Resolve a safe origin for the set-password link we email (mirror of auth.js).
+function resolveLinkOrigin(req) {
+  const PROD = 'https://bates-electric-app.onrender.com';
+  const origin = (req.headers.origin || '').replace(/\/+$/, '');
+  const allowed = [PROD, 'http://localhost:4000', 'http://127.0.0.1:4000'];
+  return origin && allowed.includes(origin) ? origin : PROD;
+}
+
+// GET /api/generator-care/techs — list tech accounts (for the assign picker +
+// the manage-techs screen). Office-gated.
+router.get('/techs', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id, full_name, email, active, created_at')
+      .eq('role', 'tech')
+      .order('full_name', { ascending: true });
+    if (error) throw error;
+    res.json({ techs: data || [] });
+  } catch (err) {
+    console.error('[generator-care] list techs error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/techs  { name, email }
+// Creates the tech's auth account (role assigned by the DB trigger from the
+// email domain) and emails them a set-password link. The office never sets the
+// password. Office-gated.
+router.post('/techs', async (req, res) => {
+  try {
+    const name = (req.body && req.body.name || '').trim();
+    const email = (req.body && req.body.email || '').trim().toLowerCase();
+    if (!name) return res.status(400).json({ error: 'Tech name is required.' });
+    if (!isTechEmail(email)) {
+      return res.status(400).json({
+        error: 'Tech email must be a *.bateselectric@gmail.com address (that domain is what assigns the tech role).',
+      });
+    }
+
+    // Create the auth user; the on_auth_user_created trigger inserts the profile
+    // with role='tech' and full_name from user_metadata. email_confirm:true so
+    // they don't need to click a confirm link before setting a password.
+    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      user_metadata: { full_name: name },
+    });
+    if (createErr) {
+      const msg = /already.*registered|already exists|duplicate/i.test(createErr.message || '')
+        ? 'A user with that email already exists.'
+        : createErr.message;
+      return res.status(400).json({ error: msg });
+    }
+
+    // Send the tech a set-password link (reuses the existing recovery flow/page).
+    const redirectTo = `${resolveLinkOrigin(req)}/auth/reset-password-page`;
+    const { error: mailErr } = await supabaseAnon.auth.resetPasswordForEmail(email, { redirectTo });
+    if (mailErr) {
+      console.error('[generator-care] tech invite email failed:', mailErr.message);
+      // Account exists; the office can resend the link. Surface a soft warning.
+      return res.json({
+        ok: true,
+        tech: { id: created.user.id, email, full_name: name, active: true },
+        warning: 'Account created, but the set-password email failed to send. Use "Resend set-password link".',
+      });
+    }
+
+    res.json({ ok: true, tech: { id: created.user.id, email, full_name: name, active: true } });
+  } catch (err) {
+    console.error('[generator-care] create tech error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/techs/:id/resend-invite — resend the set-password link.
+router.post('/techs/:id/resend-invite', async (req, res) => {
+  try {
+    const { data: tech, error } = await supabaseAdmin
+      .from('profiles')
+      .select('email, role')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !tech) return res.status(404).json({ error: 'tech not found' });
+    if (tech.role !== 'tech') return res.status(400).json({ error: 'not a tech account' });
+    const redirectTo = `${resolveLinkOrigin(req)}/auth/reset-password-page`;
+    const { error: mailErr } = await supabaseAnon.auth.resetPasswordForEmail(tech.email, { redirectTo });
+    if (mailErr) return res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[generator-care] resend tech invite error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /api/generator-care/techs/:id  { active }  — deactivate / reactivate.
+router.patch('/techs/:id', async (req, res) => {
+  try {
+    const active = req.body && req.body.active;
+    if (typeof active !== 'boolean') return res.status(400).json({ error: 'active (boolean) required' });
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .update({ active })
+      .eq('id', req.params.id)
+      .eq('role', 'tech')
+      .select('id, full_name, email, active')
+      .single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'tech not found' });
+    res.json({ ok: true, tech: data });
+  } catch (err) {
+    console.error('[generator-care] update tech error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/visits/:id/assign  { assigned_tech_id | null }
+// Dispatch a tech to a visit (or clear the assignment). Office-gated; logs who/when.
+router.post('/visits/:id/assign', async (req, res) => {
+  try {
+    const visitId = req.params.id;
+    const techId = (req.body && req.body.assigned_tech_id) || null;
+
+    if (techId) {
+      // Validate the target is an active tech before assigning.
+      const { data: tech, error: techErr } = await supabaseAdmin
+        .from('profiles')
+        .select('id, role, active, full_name')
+        .eq('id', techId)
+        .single();
+      if (techErr || !tech) return res.status(400).json({ error: 'tech not found' });
+      if (tech.role !== 'tech') return res.status(400).json({ error: 'that user is not a tech' });
+      if (tech.active === false) return res.status(400).json({ error: 'that tech is deactivated' });
+    }
+
+    const assignedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
+    const updates = techId
+      ? { assigned_tech_id: techId, assigned_at: new Date().toISOString(), assigned_by: assignedBy }
+      : { assigned_tech_id: null, assigned_at: null, assigned_by: null };
+
+    const { data, error } = await supabaseAdmin
+      .from('generator_service_visits')
+      .update(updates)
+      .eq('id', visitId)
+      .select('id, assigned_tech_id, assigned_at, assigned_by')
+      .single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'visit not found' });
+    res.json({ ok: true, visit: data });
+  } catch (err) {
+    console.error('[generator-care] assign visit error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
