@@ -661,10 +661,10 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, 
   const GENC = { air_cooled: 'Air-cooled', liquid_22_38: 'Liquid-cooled (22–45 kW)', liquid_48_150: 'Liquid-cooled (48–150 kW)' };
   const ADDON = {
     fleet_monitoring: 'Fleet Monitoring', battery_replacement: 'Battery Replacement',
-    battery_diagnostics: 'Battery Diagnostics', exterior_wash: 'Exterior Wash',
-    coolant_flush: 'Coolant Flush', coolant_topoff: 'Coolant Top-Off',
-    ats_inspection: 'ATS Inspection', ats_outage_combined: 'ATS + Outage Test',
-    outage_test: 'Outage Test',
+    battery_diagnostics: 'Battery Diagnostics / Load Test', exterior_wash: 'Exterior Wash & Interior Blow-Out',
+    coolant_flush: 'Coolant System Flush', coolant_topoff: 'Coolant Top-Off Service',
+    ats_inspection: 'ATS Inspection', ats_outage_combined: 'Transfer Switch Inspection & Simulated Outage Test',
+    outage_test: 'Simulated Power Outage Test',
   };
 
   const name = c.name || 'Customer';

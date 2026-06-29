@@ -225,11 +225,12 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
         const labelFor = (t) => ({
           battery_diagnostics: 'Battery Diagnostics / Load Test',
           battery_replacement: 'Battery Replacement',
-          exterior_wash: 'Exterior Wash',
-          outage_test: 'Simulated Outage Test',
+          exterior_wash: 'Exterior Wash & Interior Blow-Out',
+          outage_test: 'Simulated Power Outage Test',
           coolant_flush: 'Coolant System Flush',
-          coolant_topoff: 'Coolant Top-Off',
+          coolant_topoff: 'Coolant Top-Off Service',
           ats_inspection: 'ATS Inspection',
+          ats_outage_combined: 'Transfer Switch Inspection & Simulated Outage Test',
         })[t] || t;
         const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         const total = addons.length + adhoc.length;
