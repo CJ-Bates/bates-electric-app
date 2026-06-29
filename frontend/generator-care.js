@@ -67,6 +67,23 @@
   // (matches the signup form) so install_state stays clean — FL branding keys off it.
   const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
 
+  // Canonical add-on display names — one source for the Add-ons list, the
+  // work-order packet, and anywhere else an add-on is shown. The sellable types
+  // mirror the backend ADDON_CATALOG labels (what the "+ Add Add-on" picker shows),
+  // so signup/picker → dashboard → packet all agree; the rest are legacy types
+  // kept so old records never render a raw id.
+  const ADDON_LABELS = {
+    fleet_monitoring: 'Fleet Monitoring',
+    battery_replacement: 'Battery Replacement',
+    battery_diagnostics: 'Battery Diagnostics / Load Test',
+    exterior_wash: 'Exterior Wash & Interior Blow-Out',
+    coolant_flush: 'Coolant System Flush',
+    coolant_topoff: 'Coolant Top-Off Service',
+    outage_test: 'Simulated Power Outage Test',
+    ats_inspection: 'ATS Inspection',
+    ats_outage_combined: 'Transfer Switch Inspection & Simulated Outage Test',
+  };
+
   // ---- Role check (must be office) ----
   async function checkRole() {
     try {
@@ -481,13 +498,6 @@
   // AR "ready to invoice" email body so the dashboard and the email match.
   function buildPacketText(sub, pendingAddons, actualChargeCents) {
     const c = sub.customer || {};
-    const ADDON = {
-      fleet_monitoring: 'Fleet Monitoring', battery_replacement: 'Battery Replacement',
-      battery_diagnostics: 'Battery Diagnostics', exterior_wash: 'Exterior Wash',
-      coolant_flush: 'Coolant Flush', coolant_topoff: 'Coolant Top-Off',
-      ats_inspection: 'ATS Inspection', ats_outage_combined: 'ATS + Outage Test',
-      outage_test: 'Outage Test',
-    };
     const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
     const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
     const annual = sub.annual_price_cents || 0;
@@ -495,8 +505,8 @@
     // Actual first charge (promo-aware) when known; else fall back to plan price.
     const signupCharge = (typeof actualChargeCents === 'number') ? actualChargeCents : renewal;
     const money = (cents) => '$' + ((cents || 0) / 100).toFixed(2);
-    const addons = (sub.fleet_monitoring ? ['Fleet Monitoring'] : [])
-      .concat((pendingAddons || []).filter(a => a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
+    const addons = (sub.fleet_monitoring ? [ADDON_LABELS.fleet_monitoring] : [])
+      .concat((pendingAddons || []).filter(a => a.status !== 'canceled').map(a => addonLabel(a.addon_type)));
     const gen = [genClassLabel(sub.gen_class), sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
     const lines = [
       ['Work order #', sub.work_order_number || '—'],
@@ -896,15 +906,7 @@
   }
 
   function addonLabel(t) {
-    return ({
-      battery_diagnostics: 'Battery Diagnostics / Load Test',
-      battery_replacement: 'Battery Replacement',
-      exterior_wash: 'Exterior Wash & Interior Blow-Out',
-      outage_test: 'Simulated Power Outage Test',
-      coolant_flush: 'Coolant System Flush',
-      coolant_topoff: 'Coolant Top-Off',
-      ats_inspection: 'ATS Inspection',
-    })[t] || t;
+    return ADDON_LABELS[t] || t;
   }
 
   async function removeAddon(addonId, label, subscriptionId) {

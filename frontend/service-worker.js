@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v89';
+const CACHE = 'bates-shell-v90';
 const ASSETS = [
   './',
   './ui-dialogs.js',
