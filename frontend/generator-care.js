@@ -668,17 +668,23 @@
           <button class="gc-btn gc-btn-icon gc-btn-sm" data-remove-addon="${a.id}" data-label="${label}" title="Remove">&times;</button>
         </div>`;
       } else if (a.status === 'performed') {
+        // Legacy state (deferred to renewal). "Charge now" collects it immediately
+        // and removes the pending renewal item so it isn't billed twice.
         chip = `<span class="gc-chip gc-chip-performed">Performed &middot; bills at renewal</span>`;
-        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>`;
+        action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="gc-btn gc-btn-primary gc-btn-sm" data-charge-now="${a.id}" data-amount="${amtStr}" data-label="${label}">Charge now</button>
+          <button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>
+        </div>`;
       } else if (a.status === 'charged') {
         const refunded = parseTotalRefundedCents(a.notes);
+        const chargedOn = a.date_charged ? ' &middot; ' + escapeHtml(fmtDate(a.date_charged)) : '';
         if (refunded >= a.amount_cents) {
           chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
         } else if (refunded > 0) {
           chip = `<span class="gc-chip gc-chip-partial">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
           action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${label}">Refund more</button>`;
         } else {
-          chip = `<span class="gc-chip gc-chip-charged">Charged</span>`;
+          chip = `<span class="gc-chip gc-chip-charged">Charged ${amtStr}${chargedOn}</span>`;
           action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
         }
       } else if (a.status === 'failed') {
@@ -822,6 +828,9 @@
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
       });
+      body.querySelectorAll('[data-charge-now]').forEach(btn => {
+        btn.addEventListener('click', () => chargeNowAddon(btn.dataset.chargeNow, btn.dataset.amount, btn.dataset.label, id));
+      });
       body.querySelectorAll('[data-remove-addon]').forEach(btn => {
         btn.addEventListener('click', () => removeAddon(btn.dataset.removeAddon, btn.dataset.label, id));
       });
@@ -947,33 +956,50 @@
     }
   }
 
+  // Mark a pending add-on performed AND charge it now (add-ons bill when performed).
   async function markPerformed(addonId, amount, label, subscriptionId) {
     const today = new Date().toISOString().slice(0, 10);
     const res = await openPrompt({
       title: `Mark "${label}" performed`,
-      message: `${amount} — this adds the charge to the customer's next renewal invoice. They will NOT be charged immediately.`,
+      message: `Charges ${amount} to the card on file now and sends a receipt. Confirm the date performed.`,
       fields: [{ name: 'date', label: 'Date performed', type: 'date', value: today, required: true }],
-      confirmText: 'Mark performed',
+      confirmText: `Charge ${amount} now`,
     });
     if (res === null) return;
     const performedDate = (res.date || '').trim() || today;
+    await chargeAddon(addonId, subscriptionId, { date_performed: performedDate }, `${label} performed and charged.`);
+  }
+
+  // Collect a legacy "Performed · bills at renewal" add-on now (removes the pending
+  // renewal item so it isn't billed twice).
+  async function chargeNowAddon(addonId, amount, label, subscriptionId) {
+    if (!await openConfirm({
+      title: `Charge "${label}" now?`,
+      message: `Charges ${amount} to the card on file now and removes the at-renewal charge so it isn't billed twice. Sends a receipt.`,
+      confirmText: `Charge ${amount} now`,
+    })) return;
+    await chargeAddon(addonId, subscriptionId, {}, `${label} charged.`);
+  }
+
+  // Shared POST for both flows -> /charge-now (immediate, no double-bill).
+  async function chargeAddon(addonId, subscriptionId, extraBody, successMsg) {
     try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/mark-performed`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/charge-now`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date_performed: performedDate }),
+        body: JSON.stringify(extraBody || {}),
       });
-      const data = await r.json();
+      const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Could not mark performed: ${reason}`, 'error');
+        showStatus(`Could not charge: ${reason}`, 'error');
       } else {
-        showStatus(`${label} marked performed. Will charge at renewal.`, 'success');
+        showStatus(successMsg, 'success');
       }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
-      console.error('Mark performed failed:', err);
+      console.error('Charge add-on failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
