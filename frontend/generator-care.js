@@ -466,8 +466,7 @@
         <h3 class="gc-card-h">Plan &amp; Billing</h3>
         <div class="gc-card-row"><span class="gc-meta-label">Plan</span><span class="gc-meta-value">${escapeHtml(planLabel(subscription.plan))}</span></div>
         <div id="gc-plan-pending" style="display:none;"></div>
-        <div class="gc-card-row"><span class="gc-meta-label">Generator</span><span class="gc-meta-value">${escapeHtml(genClassLabel(subscription.gen_class))} &mdash; ${escapeHtml(subscription.gen_model || 'model n/a')}</span></div>
-        ${subscription.gen_serial ? `<div class="gc-card-row"><span class="gc-meta-label">Serial</span><span class="gc-meta-value">${escapeHtml(subscription.gen_serial)}</span></div>` : ''}
+        <div id="gc-generator-region">${renderGeneratorRead(subscription)}</div>
         <div class="gc-card-row"><span class="gc-meta-label">Fleet Monitoring</span><span class="gc-meta-value" id="gc-fleet-value">${subscription.fleet_monitoring ? 'Yes' : 'No'}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Annual price</span><span class="gc-meta-value">${annual}</span></div>
         <div class="gc-card-row" id="gc-renews-row" style="display:none;"><span class="gc-meta-label">Renews at</span><span class="gc-meta-value" id="gc-renews-value"></span></div>
@@ -856,6 +855,9 @@
 
       const contactEditBtn = body.querySelector('#gc-contact-edit-btn');
       if (contactEditBtn) contactEditBtn.addEventListener('click', () => enterContactEdit(c, id));
+
+      const genEditBtn = body.querySelector('#gc-generator-edit-btn');
+      if (genEditBtn) genEditBtn.addEventListener('click', () => enterGeneratorEdit(subscription));
 
       // ---- Jonas hand-off buttons ----
       const woBtn = body.querySelector('#gc-wo-created-btn');
@@ -1931,6 +1933,83 @@
       showDetail(subId);
     } catch (err) {
       console.error('Save contact failed:', err);
+      showErr(err.message);
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
+
+  // ---- Generator make/model + serial (descriptive only — class/tier untouched) ----
+  // Read view: shows class (read-only, sets pricing) + editable make/model + serial.
+  function renderGeneratorRead(subscription) {
+    return `
+      <div class="gc-card-row"><span class="gc-meta-label">Generator</span>
+        <span class="gc-meta-value">${escapeHtml(genClassLabel(subscription.gen_class))} &mdash; ${escapeHtml(subscription.gen_model || 'model n/a')}
+          <button type="button" class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-generator-edit-btn" style="margin-left:6px;">Edit</button></span>
+      </div>
+      <div class="gc-card-row"><span class="gc-meta-label">Serial</span><span class="gc-meta-value">${subscription.gen_serial ? escapeHtml(subscription.gen_serial) : '&mdash; (not on file)'}</span></div>`;
+  }
+
+  function renderGeneratorEdit(subscription) {
+    return `
+      <div class="gc-card-row" style="display:block;">
+        <div class="gc-meta-label" style="margin-bottom:6px;">Generator make/model + serial &mdash; <span style="opacity:0.8;">class/tier (${escapeHtml(genClassLabel(subscription.gen_class))}) sets pricing and isn&rsquo;t edited here.</span></div>
+        <div class="gc-edit-grid">
+          <label class="gc-edit-field gc-edit-full"><span>Make / model</span><input type="text" id="gc-gen-model" class="gc-edit-input" value="${escapeHtml(subscription.gen_model || '')}" placeholder="e.g. Generac Guardian 22 kW"></label>
+          <label class="gc-edit-field gc-edit-full"><span>Serial number</span><input type="text" id="gc-gen-serial" class="gc-edit-input" value="${escapeHtml(subscription.gen_serial || '')}" placeholder="Serial #"></label>
+        </div>
+        <div class="gc-edit-error" id="gc-generator-error" hidden></div>
+        <div class="gc-note-editor-actions">
+          <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-generator-cancel-btn">Cancel</button>
+          <button type="button" class="gc-btn gc-btn-primary gc-btn-sm" id="gc-generator-save-btn">Save changes</button>
+        </div>
+      </div>`;
+  }
+
+  function wireGeneratorEditBtn(subscription) {
+    const editBtn = document.getElementById('gc-generator-edit-btn');
+    if (editBtn) editBtn.addEventListener('click', () => enterGeneratorEdit(subscription));
+  }
+
+  function enterGeneratorEdit(subscription) {
+    const region = document.getElementById('gc-generator-region');
+    if (!region) return;
+    region.innerHTML = renderGeneratorEdit(subscription);
+    const cancelBtn = document.getElementById('gc-generator-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => {
+      region.innerHTML = renderGeneratorRead(subscription);
+      wireGeneratorEditBtn(subscription);
+    });
+    const saveBtn = document.getElementById('gc-generator-save-btn');
+    if (saveBtn) saveBtn.addEventListener('click', () => saveGeneratorEdit(subscription, saveBtn));
+    const first = document.getElementById('gc-gen-model');
+    if (first) first.focus();
+  }
+
+  async function saveGeneratorEdit(subscription, btn) {
+    const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+    const errEl = document.getElementById('gc-generator-error');
+    const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.hidden = false; } };
+    const payload = {
+      gen_model: val('gc-gen-model'),
+      gen_serial: val('gc-gen-serial'),
+      // IDOR guard: require the sub to belong to this customer.
+      customer_id: (subscription.customer && subscription.customer.id) || undefined,
+    };
+    const original = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscription.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showErr(data.error || `HTTP ${r.status}`); if (btn) { btn.disabled = false; btn.textContent = original; } return; }
+      showStatus('Generator details updated.', 'success');
+      await loadSubscriptions();
+      showDetail(subscription.id);
+    } catch (err) {
+      console.error('Save generator failed:', err);
       showErr(err.message);
       if (btn) { btn.disabled = false; btn.textContent = original; }
     }
