@@ -1464,77 +1464,139 @@ router.post('/visits/:id/schedule', async (req, res) => {
 });
 
 
+// Charge a performed add-on IMMEDIATELY on a one-time invoice (flows through
+// invoice.paid -> state-branded receipt + Recent Invoices/Accounting). Add-ons are
+// billed when performed, so there is no "bills at renewal" state. If a legacy
+// add-on already had a pending at-renewal invoice item, it is DELETED first so the
+// charge is collected exactly once (never billed both now and at renewal). Sends
+// its own res. Returns nothing.
+async function performAddonCharge(req, res) {
+  const { id } = req.params;
+  const body = req.body || {};
+  const today = new Date().toISOString().slice(0, 10);
+  const performedDate = body.date_performed || today;
+  const customerId = body.customer_id;
+
+  const { data: addon, error: addonErr } = await supabaseAdmin
+    .from('generator_pending_addons')
+    .select('*, subscription:generator_subscriptions(id, customer_id, stripe_subscription_id, stripe_customer_id, customer:generator_customers(name, email, install_state))')
+    .eq('id', id)
+    .single();
+  if (addonErr) throw addonErr;
+  if (!addon) return res.status(404).json({ error: 'addon not found' });
+  if (addon.status === 'charged') return res.status(400).json({ error: 'addon already charged' });
+  if (addon.status === 'canceled') return res.status(400).json({ error: 'addon is canceled' });
+  if (!addon.amount_cents || addon.amount_cents <= 0) return res.status(400).json({ error: 'no charge amount' });
+  const sub = addon.subscription;
+  if (!sub || !sub.stripe_customer_id || !sub.stripe_subscription_id) {
+    return res.status(400).json({ error: 'no Stripe subscription linked' });
+  }
+  if (customerId && sub.customer_id !== customerId) {
+    return res.status(403).json({ error: 'addon does not belong to that customer' });
+  }
+
+  const stripeCustomerId = sub.stripe_customer_id;
+  const label = (ADDON_CATALOG[addon.addon_type] && ADDON_CATALOG[addon.addon_type].label)
+    || (addon.addon_type || 'add-on').replace(/_/g, ' ');
+  const desc = 'Generator add-on: ' + label;
+
+  // 1. Card check FIRST — if there's no card, don't disturb any existing renewal
+  //    item; just prompt for a card.
+  const pmId = await resolveSavedPaymentMethod(sub.stripe_subscription_id, stripeCustomerId);
+  if (!pmId) {
+    const linkResult = await emailCardUpdateLinkForSub(sub.id);
+    return res.status(402).json({ error: 'no saved card on file', reason: 'no saved card on file', card_update_email_sent: !!(linkResult && linkResult.sent) });
+  }
+
+  // 2. Remove any pending at-renewal invoice item so we never double-bill. If it's
+  //    already on a finalized/paid invoice, it was (or will be) billed at renewal —
+  //    refuse to charge again.
+  if (addon.stripe_invoice_item_id) {
+    try {
+      await stripe.invoiceItems.del(addon.stripe_invoice_item_id);
+    } catch (delErr) {
+      return res.status(409).json({
+        error: 'This add-on is already on an invoice (billed at renewal); not charging again. Use the refund control if needed.',
+        reason: delErr.message,
+      });
+    }
+  }
+
+  // 3. Charge the card on file now via a one-time invoice.
+  let invoice;
+  try {
+    invoice = await stripe.invoices.create({
+      customer: stripeCustomerId,
+      collection_method: 'charge_automatically',
+      default_payment_method: pmId,
+      auto_advance: false,
+      description: desc,
+      metadata: { addon_id: id, addon_type: addon.addon_type, subscription_id: sub.id, performed_date: performedDate },
+    });
+    await stripe.invoiceItems.create({
+      customer: stripeCustomerId,
+      invoice: invoice.id,
+      amount: addon.amount_cents,
+      currency: 'usd',
+      description: desc,
+      metadata: { addon_id: id, addon_type: addon.addon_type, subscription_id: sub.id },
+    });
+    invoice = await stripe.invoices.finalizeInvoice(invoice.id);
+    invoice = await stripe.invoices.pay(invoice.id);
+  } catch (stripeErr) {
+    const reason = (stripeErr && (stripeErr.message || stripeErr.code)) || 'charge failed';
+    if (invoice && invoice.id) { try { await stripe.invoices.voidInvoice(invoice.id); } catch (e) {} }
+    // The renewal item (if any) was deleted above; record the failure + clear the
+    // stale id so a retry charges exactly once.
+    const failNote = (addon.notes ? addon.notes + '\n' : '') + 'Immediate charge failed on ' + today + ': ' + reason;
+    await supabaseAdmin.from('generator_pending_addons')
+      .update({ status: 'failed', stripe_invoice_item_id: null, notes: failNote })
+      .eq('id', id);
+    return res.status(402).json({ error: 'addon charge failed', reason });
+  }
+
+  // 4. Mark charged. (invoice.paid webhook also marks it + sends the state-branded
+  //    receipt; this update is idempotent with it.)
+  const piId = typeof invoice.payment_intent === 'string'
+    ? invoice.payment_intent
+    : (invoice.payment_intent && invoice.payment_intent.id) || null;
+  const { data: updated, error: updErr } = await supabaseAdmin
+    .from('generator_pending_addons')
+    .update({
+      status: 'charged',
+      date_performed: addon.date_performed || performedDate,
+      date_charged: today,
+      stripe_payment_intent_id: piId,
+      stripe_invoice_item_id: null,
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  if (updErr) throw updErr;
+  return res.json({ ok: true, addon: updated, charged_cents: addon.amount_cents, invoice_id: invoice.id });
+}
+
 // POST /api/generator-care/addons/:id/mark-performed
-// Records that a pending add-on was performed during a visit + adds it as an invoice item
-// on the customer's next subscription invoice. Will be charged when subscription renews.
-// Webhooks (invoice.paid / invoice.payment_failed) flip status to charged/failed.
+// Mark a pending add-on performed AND charge the card on file now (add-ons are
+// billed when performed). Office-gated; IDOR via optional customer_id.
 router.post('/addons/:id/mark-performed', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { date_performed } = req.body || {};
-    const today = new Date().toISOString().slice(0, 10);
-    const performedDate = date_performed || today;
-
-    const { data: addon, error: addonErr } = await supabaseAdmin
-      .from('generator_pending_addons')
-      .select('*, subscription:generator_subscriptions(id, stripe_subscription_id, stripe_customer_id, customer:generator_customers(name))')
-      .eq('id', id)
-      .single();
-    if (addonErr) throw addonErr;
-    if (!addon) return res.status(404).json({ error: 'addon not found' });
-
-    if (addon.status === 'performed' || addon.status === 'charged') {
-      return res.status(400).json({ error: 'addon already ' + addon.status });
-    }
-    if (!addon.amount_cents || addon.amount_cents <= 0) {
-      return res.status(400).json({ error: 'no charge amount' });
-    }
-    if (!addon.subscription || !addon.subscription.stripe_customer_id || !addon.subscription.stripe_subscription_id) {
-      return res.status(400).json({ error: 'no Stripe subscription linked' });
-    }
-
-    const customerId = addon.subscription.stripe_customer_id;
-    const subId = addon.subscription.stripe_subscription_id;
-    const label = (addon.addon_type || 'add-on').replace(/_/g, ' ');
-
-    // Create Stripe invoice item attached to subscription's next invoice
-    let item;
-    try {
-      item = await stripe.invoiceItems.create({
-        customer: customerId,
-        subscription: subId,
-        amount: addon.amount_cents,
-        currency: 'usd',
-        description: 'Generator add-on: ' + label,
-        metadata: {
-          addon_id: id,
-          addon_type: addon.addon_type,
-          subscription_id: addon.subscription.id,
-          performed_date: performedDate,
-        },
-      });
-    } catch (stripeErr) {
-      const reason = stripeErr.message || stripeErr.code || 'unknown_error';
-      console.error('[generator-care] invoice item create failed:', stripeErr);
-      return res.status(502).json({ error: 'Stripe invoice item create failed', reason });
-    }
-
-    const { data: updated, error: updErr } = await supabaseAdmin
-      .from('generator_pending_addons')
-      .update({
-        status: 'performed',
-        date_performed: performedDate,
-        stripe_invoice_item_id: item.id,
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    if (updErr) throw updErr;
-
-    res.json({ ok: true, addon: updated, invoice_item_id: item.id });
+    await performAddonCharge(req, res);
   } catch (err) {
     console.error('[generator-care] mark-performed error:', err);
-    res.status(500).json({ error: 'Server error' });
+    if (!res.headersSent) res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/addons/:id/charge-now
+// Collect a legacy "Performed · bills at renewal" add-on NOW: deletes its pending
+// at-renewal invoice item, then charges immediately. Same handler as mark-performed.
+router.post('/addons/:id/charge-now', async (req, res) => {
+  try {
+    await performAddonCharge(req, res);
+  } catch (err) {
+    console.error('[generator-care] addon charge-now error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Server error' });
   }
 });
 
