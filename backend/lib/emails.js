@@ -738,7 +738,7 @@ function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, 
 // "S.E. Bates Electric" for Florida — which Stripe's account-level automatic
 // receipt cannot do. Mirrors what Stripe's receipt provides: company + logo,
 // amount, date, card last-4, what it was for, and a receipt/confirmation number.
-function buildReceiptEmail({ customer, companyState, amountCents, paidDate, cardBrand, cardLast4, description, receiptNumber }) {
+function buildReceiptEmail({ customer, companyState, amountCents, paidDate, cardBrand, cardLast4, description, receiptNumber, lineItems }) {
   const state = (companyState != null) ? companyState : (customer && customer.install_state);
   const company = companyName(state);
   const name = (customer && customer.name) || 'there';
@@ -747,13 +747,23 @@ function buildReceiptEmail({ customer, companyState, amountCents, paidDate, card
   const cardStr = cardLast4 ? `${brandName ? brandName + ' ' : ''}&bull;&bull;&bull;&bull; ${escHtml(cardLast4)}` : '';
   const cardText = cardLast4 ? `${brandName ? brandName + ' ' : ''}**** ${cardLast4}` : '';
 
-  const rows = [
-    ['Amount paid', fmtMoney(amountCents)],
+  // Itemize when the charge has 2+ line items (e.g. a combined add-on charge): list
+  // each item + its amount, then the total. Single-line charges keep the "For" row.
+  const items = Array.isArray(lineItems) ? lineItems.filter((li) => li && li.description) : [];
+  const itemized = items.length >= 2;
+  const tailRows = [
     dateStr ? ['Date', escHtml(dateStr)] : null,
-    description ? ['For', escHtml(description)] : null,
     cardStr ? ['Payment method', cardStr] : null,
     receiptNumber ? ['Receipt #', escHtml(receiptNumber)] : null,
   ].filter(Boolean);
+  const rows = itemized
+    ? items.map((li) => [li.description, fmtMoney(li.amountCents || 0)])
+        .concat([['Amount paid', fmtMoney(amountCents)]])
+        .concat(tailRows)
+    : [
+        ['Amount paid', fmtMoney(amountCents)],
+        description ? ['For', escHtml(description)] : null,
+      ].filter(Boolean).concat(tailRows);
   const rowsHtml = rows.map(([k, v]) =>
     `<tr><td style="${TABLE_LABEL};width:42%;">${escHtml(k)}</td><td style="${TABLE_VALUE}">${v}</td></tr>`
   ).join('');
@@ -770,13 +780,19 @@ function buildReceiptEmail({ customer, companyState, amountCents, paidDate, card
     companyState: state,
   });
 
-  const textRows = [
-    ['Amount paid', fmtMoney(amountCents)],
+  const textTail = [
     dateStr ? ['Date', dateStr] : null,
-    description ? ['For', description] : null,
     cardText ? ['Payment method', cardText] : null,
     receiptNumber ? ['Receipt #', receiptNumber] : null,
   ].filter(Boolean);
+  const textRows = itemized
+    ? items.map((li) => [li.description, fmtMoney(li.amountCents || 0)])
+        .concat([['Amount paid', fmtMoney(amountCents)]])
+        .concat(textTail)
+    : [
+        ['Amount paid', fmtMoney(amountCents)],
+        description ? ['For', description] : null,
+      ].filter(Boolean).concat(textTail);
   const text =
     `Hi ${name},\n\n` +
     `Thanks for your payment -- this is your receipt from ${company} for your Generator Care account.\n\n` +
