@@ -1091,30 +1091,35 @@ router.post('/visits/:id/complete', async (req, res) => {
 
 
 // PATCH /api/generator-care/subscriptions/:id
-// Edit subscription details (currently: next_visit_due, status, notes).
-// When next_visit_due changes, also update the matching scheduled visit row.
+// Edit subscription details: next_visit_due, status, notes, and the descriptive
+// generator make/model + serial (gen_model, gen_serial). Office-gated (router).
+// IDOR: pass customer_id to require the sub to belong to that customer.
+// Deliberately whitelisted — gen_class, plan, price, and fleet are NOT editable
+// here (they determine billing), so passing them has no effect.
 router.patch('/subscriptions/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { next_visit_due, status, notes } = req.body || {};
+    const { next_visit_due, status, notes, gen_model, gen_serial, customer_id } = req.body || {};
 
     // Build update payload (only include fields user actually passed)
     const updates = {};
     if (next_visit_due !== undefined) updates.next_visit_due = next_visit_due || null;
     if (status !== undefined) updates.status = status;
     if (notes !== undefined) updates.notes = notes;
+    // Descriptive generator fields — trim, store null when blanked.
+    if (gen_model !== undefined) updates.gen_model = (gen_model == null ? null : String(gen_model).trim()) || null;
+    if (gen_serial !== undefined) updates.gen_serial = (gen_serial == null ? null : String(gen_serial).trim()) || null;
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'no editable fields provided' });
     }
 
-    // Update the subscription
-    const { data: updated, error: subErr } = await supabaseAdmin
-      .from('generator_subscriptions')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
+    // Update the subscription. The optional customer_id filter is the IDOR guard:
+    // if provided and it doesn't match, 0 rows update -> 404 (no cross-customer edit).
+    let q = supabaseAdmin.from('generator_subscriptions').update(updates).eq('id', id);
+    if (customer_id) q = q.eq('customer_id', customer_id);
+    const { data: updated, error: subErr } = await q.select().maybeSingle();
     if (subErr) throw subErr;
+    if (!updated) return res.status(404).json({ error: 'subscription not found for this customer' });
 
     // If next_visit_due changed, sync the most-recent scheduled visit row to match.
     if (next_visit_due !== undefined && next_visit_due) {
