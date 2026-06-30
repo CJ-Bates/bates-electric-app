@@ -649,67 +649,107 @@
     return `<div class="gc-card"><h3 class="gc-card-h">Service Visits<span class="gc-card-h-count">(${(visits || []).length})</span></h3>${body}</div>`;
   }
 
-  function renderAddonsCard(pending_addons, isCanceled) {
-    const visible = (pending_addons || []).filter(a => a.status !== 'canceled');
-    const headerAction = isCanceled ? '' : `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
-    const header = `<h3 class="gc-card-h"><span>Add-ons<span class="gc-card-h-count">(${visible.length})</span></span>${headerAction}</h3>`;
-    if (visible.length === 0) {
-      const empty = `<div class="gc-meta-label" style="padding:6px 0;">No add-ons yet${isCanceled ? '.' : ' &mdash; click "+ Add Add-on" to add one.'}</div>`;
-      return `<div class="gc-card">${header}${empty}</div>`;
-    }
-    const rows = visible.map(a => {
-      const amtStr = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
-      const label = escapeHtml(addonLabel(a.addon_type));
-      let chip = '', action = '';
-      if (a.status === 'pending') {
-        chip = `<span class="gc-chip gc-chip-pending">Pending</span>`;
-        action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="gc-btn gc-btn-primary gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>
-          <button class="gc-btn gc-btn-icon gc-btn-sm" data-remove-addon="${a.id}" data-label="${label}" title="Remove">&times;</button>
-        </div>`;
-      } else if (a.status === 'performed') {
-        // Performed but not yet billed — collected together for the visit via the
-        // section's "Charge performed add-ons" button. Undo reverts to Pending.
-        chip = `<span class="gc-chip gc-chip-performed">Performed &middot; unbilled</span>`;
-        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>`;
-      } else if (a.status === 'charged') {
-        const refunded = parseTotalRefundedCents(a.notes);
-        const chargedOn = a.date_charged ? ' &middot; ' + escapeHtml(fmtDate(a.date_charged)) : '';
-        if (refunded >= a.amount_cents) {
-          chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
-        } else if (refunded > 0) {
-          chip = `<span class="gc-chip gc-chip-partial">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
-          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${label}">Refund more</button>`;
-        } else {
-          chip = `<span class="gc-chip gc-chip-charged">Charged ${amtStr}${chargedOn}</span>`;
-          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
-        }
-      } else if (a.status === 'failed') {
-        chip = `<span class="gc-chip gc-chip-failed">Failed</span>`;
-        action = `<button class="gc-btn gc-btn-destructive gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
-      } else {
-        chip = `<span class="gc-chip">${escapeHtml(a.status)}</span>`;
-      }
-      const visibleNotes = stripRefundLines(a.notes);
-      const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
-      return `<div class="gc-card-row">
-        <div>
-          <div class="gc-meta-value">${label} ${amtStr ? `<span style="color:#6b7280;font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
-          <div style="margin-top:4px;">${chip}</div>
-          ${noteHtml}
-        </div>
-        <div>${action}</div>
+  // Recurring add-on types available for a gen class (mirrors the catalog flags;
+  // coolant top-off is liquid-cooled only).
+  const RECURRING_ADDONS = [
+    { type: 'exterior_wash', liquidOnly: false },
+    { type: 'ats_outage_combined', liquidOnly: false },
+    { type: 'coolant_topoff', liquidOnly: true },
+  ];
+  function availableRecurringTypes(genClass) {
+    const liquid = genClass === 'liquid_22_38' || genClass === 'liquid_48_150';
+    return RECURRING_ADDONS.filter(r => !r.liquidOnly || liquid).map(r => r.type);
+  }
+
+  // Render one add-on row (used for the current cycle + history).
+  function addonRowHtml(a) {
+    const amtStr = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
+    const label = escapeHtml(addonLabel(a.addon_type));
+    let chip = '', action = '';
+    if (a.status === 'pending') {
+      chip = `<span class="gc-chip gc-chip-pending">Pending</span>`;
+      action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="gc-btn gc-btn-primary gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>
+        <button class="gc-btn gc-btn-icon gc-btn-sm" data-remove-addon="${a.id}" data-label="${label}" title="Remove">&times;</button>
       </div>`;
-    }).join('');
-    // One combined "charge performed add-ons" action for the whole visit.
-    const performedUnbilled = visible.filter(a => a.status === 'performed' && a.amount_cents > 0);
+    } else if (a.status === 'performed') {
+      chip = `<span class="gc-chip gc-chip-performed">Performed &middot; unbilled</span>`;
+      action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>`;
+    } else if (a.status === 'charged') {
+      const refunded = parseTotalRefundedCents(a.notes);
+      const chargedOn = a.date_charged ? ' &middot; ' + escapeHtml(fmtDate(a.date_charged)) : '';
+      if (refunded >= a.amount_cents) {
+        chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
+      } else if (refunded > 0) {
+        chip = `<span class="gc-chip gc-chip-partial">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
+        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${label}">Refund more</button>`;
+      } else {
+        chip = `<span class="gc-chip gc-chip-charged">Charged ${amtStr}${chargedOn}</span>`;
+        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
+      }
+    } else if (a.status === 'failed') {
+      chip = `<span class="gc-chip gc-chip-failed">Failed</span>`;
+      action = `<button class="gc-btn gc-btn-destructive gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
+    } else {
+      chip = `<span class="gc-chip">${escapeHtml(a.status)}</span>`;
+    }
+    const visibleNotes = stripRefundLines(a.notes);
+    const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
+    return `<div class="gc-card-row">
+      <div>
+        <div class="gc-meta-value">${label} ${amtStr ? `<span style="color:#6b7280;font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
+        <div style="margin-top:4px;">${chip}</div>
+        ${noteHtml}
+      </div>
+      <div>${action}</div>
+    </div>`;
+  }
+
+  function renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) {
+    const visible = (pending_addons || []).filter(a => a.status !== 'canceled');
+    // Current cycle = add-ons on the open visit; history = charged add-ons from
+    // prior cycles (kept, shown collapsed). Active add-ons always sit in current.
+    const history = visible.filter(a => a.status === 'charged' && (!openVisitId || a.service_visit_id !== openVisitId));
+    const histSet = new Set(history);
+    const current = visible.filter(a => !histSet.has(a));
+
+    const headerAction = isCanceled ? '' : `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
+    const header = `<h3 class="gc-card-h"><span>Add-ons<span class="gc-card-h-count">(${current.length})</span></span>${headerAction}</h3>`;
+
+    const currentRows = current.length
+      ? current.map(addonRowHtml).join('')
+      : `<div class="gc-meta-label" style="padding:6px 0;">No add-ons this cycle${isCanceled ? '.' : ' &mdash; click "+ Add Add-on" to add one.'}</div>`;
+
+    // One combined "charge performed add-ons" action for the current visit.
+    const performedUnbilled = current.filter(a => a.status === 'performed' && a.amount_cents > 0);
     const performedTotal = performedUnbilled.reduce((s, a) => s + a.amount_cents, 0);
     const batchBtn = (!isCanceled && performedUnbilled.length)
       ? `<div class="gc-card-row" style="justify-content:flex-end;border-top:1px solid #eef0f3;padding-top:10px;margin-top:4px;">
           <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-charge-addons-btn">Charge performed add-ons ($${(performedTotal/100).toFixed(2)})</button>
         </div>`
       : '';
-    return `<div class="gc-card">${header}${rows}${batchBtn}</div>`;
+
+    // Standing add-ons editor (which recurring types auto-return each visit).
+    const standing = new Set((subscription && subscription.standing_addons) || []);
+    const recurringAvail = availableRecurringTypes(subscription && subscription.gen_class);
+    const standingHtml = (!isCanceled && recurringAvail.length)
+      ? `<div style="border-top:1px solid #eef0f3;margin-top:10px;padding-top:8px;">
+          <div class="gc-meta-label" style="margin-bottom:6px;">Standing add-ons <span style="opacity:0.75;font-weight:400;">&mdash; auto-return as Pending each visit</span></div>
+          ${recurringAvail.map(t => `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.88rem;cursor:pointer;">
+            <input type="checkbox" class="gc-standing-cb" data-type="${escapeHtml(t)}"${standing.has(t) ? ' checked' : ''} />
+            <span>${escapeHtml(addonLabel(t))}</span>
+          </label>`).join('')}
+        </div>`
+      : '';
+
+    const historyHtml = history.length
+      ? `<details style="border-top:1px solid #eef0f3;margin-top:10px;padding-top:8px;">
+          <summary style="cursor:pointer;font-size:0.85rem;color:#6b7280;font-weight:600;">Past visits / history (${history.length})</summary>
+          <div style="margin-top:6px;">${history.map(addonRowHtml).join('')}</div>
+        </details>`
+      : '';
+
+    return `<div class="gc-card">${header}${currentRows}${batchBtn}${standingHtml}${historyHtml}</div>`;
   }
 
   function renderChargesCard(adhoc_charges, isCanceled) {
@@ -809,13 +849,21 @@
       title.textContent = c.name || 'Customer';
       const isCanceled = subscription.status === 'canceled';
 
+      // Current visit cycle = the earliest open (not-completed, not-canceled)
+      // regular-service visit; its add-ons are the actionable current-cycle set,
+      // others are history.
+      const openVisit = (visits || [])
+        .filter(v => v.visit_type === 'regular_service' && !v.completed_date && v.status !== 'canceled')
+        .sort((a, b) => String(a.scheduled_date || '').localeCompare(String(b.scheduled_date || '')))[0];
+      const openVisitId = openVisit ? openVisit.id : null;
+
       body.innerHTML =
         renderHeaderBar(c, subscription) +
         renderContactCard(c) +
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons) +
         renderVisitsCard(visits, subscription) +
-        renderAddonsCard(pending_addons, isCanceled) +
+        renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) +
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
         renderDangerZone(isCanceled, subscription);
@@ -835,6 +883,9 @@
       });
       const chargeAddonsBtn = body.querySelector('#gc-charge-addons-btn');
       if (chargeAddonsBtn) chargeAddonsBtn.addEventListener('click', () => chargePerformedAddons(id, c.id, (pending_addons || []).filter(a => a.status === 'performed' && a.amount_cents > 0)));
+      body.querySelectorAll('.gc-standing-cb').forEach(cb => {
+        cb.addEventListener('change', () => saveStandingAddons(id, c.id));
+      });
       body.querySelectorAll('[data-remove-addon]').forEach(btn => {
         btn.addEventListener('click', () => removeAddon(btn.dataset.removeAddon, btn.dataset.label, id));
       });
@@ -1015,6 +1066,26 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Charge performed add-ons failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  // Save which recurring add-ons are "standing" (auto-return each visit) for this
+  // customer. Reads the current checkbox state and PATCHes the set.
+  async function saveStandingAddons(subscriptionId, customerId) {
+    const checked = Array.from(document.querySelectorAll('.gc-standing-cb'))
+      .filter(cb => cb.checked).map(cb => cb.dataset.type);
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/standing-addons`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ standing_addons: checked, customer_id: customerId }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Couldn't save standing add-ons: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus('Standing add-ons updated.', 'success');
+    } catch (err) {
+      console.error('Save standing add-ons failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
