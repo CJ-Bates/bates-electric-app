@@ -223,15 +223,16 @@ async function handleSubscriptionCreated(subscription) {
     .single();
   if (subErr) throw new Error('insert subscription: ' + subErr.message);
 
-  // 5. First scheduled service visit
-  await supabase.from('generator_service_visits').insert({
+  // 5. First scheduled service visit (capture its id to tie add-ons to this cycle)
+  const { data: firstVisitRow } = await supabase.from('generator_service_visits').insert({
     subscription_id: sub.id,
     visit_type: 'regular_service',
     scheduled_date: nextStr,
     status: 'tentative',
-  });
+  }).select('id').single();
+  const firstVisitId = firstVisitRow ? firstVisitRow.id : null;
 
-  // 6. Pending add-ons (charged later off saved card when performed)
+  // 6. Pending add-ons (billed when performed). Tied to the first visit cycle.
   let onDemand = [];
   if (meta.on_demand_addons) {
     try { onDemand = JSON.parse(meta.on_demand_addons); } catch {}
@@ -248,8 +249,19 @@ async function handleSubscriptionCreated(subscription) {
       stripe_price_id: item.price_id,
       amount_cents: amountCents,
       status: 'pending',
+      service_visit_id: firstVisitId,
     });
   }
+
+  // 6b. Seed the standing (auto-return) set from the RECURRING add-ons chosen at
+  // signup, so they reappear each cycle. (Editable later in the dashboard.)
+  const standing = onDemand
+    .map((item) => item.addon)
+    .filter((t) => catalog.isRecurringAddon(t));
+  await supabase
+    .from('generator_subscriptions')
+    .update({ standing_addons: Array.from(new Set(standing)) })
+    .eq('id', sub.id);
 
   // Welcome email (non-blocking — failures shouldn't break the webhook).
   sendWelcomeEmail({

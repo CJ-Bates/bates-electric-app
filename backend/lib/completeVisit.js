@@ -14,9 +14,45 @@
 
 const { supabaseAdmin } = require('./supabase');
 const { sendEmail, buildVisitCompletedEmail } = require('./emails');
+const catalog = require('./generator-catalog');
 
 function planLabelFor(plan) {
   return plan === 'semi_annual' ? 'Semi-Annual' : (plan === 'annual' ? 'Annual' : plan);
+}
+
+// Insert fresh PENDING rows for a subscription's standing recurring add-ons on a
+// visit cycle (the new visit). Only recurring-flagged types with a price for the
+// gen class. Idempotent per (visit, type): skips a type already on that visit.
+// NEVER charges — the office still marks performed + bills via the batch flow.
+// Returns the number inserted. Used by the roll-forward and the one-time seed.
+async function generateStandingAddons({ subscriptionId, genClass, standingAddons, serviceVisitId }) {
+  if (!serviceVisitId || !Array.isArray(standingAddons) || !standingAddons.length) return 0;
+  const types = standingAddons.filter((t) => catalog.isRecurringAddon(t) && catalog.lookupAddonPrice(t, genClass));
+  if (!types.length) return 0;
+
+  const { data: existing } = await supabaseAdmin
+    .from('generator_pending_addons')
+    .select('addon_type, status')
+    .eq('service_visit_id', serviceVisitId);
+  const present = new Set((existing || []).filter((a) => a.status !== 'canceled').map((a) => a.addon_type));
+
+  const toInsert = types
+    .filter((t) => !present.has(t))
+    .map((t) => {
+      const price = catalog.lookupAddonPrice(t, genClass);
+      return {
+        subscription_id: subscriptionId,
+        service_visit_id: serviceVisitId,
+        addon_type: t,
+        stripe_price_id: price.price_id,
+        amount_cents: price.amount_cents,
+        status: 'pending',
+      };
+    });
+  if (!toInsert.length) return 0;
+  const { error } = await supabaseAdmin.from('generator_pending_addons').insert(toInsert);
+  if (error) throw error;
+  return toInsert.length;
 }
 
 // Next visit-due on the plan's fixed cadence grid (signup + k*interval), so it
@@ -62,7 +98,7 @@ async function completeServiceVisit(opts) {
     .from('generator_service_visits')
     .update(updatePayload)
     .eq('id', visitId)
-    .select('*, subscription:generator_subscriptions(id, plan, signup_date, next_visit_due, customer:generator_customers(name, email, install_state))')
+    .select('*, subscription:generator_subscriptions(id, plan, gen_class, standing_addons, signup_date, next_visit_due, customer:generator_customers(name, email, install_state))')
     .single();
   if (updErr) throw updErr;
 
@@ -86,12 +122,30 @@ async function completeServiceVisit(opts) {
       .eq('id', sub.id);
 
     // Unassigned on purpose — the office schedules + dispatches the next one.
-    await supabaseAdmin.from('generator_service_visits').insert({
-      subscription_id: sub.id,
-      visit_type: 'regular_service',
-      scheduled_date: nextStr,
-      status: 'tentative',
-    });
+    const { data: newVisit, error: nvErr } = await supabaseAdmin
+      .from('generator_service_visits')
+      .insert({
+        subscription_id: sub.id,
+        visit_type: 'regular_service',
+        scheduled_date: nextStr,
+        status: 'tentative',
+      })
+      .select('id')
+      .single();
+    if (nvErr) throw nvErr;
+
+    // Auto-return the customer's STANDING recurring add-ons as Pending for the new
+    // cycle (never charged). As-needed add-ons are not regenerated.
+    try {
+      await generateStandingAddons({
+        subscriptionId: sub.id,
+        genClass: sub.gen_class,
+        standingAddons: sub.standing_addons,
+        serviceVisitId: newVisit.id,
+      });
+    } catch (e) {
+      console.error('[completeVisit] generateStandingAddons failed:', e && e.message);
+    }
   }
 
   // 3. Customer completion email — uses the CUSTOMER-VISIBLE note only.
@@ -114,4 +168,4 @@ async function completeServiceVisit(opts) {
   return { visit: updated, nextVisitDate: nextStr };
 }
 
-module.exports = { completeServiceVisit, gridAnchoredNextDue, planLabelFor };
+module.exports = { completeServiceVisit, gridAnchoredNextDue, planLabelFor, generateStandingAddons };

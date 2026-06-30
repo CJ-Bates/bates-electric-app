@@ -1860,51 +1860,10 @@ router.post('/subscriptions/:id/cancel', async (req, res) => {
 });
 
 
-// Hardcoded catalog of one-time add-ons by gen class.
-// Mirrors the catalog in bates-generator/netlify/functions/create-checkout.js.
-// Live-mode price IDs as of the 2026-06-08 Stripe cutover.
-const ADDON_CATALOG = {
-  battery_replacement: {
-    label: 'Battery Replacement',
-    prices: {
-      air_cooled:    { price_id: 'price_1Tg78FBbX7QhpMgbGVRxRJNo', amount_cents: 16500 },
-      liquid_22_38:  { price_id: 'price_1Tg78EBbX7QhpMgbFvIrYuD1', amount_cents: 23500 },
-      liquid_48_150: { price_id: 'price_1Tg78EBbX7QhpMgbOhRdCUUe', amount_cents: 26500 },
-    },
-  },
-  exterior_wash: {
-    label: 'Exterior Wash & Interior Blow-Out',
-    prices: { all: { price_id: 'price_1Tg78FBbX7QhpMgbzrM2AE2n', amount_cents: 8500 } },
-  },
-  coolant_flush: {
-    label: 'Coolant System Flush',
-    prices: {
-      liquid_22_38:  { price_id: 'price_1Tg78DBbX7QhpMgbhESS9Wyp', amount_cents: 59500 },
-      liquid_48_150: { price_id: 'price_1Tg78DBbX7QhpMgb7VtP2hGx', amount_cents: 69500 },
-    },
-  },
-  coolant_topoff: {
-    label: 'Coolant Top-Off Service',
-    prices: {
-      // Same Stripe price reused for both liquid tiers; service cost
-      // doesn't vary by size. No air_cooled entry: air-cooled units
-      // don't get coolant service.
-      liquid_22_38:  { price_id: 'price_1Tg78CBbX7QhpMgbXptyAaje', amount_cents: 9500 },
-      liquid_48_150: { price_id: 'price_1Tg78CBbX7QhpMgbXptyAaje', amount_cents: 9500 },
-    },
-  },
-  ats_outage_combined: {
-    label: 'Transfer Switch Inspection & Simulated Outage Test',
-    prices: { all: { price_id: 'price_1Tg78DBbX7QhpMgby14G5PiY', amount_cents: 11000 } },
-  },
-};
-
-function lookupAddonPrice(addonType, genClass) {
-  const entry = ADDON_CATALOG[addonType];
-  if (!entry) return null;
-  if (entry.prices.all) return entry.prices.all;
-  return entry.prices[genClass] || null;
-}
+// Add-on catalog (one-time/per-visit add-ons + their recurring flag) now lives in
+// the shared lib/generator-catalog.js so the roll-forward (lib/completeVisit.js)
+// can use it too.
+const { ADDON_CATALOG, lookupAddonPrice } = catalog;
 
 // GET /api/generator-care/subscriptions/:id/available-addons
 // Lists which add-ons can be added for this customer's gen class.
@@ -1936,6 +1895,21 @@ router.get('/subscriptions/:id/available-addons', async (req, res) => {
 // POST /api/generator-care/subscriptions/:id/add-addon
 // Add a new pending add-on to an existing subscription mid-cycle.
 // Body: { addon_type }
+// The current OPEN visit a new/active add-on belongs to (the cycle). Earliest
+// not-completed, not-canceled visit; null if none.
+async function getOpenVisitId(subscriptionId) {
+  const { data } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id')
+    .eq('subscription_id', subscriptionId)
+    .is('completed_date', null)
+    .neq('status', 'canceled')
+    .order('scheduled_date', { ascending: true, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? data.id : null;
+}
+
 router.post('/subscriptions/:id/add-addon', async (req, res) => {
   try {
     const { id } = req.params;
@@ -1958,6 +1932,9 @@ router.post('/subscriptions/:id/add-addon', async (req, res) => {
       return res.status(400).json({ error: 'add-on not available for this gen class', addon_type, gen_class: sub.gen_class });
     }
 
+    // Belongs to the current cycle (the open visit).
+    const serviceVisitId = await getOpenVisitId(id);
+
     const { data: inserted, error: insErr } = await supabaseAdmin
       .from('generator_pending_addons')
       .insert({
@@ -1966,6 +1943,7 @@ router.post('/subscriptions/:id/add-addon', async (req, res) => {
         stripe_price_id: price.price_id,
         amount_cents: price.amount_cents,
         status: 'pending',
+        service_visit_id: serviceVisitId,
       })
       .select()
       .single();
@@ -1974,6 +1952,68 @@ router.post('/subscriptions/:id/add-addon', async (req, res) => {
     res.json({ ok: true, addon: inserted });
   } catch (err) {
     console.error('[generator-care] add-addon error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/generator-care/subscriptions/:id/standing-addons
+// The customer's standing (auto-return every visit) recurring add-ons + the
+// recurring types available for their gen class (for the editor).
+router.get('/subscriptions/:id/standing-addons', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: sub, error } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, gen_class, standing_addons')
+      .eq('id', id)
+      .single();
+    if (error) throw error;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    const available = catalog.recurringAddonTypes()
+      .filter((t) => catalog.lookupAddonPrice(t, sub.gen_class))
+      .map((t) => ({ addon_type: t, label: catalog.ADDON_CATALOG[t].label, amount_cents: catalog.lookupAddonPrice(t, sub.gen_class).amount_cents }));
+    res.json({ ok: true, standing_addons: sub.standing_addons || [], available_recurring: available });
+  } catch (err) {
+    console.error('[generator-care] get standing-addons error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /api/generator-care/subscriptions/:id/standing-addons
+// Body: { standing_addons: [addon_type, ...] }. Sets which recurring add-ons
+// auto-return each cycle. Only recurring types available for the gen class are
+// kept. Office-gated; optional customer_id IDOR guard.
+router.patch('/subscriptions/:id/standing-addons', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    if (!Array.isArray(body.standing_addons)) {
+      return res.status(400).json({ error: 'standing_addons (array) required' });
+    }
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, customer_id, gen_class')
+      .eq('id', id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (body.customer_id && sub.customer_id !== body.customer_id) {
+      return res.status(403).json({ error: 'subscription does not belong to that customer' });
+    }
+    // Keep only recurring types valid for this gen class; de-dupe.
+    const cleaned = Array.from(new Set(
+      body.standing_addons.filter((t) => catalog.isRecurringAddon(t) && catalog.lookupAddonPrice(t, sub.gen_class))
+    ));
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .update({ standing_addons: cleaned })
+      .eq('id', id)
+      .select('id, standing_addons')
+      .single();
+    if (updErr) throw updErr;
+    res.json({ ok: true, standing_addons: updated.standing_addons || [] });
+  } catch (err) {
+    console.error('[generator-care] patch standing-addons error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

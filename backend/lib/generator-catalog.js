@@ -73,6 +73,71 @@ function annualPriceCents(genClass, plan, hasFleet) {
   return planYearly + fleetYearly;
 }
 
+// One-time / per-visit add-ons by gen class. Mirrors the catalog in
+// bates-generator/netlify/functions/create-checkout.js. Live-mode price IDs as of
+// the 2026-06-08 Stripe cutover.
+//   recurring: true  -> a STANDING add-on that auto-returns as Pending each visit
+//                       cycle (every-visit maintenance).
+//   recurring: false -> as-needed; added per-visit via "+ Add Add-on" only.
+// Fleet Monitoring is the recurring SUBSCRIPTION item (FLEET_CATALOG), separate.
+const ADDON_CATALOG = {
+  battery_replacement: {
+    label: 'Battery Replacement',
+    recurring: false,
+    prices: {
+      air_cooled:    { price_id: 'price_1Tg78FBbX7QhpMgbGVRxRJNo', amount_cents: 16500 },
+      liquid_22_38:  { price_id: 'price_1Tg78EBbX7QhpMgbFvIrYuD1', amount_cents: 23500 },
+      liquid_48_150: { price_id: 'price_1Tg78EBbX7QhpMgbOhRdCUUe', amount_cents: 26500 },
+    },
+  },
+  exterior_wash: {
+    label: 'Exterior Wash & Interior Blow-Out',
+    recurring: true,
+    prices: { all: { price_id: 'price_1Tg78FBbX7QhpMgbzrM2AE2n', amount_cents: 8500 } },
+  },
+  coolant_flush: {
+    label: 'Coolant System Flush',
+    recurring: false,
+    prices: {
+      liquid_22_38:  { price_id: 'price_1Tg78DBbX7QhpMgbhESS9Wyp', amount_cents: 59500 },
+      liquid_48_150: { price_id: 'price_1Tg78DBbX7QhpMgb7VtP2hGx', amount_cents: 69500 },
+    },
+  },
+  coolant_topoff: {
+    label: 'Coolant Top-Off Service',
+    recurring: true,
+    prices: {
+      // Same Stripe price reused for both liquid tiers; service cost doesn't vary by
+      // size. No air_cooled entry: air-cooled units don't get coolant service.
+      liquid_22_38:  { price_id: 'price_1Tg78CBbX7QhpMgbXptyAaje', amount_cents: 9500 },
+      liquid_48_150: { price_id: 'price_1Tg78CBbX7QhpMgbXptyAaje', amount_cents: 9500 },
+    },
+  },
+  ats_outage_combined: {
+    label: 'Transfer Switch Inspection & Simulated Outage Test',
+    recurring: true,
+    prices: { all: { price_id: 'price_1Tg78DBbX7QhpMgby14G5PiY', amount_cents: 11000 } },
+  },
+};
+
+// Price (price_id + amount_cents) for an add-on at a gen class, or null if N/A.
+function lookupAddonPrice(addonType, genClass) {
+  const entry = ADDON_CATALOG[addonType];
+  if (!entry) return null;
+  if (entry.prices.all) return entry.prices.all;
+  return entry.prices[genClass] || null;
+}
+
+function isRecurringAddon(addonType) {
+  const e = ADDON_CATALOG[addonType];
+  return !!(e && e.recurring);
+}
+
+// All add-on types flagged recurring (the auto-return candidates).
+function recurringAddonTypes() {
+  return Object.keys(ADDON_CATALOG).filter((t) => ADDON_CATALOG[t].recurring);
+}
+
 module.exports = {
   SUBSCRIPTION_CATALOG,
   FLEET_CATALOG,
@@ -83,4 +148,8 @@ module.exports = {
   fleetForPriceId,
   isFleetPriceId,
   annualPriceCents,
+  ADDON_CATALOG,
+  lookupAddonPrice,
+  isRecurringAddon,
+  recurringAddonTypes,
 };
