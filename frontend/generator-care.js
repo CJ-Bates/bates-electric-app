@@ -668,13 +668,10 @@
           <button class="gc-btn gc-btn-icon gc-btn-sm" data-remove-addon="${a.id}" data-label="${label}" title="Remove">&times;</button>
         </div>`;
       } else if (a.status === 'performed') {
-        // Legacy state (deferred to renewal). "Charge now" collects it immediately
-        // and removes the pending renewal item so it isn't billed twice.
-        chip = `<span class="gc-chip gc-chip-performed">Performed &middot; bills at renewal</span>`;
-        action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="gc-btn gc-btn-primary gc-btn-sm" data-charge-now="${a.id}" data-amount="${amtStr}" data-label="${label}">Charge now</button>
-          <button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>
-        </div>`;
+        // Performed but not yet billed — collected together for the visit via the
+        // section's "Charge performed add-ons" button. Undo reverts to Pending.
+        chip = `<span class="gc-chip gc-chip-performed">Performed &middot; unbilled</span>`;
+        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>`;
       } else if (a.status === 'charged') {
         const refunded = parseTotalRefundedCents(a.notes);
         const chargedOn = a.date_charged ? ' &middot; ' + escapeHtml(fmtDate(a.date_charged)) : '';
@@ -704,7 +701,15 @@
         <div>${action}</div>
       </div>`;
     }).join('');
-    return `<div class="gc-card">${header}${rows}</div>`;
+    // One combined "charge performed add-ons" action for the whole visit.
+    const performedUnbilled = visible.filter(a => a.status === 'performed' && a.amount_cents > 0);
+    const performedTotal = performedUnbilled.reduce((s, a) => s + a.amount_cents, 0);
+    const batchBtn = (!isCanceled && performedUnbilled.length)
+      ? `<div class="gc-card-row" style="justify-content:flex-end;border-top:1px solid #eef0f3;padding-top:10px;margin-top:4px;">
+          <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-charge-addons-btn">Charge performed add-ons ($${(performedTotal/100).toFixed(2)})</button>
+        </div>`
+      : '';
+    return `<div class="gc-card">${header}${rows}${batchBtn}</div>`;
   }
 
   function renderChargesCard(adhoc_charges, isCanceled) {
@@ -828,9 +833,8 @@
       body.querySelectorAll('[data-mark-performed]').forEach(btn => {
         btn.addEventListener('click', () => markPerformed(btn.dataset.markPerformed, btn.dataset.amount, btn.dataset.label, id));
       });
-      body.querySelectorAll('[data-charge-now]').forEach(btn => {
-        btn.addEventListener('click', () => chargeNowAddon(btn.dataset.chargeNow, btn.dataset.amount, btn.dataset.label, id));
-      });
+      const chargeAddonsBtn = body.querySelector('#gc-charge-addons-btn');
+      if (chargeAddonsBtn) chargeAddonsBtn.addEventListener('click', () => chargePerformedAddons(id, c.id, (pending_addons || []).filter(a => a.status === 'performed' && a.amount_cents > 0)));
       body.querySelectorAll('[data-remove-addon]').forEach(btn => {
         btn.addEventListener('click', () => removeAddon(btn.dataset.removeAddon, btn.dataset.label, id));
       });
@@ -956,56 +960,67 @@
     }
   }
 
-  // Mark a pending add-on performed AND charge it now (add-ons bill when performed).
+  // Mark a pending add-on PERFORMED (unbilled) — does NOT charge. Performed add-ons
+  // are billed together for the visit via "Charge performed add-ons".
   async function markPerformed(addonId, amount, label, subscriptionId) {
     const today = new Date().toISOString().slice(0, 10);
     const res = await openPrompt({
       title: `Mark "${label}" performed`,
-      message: `Charges ${amount} to the card on file now and sends a receipt. Confirm the date performed.`,
+      message: 'Marks it performed — does NOT charge. Bill it together with the other performed add-ons using "Charge performed add-ons."',
       fields: [{ name: 'date', label: 'Date performed', type: 'date', value: today, required: true }],
-      confirmText: `Charge ${amount} now`,
+      confirmText: 'Mark performed',
     });
     if (res === null) return;
     const performedDate = (res.date || '').trim() || today;
-    await chargeAddon(addonId, subscriptionId, { date_performed: performedDate }, `${label} performed and charged.`);
-  }
-
-  // Collect a legacy "Performed · bills at renewal" add-on now (removes the pending
-  // renewal item so it isn't billed twice).
-  async function chargeNowAddon(addonId, amount, label, subscriptionId) {
-    if (!await openConfirm({
-      title: `Charge "${label}" now?`,
-      message: `Charges ${amount} to the card on file now and removes the at-renewal charge so it isn't billed twice. Sends a receipt.`,
-      confirmText: `Charge ${amount} now`,
-    })) return;
-    await chargeAddon(addonId, subscriptionId, {}, `${label} charged.`);
-  }
-
-  // Shared POST for both flows -> /charge-now (immediate, no double-bill).
-  async function chargeAddon(addonId, subscriptionId, extraBody, successMsg) {
     try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/charge-now`, {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/mark-performed`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(extraBody || {}),
+        body: JSON.stringify({ date_performed: performedDate }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Could not charge: ${reason}`, 'error');
-      } else {
-        showStatus(successMsg, 'success');
-      }
+      if (!r.ok) { showStatus(`Could not mark performed: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(`${label} marked performed (unbilled).`, 'success');
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
-      console.error('Charge add-on failed:', err);
+      console.error('Mark performed failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  // Charge ALL performed-but-unbilled add-ons for the visit in ONE combined,
+  // itemized transaction (one charge, one receipt).
+  async function chargePerformedAddons(subscriptionId, customerId, performedAddons) {
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    const list = (performedAddons || []).filter(a => a.amount_cents > 0);
+    if (!list.length) { showStatus('No performed add-ons to charge.', 'info'); return; }
+    const total = list.reduce((s, a) => s + a.amount_cents, 0);
+    const items = list.map(a => `${addonLabel(a.addon_type)} (${money(a.amount_cents)})`).join(', ');
+    if (!await openConfirm({
+      title: 'Charge performed add-ons?',
+      message: `Charge ${money(total)} to the card on file for: ${items}? This is one charge with one itemized receipt.`,
+      confirmText: `Charge ${money(total)}`,
+    })) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/charge-performed-addons`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_id: customerId }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Could not charge: ${data.reason || data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(`Charged ${money(data.total_cents)} for ${data.charged_count} add-on${data.charged_count === 1 ? '' : 's'}.`, 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Charge performed add-ons failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
 
   async function unmarkPerformed(addonId, subscriptionId) {
-    if (!await openConfirm({ title: 'Undo performed?', message: 'This removes it from the upcoming invoice. Only works before the invoice is finalized.', confirmText: 'Undo' })) return;
+    if (!await openConfirm({ title: 'Undo performed?', message: 'Reverts this add-on to Pending (it has not been charged).', confirmText: 'Undo' })) return;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/addons/${addonId}/unmark-performed`, {
         method: 'POST',

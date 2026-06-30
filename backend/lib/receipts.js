@@ -56,10 +56,14 @@ async function sendReceiptEmail(invoice) {
       console.error('[receipt-email] charge lookup failed:', e && e.message);
     }
 
-    // Description from invoice line items (e.g. "Generator Care — Annual" / "Add-on: …").
-    const lineDescs = ((invoice.lines && invoice.lines.data) || [])
-      .map((l) => l.description).filter(Boolean);
-    const description = lineDescs.length ? lineDescs.join('; ') : 'Generator Care';
+    // Line items (e.g. "Generator Care — Annual", or one row per add-on on a
+    // combined charge). lineItems drives itemized receipts; description is the
+    // single-line fallback.
+    const invoiceLines = (invoice.lines && invoice.lines.data) || [];
+    const lineItems = invoiceLines
+      .filter((l) => l && l.description)
+      .map((l) => ({ description: l.description, amountCents: typeof l.amount === 'number' ? l.amount : 0 }));
+    const description = lineItems.length ? lineItems.map((li) => li.description).join('; ') : 'Generator Care';
     const receiptNumber = invoice.number || invoice.receipt_number || invoice.id || null;
 
     const { subject, html, text } = buildReceiptEmail({
@@ -71,6 +75,7 @@ async function sendReceiptEmail(invoice) {
       cardLast4,
       description,
       receiptNumber,
+      lineItems,
     });
     return sendEmail({ to: customer.email, subject, html, text, logTag: '[receipt-email]', companyState: customer.install_state });
   } catch (e) {
