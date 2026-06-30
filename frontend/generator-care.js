@@ -84,6 +84,19 @@
     ats_outage_combined: 'Transfer Switch Inspection & Simulated Outage Test',
   };
 
+  // Generator class / kW pricing tiers — values are the catalog gen_class keys
+  // (the backend resolves the Stripe price from gen_class + cadence). Used by the
+  // "Change tier" picker.
+  const TIER_OPTIONS = [
+    { value: 'air_cooled',    label: 'Air Cooled (7–28 kW)' },
+    { value: 'liquid_22_38',  label: 'Liquid Cooled (22–45 kW)' },
+    { value: 'liquid_48_150', label: 'Liquid Cooled (48–150 kW)' },
+  ];
+  const PLAN_OPTIONS = [
+    { value: 'annual', label: 'Annual' },
+    { value: 'semi_annual', label: 'Semi-Annual (every 6 months)' },
+  ];
+
   // ---- Role check (must be office) ----
   async function checkRole() {
     try {
@@ -457,6 +470,7 @@
     const accountActions = isCanceled ? '' : `
       <div class="gc-card-actions">
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-change-plan-btn" data-plan="${escapeHtml(subscription.plan)}" data-genclass="${escapeHtml(subscription.gen_class)}">Change plan</button>
+        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-change-tier-btn">Change tier</button>
         <span id="gc-fleet-action"></span>
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-welcome-btn">Resend Welcome</button>
         <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
@@ -858,6 +872,9 @@
 
       const genEditBtn = body.querySelector('#gc-generator-edit-btn');
       if (genEditBtn) genEditBtn.addEventListener('click', () => enterGeneratorEdit(subscription));
+
+      const changeTierBtn = body.querySelector('#gc-change-tier-btn');
+      if (changeTierBtn) changeTierBtn.addEventListener('click', () => changeTier(subscription));
 
       // ---- Jonas hand-off buttons ----
       const woBtn = body.querySelector('#gc-wo-created-btn');
@@ -1707,6 +1724,87 @@
     } catch (e) {
       console.error('remove-fleet failed:', e);
       showStatus(`Couldn't remove Fleet Monitoring: ${e.message}`, 'error');
+    }
+  }
+
+  // ---- Change generator class / pricing tier (prorate the difference now) ----
+  // Pick class + cadence -> preview the exact prorated charge/credit -> confirm ->
+  // apply with the SAME pinned proration_date so the charge equals the preview.
+  async function changeTier(subscription) {
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    const customerId = (subscription.customer && subscription.customer.id) || undefined;
+
+    // 1. Pick the target class + cadence (prefilled to current).
+    const picked = await openPrompt({
+      title: 'Change generator class / tier',
+      message: 'Sets the pricing tier. The difference for the rest of the current period is prorated now. Confirm the corrected tier with the customer first.',
+      fields: [
+        { name: 'gen_class', label: 'Generator class / kW tier', type: 'select', value: subscription.gen_class, options: TIER_OPTIONS },
+        { name: 'plan', label: 'Billing cadence', type: 'select', value: subscription.plan, options: PLAN_OPTIONS },
+      ],
+      confirmText: 'Preview change',
+    });
+    if (picked === null) return;
+    if (picked.gen_class === subscription.gen_class && picked.plan === subscription.plan) {
+      showStatus('That is already the current class + cadence.', 'info');
+      return;
+    }
+
+    // 2. Preview (exact prorated charge or credit) from Stripe.
+    let preview;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscription.id}/tier-change-preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_gen_class: picked.gen_class, new_plan: picked.plan, customer_id: customerId }),
+      });
+      preview = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Couldn't preview: ${preview.error || ('HTTP ' + r.status)}`, 'error'); return; }
+    } catch (e) {
+      console.error('tier-change-preview failed:', e);
+      showStatus(`Couldn't preview: ${e.message}`, 'error');
+      return;
+    }
+
+    const tierLabel = (TIER_OPTIONS.find((t) => t.value === picked.gen_class) || {}).label || picked.gen_class;
+    const cadLabel = picked.plan === 'semi_annual' ? 'Semi-Annual' : 'Annual';
+    const through = preview.period_end ? fmtDate(preview.period_end) : 'the next renewal';
+    const fmNote = preview.fleet_variant_swapped ? ' Fleet Monitoring switches to the matching billing interval.' : '';
+    const moneyLine = preview.direction === 'credit'
+      ? `A credit of ${money(preview.credit_cents)} will be applied to the next invoice (no charge now).`
+      : `A prorated charge of ${money(preview.charge_now_cents)} will be billed to the card on file now for the difference through ${through}.`;
+    const confirmText = preview.direction === 'credit'
+      ? 'Apply change (credit)'
+      : `Charge ${money(preview.charge_now_cents)} & change`;
+
+    const ok = await openConfirm({
+      title: `Change to ${tierLabel} (${cadLabel})?`,
+      message: `${moneyLine} Renewal will be ${money(preview.new_renewal_cents)} on ${through}.${fmNote}`,
+      confirmText,
+      danger: preview.direction === 'charge',
+    });
+    if (!ok) return;
+
+    // 3. Apply with the pinned proration_date so the charge matches the preview.
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscription.id}/tier-change`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          new_gen_class: picked.gen_class,
+          new_plan: picked.plan,
+          proration_date: preview.proration_date,
+          customer_id: customerId,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Couldn't change tier: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(`Changed to ${tierLabel} (${cadLabel}).`, 'success');
+      await loadSubscriptions();
+      showDetail(subscription.id);
+    } catch (e) {
+      console.error('tier-change failed:', e);
+      showStatus(`Couldn't change tier: ${e.message}`, 'error');
     }
   }
 

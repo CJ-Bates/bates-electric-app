@@ -1017,6 +1017,193 @@ router.post('/subscriptions/:id/remove-fleet', async (req, res) => {
 });
 
 
+// --- Change generator class / pricing tier (prorate the difference now) -------
+// Corrects a customer's tier after signup (class + kW + cadence drive the base
+// price). Mirrors fleet-add: always_invoice + a pinned proration_date echoed
+// between preview and apply so the previewed amount === the amount charged.
+
+// True only for an invoice line that is a proration. The 2025-03-31.basil API
+// moved the flag off the top-level line onto line.parent.*_details.proration.
+function isProrationLine(l) {
+  if (!l) return false;
+  if (l.proration === true) return true; // pre-Basil
+  const p = l.parent || {};
+  return !!((p.subscription_item_details && p.subscription_item_details.proration)
+    || (p.invoice_item_details && p.invoice_item_details.proration));
+}
+
+// Build the FULL desired item set for a tier change (referencing each existing
+// item by id): the base plan item swapped to the new tier/cadence price, and —
+// only if the cadence actually changes — the Fleet item swapped to the matching
+// interval (Stripe rejects mixed intervals in one subscription). Used IDENTICALLY
+// by the preview and the apply, which is what guarantees preview === actual.
+function tierChangeContext(subscription, newGenClass, newPlan) {
+  const items = (subscription.items && subscription.items.data) || [];
+  const planItem = items.find((it) => catalog.isPlanPriceId(it.price.id));
+  const fmItem = items.find((it) => catalog.isFleetPriceId(it.price.id));
+  const curPlan = planItem ? catalog.planForPriceId(planItem.price.id).plan : null;
+  const newPlanEntry = catalog.planEntry(newGenClass, newPlan);
+  const cadenceChanged = !!(curPlan && curPlan !== newPlan);
+  const desiredItems = items.map((it) => {
+    if (planItem && it.id === planItem.id) {
+      return { id: it.id, price: newPlanEntry ? newPlanEntry.price_id : it.price.id };
+    }
+    if (fmItem && it.id === fmItem.id && cadenceChanged) {
+      return { id: it.id, price: catalog.FLEET_CATALOG[newPlan].price_id };
+    }
+    return { id: it.id, price: it.price.id };
+  });
+  return { items, planItem, fmItem, curPlan, hasFleet: !!fmItem, newPlanEntry, cadenceChanged, desiredItems };
+}
+
+// Shared validation/loading for both tier-change endpoints.
+async function loadForTierChange(req, res) {
+  const { id } = req.params;
+  const body = req.body || {};
+  const newGenClass = body.new_gen_class;
+  const newPlan = body.new_plan;
+  const customerId = body.customer_id;
+
+  if (!catalog.SUBSCRIPTION_CATALOG[newGenClass]) {
+    res.status(400).json({ error: 'invalid new_gen_class' }); return null;
+  }
+  if (!catalog.PLANS.includes(newPlan)) {
+    res.status(400).json({ error: "new_plan must be 'semi_annual' or 'annual'" }); return null;
+  }
+  const { data: sub, error } = await supabaseAdmin
+    .from('generator_subscriptions')
+    .select('id, customer_id, stripe_subscription_id, stripe_customer_id, gen_class, plan, status')
+    .eq('id', id).single();
+  if (error) throw error;
+  if (!sub) { res.status(404).json({ error: 'subscription not found' }); return null; }
+  if (customerId && sub.customer_id !== customerId) {
+    res.status(403).json({ error: 'subscription does not belong to that customer' }); return null;
+  }
+  if (sub.status === 'canceled') { res.status(400).json({ error: 'subscription is canceled' }); return null; }
+  if (!sub.stripe_subscription_id) { res.status(400).json({ error: 'no Stripe subscription linked' }); return null; }
+  if (sub.gen_class === newGenClass && sub.plan === newPlan) {
+    res.status(400).json({ error: 'already on that class + cadence' }); return null;
+  }
+
+  const subscription = await stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] });
+  if (subscription.status === 'canceled') { res.status(400).json({ error: 'Stripe subscription is canceled' }); return null; }
+  const sched = subscription.schedule;
+  const schedStatus = sched && typeof sched === 'object' ? sched.status : (sched ? 'active' : null);
+  if (sched && (schedStatus === 'active' || schedStatus === 'not_started')) {
+    res.status(409).json({ error: 'This customer has a pending change at renewal. Undo it first, then change the tier.' });
+    return null;
+  }
+  const ctx = tierChangeContext(subscription, newGenClass, newPlan);
+  if (!ctx.planItem || !ctx.newPlanEntry) { res.status(400).json({ error: 'no recognized plan price on subscription' }); return null; }
+  return { sub, subscription, newGenClass, newPlan, ctx };
+}
+
+// POST /api/generator-care/subscriptions/:id/tier-change-preview
+// Body: { new_gen_class, new_plan, customer_id? }. Previews the prorated charge
+// (or credit) for swapping to the new tier/cadence. No change made.
+router.post('/subscriptions/:id/tier-change-preview', async (req, res) => {
+  try {
+    const loaded = await loadForTierChange(req, res);
+    if (!loaded) return;
+    const { sub, subscription, newGenClass, newPlan, ctx } = loaded;
+
+    const planItem = ctx.planItem;
+    const periodEnd = subscription.current_period_end || planItem.current_period_end || null;
+    const prorationDate = Math.floor(Date.now() / 1000);
+
+    let preview;
+    try {
+      preview = await stripe.invoices.createPreview({
+        customer: sub.stripe_customer_id,
+        subscription: sub.stripe_subscription_id,
+        subscription_details: {
+          items: ctx.desiredItems,
+          proration_behavior: 'always_invoice',
+          proration_date: prorationDate,
+        },
+      });
+    } catch (e) {
+      console.error('[tier-change-preview] createPreview failed:', e && e.message);
+      return res.status(502).json({ error: 'Could not preview the change from Stripe. Please try again.' });
+    }
+
+    const charge = typeof preview.amount_due === 'number' ? preview.amount_due : null;
+    // Net proration across the change (signed): >0 = upgrade charge, <0 = downgrade credit.
+    const netProration = ((preview.lines && preview.lines.data) || [])
+      .filter(isProrationLine).reduce((s, l) => s + (l.amount || 0), 0);
+    const direction = netProration < 0 ? 'credit' : 'charge';
+    const creditCents = direction === 'credit' ? Math.abs(netProration) : 0;
+
+    const newRenewalCents = ctx.newPlanEntry.amount_cents
+      + (ctx.hasFleet ? catalog.FLEET_CATALOG[newPlan].amount_cents : 0);
+    // Generous sanity ceiling: an immediate proration shouldn't exceed ~a year of
+    // the new tier. A wildly larger amount_due means the preview returned the wrong
+    // invoice — refuse to show a misleading charge.
+    const yearCeiling = (catalog.annualPriceCents(newGenClass, newPlan, ctx.hasFleet) || newRenewalCents) + 1000;
+    if (charge == null || charge > yearCeiling * 2) {
+      return res.status(502).json({ error: 'Stripe returned an unexpected preview amount; not showing it. Please retry.' });
+    }
+
+    return res.json({
+      ok: true,
+      direction,                              // 'charge' (upgrade) | 'credit' (downgrade)
+      charge_now_cents: charge,               // exact card charge now (0 for a credit)
+      credit_cents: creditCents,              // credit applied to next invoice (downgrade)
+      net_proration_cents: netProration,
+      new_renewal_cents: newRenewalCents,     // per-renewal amount on the new tier (+FM)
+      cadence_changed: ctx.cadenceChanged,
+      fleet_variant_swapped: ctx.cadenceChanged && ctx.hasFleet,
+      has_fleet: ctx.hasFleet,
+      new_gen_class: newGenClass,
+      new_plan: newPlan,
+      proration_date: prorationDate,          // echo to apply for an exact match
+      period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
+    });
+  } catch (err) {
+    console.error('[generator-care] tier-change-preview error:', err && err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/subscriptions/:id/tier-change
+// Body: { new_gen_class, new_plan, proration_date, customer_id? }. Swaps the base
+// plan price (and the Fleet variant if the cadence changed), invoicing the
+// proration NOW with the SAME items + pinned proration_date as the preview, so the
+// charge equals the previewed amount. Persists the new class/plan/price.
+router.post('/subscriptions/:id/tier-change', async (req, res) => {
+  try {
+    const loaded = await loadForTierChange(req, res);
+    if (!loaded) return;
+    const { sub, newGenClass, newPlan, ctx } = loaded;
+    const prorationDate = (req.body && req.body.proration_date) ? Number(req.body.proration_date) : undefined;
+
+    await stripe.subscriptions.update(sub.stripe_subscription_id, Object.assign({
+      items: ctx.desiredItems,
+      proration_behavior: 'always_invoice',
+    }, prorationDate ? { proration_date: prorationDate } : {}));
+
+    // Persist the new tier locally (the subscription.updated webhook also re-syncs
+    // plan/gen_class/price/fleet from the new Stripe items as a backstop).
+    const annual = catalog.annualPriceCents(newGenClass, newPlan, ctx.hasFleet);
+    await supabaseAdmin
+      .from('generator_subscriptions')
+      .update(Object.assign({ gen_class: newGenClass, plan: newPlan }, annual != null ? { annual_price_cents: annual } : {}))
+      .eq('id', sub.id);
+
+    return res.json({
+      ok: true,
+      new_gen_class: newGenClass,
+      new_plan: newPlan,
+      new_renewal_cents: ctx.newPlanEntry.amount_cents + (ctx.hasFleet ? catalog.FLEET_CATALOG[newPlan].amount_cents : 0),
+      fleet_variant_swapped: ctx.cadenceChanged && ctx.hasFleet,
+    });
+  } catch (err) {
+    console.error('[generator-care] tier-change error:', err && err.message);
+    return res.status(500).json({ error: (err && err.message) || 'Server error' });
+  }
+});
+
+
 // POST /api/generator-care/subscriptions/:id/resend-receipt
 // Body: { invoice_id }
 // Re-sends OUR state-branded receipt for that paid invoice's charge, reusing the

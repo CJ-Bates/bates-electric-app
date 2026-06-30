@@ -307,6 +307,9 @@ async function handleSubscriptionUpdated(subscription) {
     const info = catalog.planForPriceId(planItem.price.id);
     const hasFleet = items.some((it) => it.price && catalog.isFleetPriceId(it.price.id));
     updates.plan = info.plan;
+    // gen_class follows the plan price too, so a tier change stays consistent even
+    // via this webhook backstop (the price id encodes the class).
+    updates.gen_class = info.gen_class;
     // Keep the fleet_monitoring column in sync with the actual Stripe items (the
     // source of truth) — covers add (immediate) and remove (at renewal) alike.
     updates.fleet_monitoring = hasFleet;
