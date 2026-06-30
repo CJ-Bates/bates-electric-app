@@ -23,12 +23,7 @@ const {
   buildVisitCompletedEmail,
   buildRenewalUpcomingEmail,
   buildCancellationEmail,
-  buildArReadyToInvoiceEmail,
 } = require('../lib/emails');
-
-// Accounts Receivable mailbox — notified when a Jonas work order is marked
-// created so AR can generate + send the paid invoice. Env-overridable.
-const AR_EMAIL = process.env.GENERATOR_AR_EMAIL || 'ar@bates-electric.com';
 
 // Actual amount charged at signup = amount_paid of the customer's OLDEST paid
 // invoice (the first/signup invoice), which reflects any promo-code discount.
@@ -363,8 +358,9 @@ router.get('/subscriptions/:id', async (req, res) => {
 // AR with the work-order packet when it's ready to invoice.
 
 // POST /api/generator-care/subscriptions/:id/work-order-created
-// Stamps work_order_created_at/by and emails AR the packet. Idempotent: if it's
-// already marked, we don't re-notify. Email never fails the status update.
+// Stamps work_order_created_at/by + the WO number — an INTERNAL Jonas record
+// (Brenda keys the work order into Jonas). Customers are not invoiced, so this no
+// longer notifies AR or relays anything for billing. Idempotent.
 router.post('/subscriptions/:id/work-order-created', async (req, res) => {
   try {
     const { id } = req.params;
@@ -380,14 +376,12 @@ router.post('/subscriptions/:id/work-order-created', async (req, res) => {
     const markedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
     const workOrderNumber = typeof req.body?.work_order_number === 'string' ? req.body.work_order_number.trim() : '';
 
-    // The WO number is what makes the AR email useful (she pulls the order up in
-    // Jonas with it), so require it on the first mark.
+    // The WO number identifies the order in Jonas, so require it on the first mark.
     if (!alreadyMarked && !workOrderNumber) {
       return res.status(400).json({ error: 'Work order number is required.' });
     }
 
     let updated = sub;
-    let arNotified = false;
     if (!alreadyMarked) {
       const { data: upd, error: updErr } = await supabaseAdmin
         .from('generator_subscriptions')
@@ -397,30 +391,9 @@ router.post('/subscriptions/:id/work-order-created', async (req, res) => {
         .single();
       if (updErr) throw updErr;
       updated = upd;
-
-      // Notify AR with the work-order packet. A mail hiccup must NOT fail the
-      // status update — the stamp already succeeded.
-      try {
-        const { data: addons } = await supabaseAdmin
-          .from('generator_pending_addons')
-          .select('addon_type, status')
-          .eq('subscription_id', id);
-        const chargedAtSignupCents = await getSignupChargeCents(updated.stripe_customer_id);
-        const { subject, html, text } = buildArReadyToInvoiceEmail({
-          subscription: updated,
-          customer: updated.customer,
-          addons: addons || [],
-          markedBy,
-          chargedAtSignupCents,
-        });
-        const r = await sendEmail({ to: AR_EMAIL, subject, html, text, logTag: '[ar-ready-to-invoice]' });
-        arNotified = !!(r && r.sent);
-      } catch (e) {
-        console.error('[ar-ready-to-invoice] unexpected:', e && e.message);
-      }
     }
 
-    res.json({ ok: true, subscription: updated, already_marked: alreadyMarked, ar_notified: arNotified, ar_email: AR_EMAIL });
+    res.json({ ok: true, subscription: updated, already_marked: alreadyMarked });
   } catch (err) {
     console.error('[generator-care] work-order-created error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -444,41 +417,8 @@ router.post('/subscriptions/:id/work-order-created/undo', async (req, res) => {
   }
 });
 
-// POST /api/generator-care/subscriptions/:id/invoice-sent  (closes the loop)
-router.post('/subscriptions/:id/invoice-sent', async (req, res) => {
-  try {
-    const markedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
-    const { data, error } = await supabaseAdmin
-      .from('generator_subscriptions')
-      .update({ invoice_sent_at: new Date().toISOString(), invoice_sent_by: markedBy })
-      .eq('id', req.params.id)
-      .select('*, customer:generator_customers(*)')
-      .single();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'subscription not found' });
-    res.json({ ok: true, subscription: data });
-  } catch (err) {
-    console.error('[generator-care] invoice-sent error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// POST /api/generator-care/subscriptions/:id/invoice-sent/undo  (misclick recovery)
-router.post('/subscriptions/:id/invoice-sent/undo', async (req, res) => {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('generator_subscriptions')
-      .update({ invoice_sent_at: null, invoice_sent_by: null })
-      .eq('id', req.params.id)
-      .select('*, customer:generator_customers(*)')
-      .single();
-    if (error) throw error;
-    res.json({ ok: true, subscription: data });
-  } catch (err) {
-    console.error('[generator-care] invoice-sent/undo error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+// (Customer invoicing dropped: the "invoice sent" step + its undo were removed —
+// Generator Care customers are not invoiced; the branded receipt is their record.)
 
 
 // GET /api/generator-care/subscriptions/:id/stripe-data
