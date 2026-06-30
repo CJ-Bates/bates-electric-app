@@ -92,10 +92,6 @@
     { value: 'liquid_22_38',  label: 'Liquid Cooled (22–45 kW)' },
     { value: 'liquid_48_150', label: 'Liquid Cooled (48–150 kW)' },
   ];
-  const PLAN_OPTIONS = [
-    { value: 'annual', label: 'Annual' },
-    { value: 'semi_annual', label: 'Semi-Annual (every 6 months)' },
-  ];
 
   // ---- Role check (must be office) ----
   async function checkRole() {
@@ -1734,29 +1730,29 @@
     const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
     const customerId = (subscription.customer && subscription.customer.id) || undefined;
 
-    // 1. Pick the target class + cadence (prefilled to current).
+    // 1. Pick the target class / kW tier (cadence is unchanged — use Change plan
+    //    for cadence). Prefilled to the current class.
     const picked = await openPrompt({
       title: 'Change generator class / tier',
-      message: 'Sets the pricing tier. The difference for the rest of the current period is prorated now. Confirm the corrected tier with the customer first.',
+      message: 'Corrects the generator class / kW tier (and its price) at the current cadence. The full price difference is settled now. Confirm the corrected tier with the customer first.',
       fields: [
         { name: 'gen_class', label: 'Generator class / kW tier', type: 'select', value: subscription.gen_class, options: TIER_OPTIONS },
-        { name: 'plan', label: 'Billing cadence', type: 'select', value: subscription.plan, options: PLAN_OPTIONS },
       ],
       confirmText: 'Preview change',
     });
     if (picked === null) return;
-    if (picked.gen_class === subscription.gen_class && picked.plan === subscription.plan) {
-      showStatus('That is already the current class + cadence.', 'info');
+    if (picked.gen_class === subscription.gen_class) {
+      showStatus('That is already the current class / tier.', 'info');
       return;
     }
 
-    // 2. Preview (exact prorated charge or credit) from Stripe.
+    // 2. Preview the exact flat catalog difference (deterministic).
     let preview;
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscription.id}/tier-change-preview`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_gen_class: picked.gen_class, new_plan: picked.plan, customer_id: customerId }),
+        body: JSON.stringify({ new_gen_class: picked.gen_class, customer_id: customerId }),
       });
       preview = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Couldn't preview: ${preview.error || ('HTTP ' + r.status)}`, 'error'); return; }
@@ -1767,39 +1763,33 @@
     }
 
     const tierLabel = (TIER_OPTIONS.find((t) => t.value === picked.gen_class) || {}).label || picked.gen_class;
-    const cadLabel = picked.plan === 'semi_annual' ? 'Semi-Annual' : 'Annual';
-    const through = preview.period_end ? fmtDate(preview.period_end) : 'the next renewal';
-    const fmNote = preview.fleet_variant_swapped ? ' Fleet Monitoring switches to the matching billing interval.' : '';
+    const cadLabel = subscription.plan === 'semi_annual' ? 'Semi-Annual' : 'Annual';
+    const onDate = preview.period_end ? ` on ${fmtDate(preview.period_end)}` : '';
     const moneyLine = preview.direction === 'credit'
-      ? `A credit of ${money(preview.credit_cents)} will be applied to the next invoice (no charge now).`
-      : `A prorated charge of ${money(preview.charge_now_cents)} will be billed to the card on file now for the difference through ${through}.`;
+      ? `A credit of ${money(preview.credit_cents)} (full tier difference) will be applied to the next invoice — no charge now.`
+      : `A charge of ${money(preview.charge_now_cents)} (full tier difference) will be billed to the card on file now.`;
     const confirmText = preview.direction === 'credit'
       ? 'Apply change (credit)'
       : `Charge ${money(preview.charge_now_cents)} & change`;
 
     const ok = await openConfirm({
-      title: `Change to ${tierLabel} (${cadLabel})?`,
-      message: `${moneyLine} Renewal will be ${money(preview.new_renewal_cents)} on ${through}.${fmNote}`,
+      title: `Change to ${tierLabel}?`,
+      message: `${moneyLine} Renewal will be ${money(preview.new_renewal_cents)}${onDate} (cadence unchanged — ${cadLabel}).`,
       confirmText,
       danger: preview.direction === 'charge',
     });
     if (!ok) return;
 
-    // 3. Apply with the pinned proration_date so the charge matches the preview.
+    // 3. Apply — backend charges/credits the same flat catalog difference.
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscription.id}/tier-change`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          new_gen_class: picked.gen_class,
-          new_plan: picked.plan,
-          proration_date: preview.proration_date,
-          customer_id: customerId,
-        }),
+        body: JSON.stringify({ new_gen_class: picked.gen_class, customer_id: customerId }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Couldn't change tier: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`Changed to ${tierLabel} (${cadLabel}).`, 'success');
+      showStatus(`Changed to ${tierLabel}.`, 'success');
       await loadSubscriptions();
       showDetail(subscription.id);
     } catch (e) {
