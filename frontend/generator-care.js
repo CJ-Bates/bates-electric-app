@@ -503,8 +503,8 @@
     return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  // Plain-text work-order packet — the fields Amy keys into Jonas. Mirrors the
-  // AR "ready to invoice" email body so the dashboard and the email match.
+  // Plain-text work-order packet — the fields Brenda keys into Jonas as an internal
+  // record (customers are not invoiced). Copy with "Copy packet".
   function buildPacketText(sub, pendingAddons, actualChargeCents) {
     const c = sub.customer || {};
     const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
@@ -534,15 +534,13 @@
     return lines.map(([k, v]) => `${k}: ${v}`).join('\n');
   }
 
-  // The Jonas billing hand-off pipeline. Deliberately distinct from the
-  // Service-Visit card (this is the invoicing relay, not the field visit):
-  // navy "Mark…" buttons + a copy-paste packet.
+  // Internal Jonas work-order record. Brenda keys the work order into Jonas for
+  // internal records; customers are NOT invoiced (their document of record is the
+  // branded receipt). Distinct from the Service-Visit card.
   function renderHandoffCard(subscription, pendingAddons) {
     const woAt = subscription.work_order_created_at;
     const woBy = subscription.work_order_created_by;
     const woNum = subscription.work_order_number;
-    const invAt = subscription.invoice_sent_at;
-    const invBy = subscription.invoice_sent_by;
     const packet = escapeHtml(buildPacketText(subscription, pendingAddons));
 
     const dot = (done, n) =>
@@ -560,16 +558,12 @@
           <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>
         </span>
         <div id="gc-wo-validation" style="display:none;color:#DC2626;font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
-    const invValue = invAt
-      ? `<span style="font-weight:400;color:var(--text-secondary);">${fmtStamp(invAt)}${invBy ? ' &middot; ' + escapeHtml(invBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-invoice-undo-btn">Undo</button>`
-      : `<button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-invoice-sent-btn"${woAt ? '' : ' disabled title="Mark the work order created first"'}>Mark invoice sent</button>`;
 
     return `
       <div class="gc-card">
-        <h3 class="gc-card-h">Jonas Hand-off <span class="gc-card-h-count">billing relay &mdash; not the service visit</span></h3>
+        <h3 class="gc-card-h">Jonas Work Order <span class="gc-card-h-count">internal record</span></h3>
         ${stepRow('1', 'Signed up', true, `<span style="font-weight:400;color:var(--text-secondary);">${fmtDate(subscription.signup_date)}</span>`)}
         ${stepRow('2', 'Work order created', !!woAt, woValue)}
-        ${stepRow('3', 'Invoiced', !!invAt, invValue)}
         <div class="gc-note-editor">
           <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Work-order packet &mdash; for keying into Jonas</span>
           <textarea id="gc-packet" class="gc-packet" readonly rows="9">${packet}</textarea>
@@ -940,11 +934,7 @@
       const woBtn = body.querySelector('#gc-wo-created-btn');
       if (woBtn) woBtn.addEventListener('click', () => markWorkOrderCreated(id, woBtn));
       const woUndoBtn = body.querySelector('#gc-wo-undo-btn');
-      if (woUndoBtn) woUndoBtn.addEventListener('click', () => undoHandoff(id, 'work-order-created', 'Undo the work-order-created mark? (AR was already notified.)'));
-      const invBtn = body.querySelector('#gc-invoice-sent-btn');
-      if (invBtn) invBtn.addEventListener('click', () => markInvoiceSent(id, invBtn));
-      const invUndoBtn = body.querySelector('#gc-invoice-undo-btn');
-      if (invUndoBtn) invUndoBtn.addEventListener('click', () => undoHandoff(id, 'invoice-sent', 'Undo the invoice-sent mark?'));
+      if (woUndoBtn) woUndoBtn.addEventListener('click', () => undoHandoff(id, 'work-order-created', 'Undo the work-order-created mark?'));
       const copyPacketBtn = body.querySelector('#gc-copy-packet-btn');
       if (copyPacketBtn) copyPacketBtn.addEventListener('click', () => copyPacket(copyPacketBtn));
 
@@ -1540,7 +1530,7 @@
       return;
     }
     if (validation) validation.style.display = 'none';
-    if (!await openConfirm({ title: 'Mark work order created?', message: `WO# ${woNumber}\n\nThis notifies Accounts Receivable (ar@bates-electric.com) that it’s ready to invoice, with the work-order packet.`, confirmText: 'Mark created' })) return;
+    if (!await openConfirm({ title: 'Mark work order created?', message: `WO# ${woNumber}\n\nStamps the Jonas work order as created — an internal record for Brenda. Customers are not invoiced.`, confirmText: 'Mark created' })) return;
     if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/work-order-created`, {
@@ -1552,33 +1542,15 @@
       if (!r.ok) {
         showStatus(`Could not mark work order created: ${data.error || `HTTP ${r.status}`}`, 'error');
       } else if (data.already_marked) {
-        showStatus('Already marked — AR was not re-notified.', 'info');
+        showStatus('Already marked as created.', 'info');
       } else {
-        showStatus(data.ar_notified ? `Marked. AR notified at ${data.ar_email}.` : 'Marked — but the AR email could not be sent (check logs).', data.ar_notified ? 'success' : 'error');
+        showStatus('Work order created.', 'success');
       }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
       console.error('markWorkOrderCreated failed:', err);
       showStatus('Failed to mark work order created.', 'error');
-    }
-  }
-
-  async function markInvoiceSent(subscriptionId, btn) {
-    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
-    try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/invoice-sent`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) showStatus(`Could not mark invoice sent: ${data.error || `HTTP ${r.status}`}`, 'error');
-      else showStatus('Invoice marked sent — hand-off loop closed.', 'success');
-      await loadSubscriptions();
-      showDetail(subscriptionId);
-    } catch (err) {
-      console.error('markInvoiceSent failed:', err);
-      showStatus('Failed to mark invoice sent.', 'error');
     }
   }
 

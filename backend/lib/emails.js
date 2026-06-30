@@ -321,8 +321,8 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     ? companyState
     : ((customer && customer.install_state) || safeMeta.install_state);
   const company = companyName(state);
-  // Payment-confirmation line: our own proof of payment, since Stripe's customer
-  // invoice/receipt email is turned off (Jonas is the invoice system of record).
+  // Payment-confirmation line: our own proof of payment. Generator Care customers
+  // are not invoiced — the branded receipt we email on every charge is their record.
   // paidAmountCents is the ACTUAL first charge (passed by the caller from the
   // real Stripe invoice — reflects any promo discount), not a hardcoded price.
   const showPaid = (typeof paidAmountCents === 'number');
@@ -356,7 +356,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
       (fleetMonitoring ? `<tr><td style="${TABLE_LABEL}">Add-on</td><td style="${TABLE_VALUE}">Fleet Monitoring (Mobile Link)</td></tr>` : '') +
     `</table>` +
 
-    (showPaid ? `<p style="${P}margin-top:18px;"><strong style="color:${BRAND.navy};">Payment received:</strong> ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + escHtml(paidDateStr) : ''}. This is your confirmation of payment &mdash; your formal invoice comes separately from our office.</p>` : '') +
+    (showPaid ? `<p style="${P}margin-top:18px;"><strong style="color:${BRAND.navy};">Payment received:</strong> ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + escHtml(paidDateStr) : ''}. A receipt has been emailed to you for your records.</p>` : '') +
 
     `<p style="${P}margin-top:28px;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
@@ -380,7 +380,7 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     (nextVisitDate ? `  First visit: ${fmtFriendlyDate(nextVisitDate)} (we will confirm time)\n` : '') +
     `  Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
     (fleetMonitoring ? `  Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
-    (showPaid ? `\nPayment received: ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + paidDateStr : ''}. This is your confirmation of payment -- your formal invoice comes separately from our office.\n` : '') +
+    (showPaid ? `\nPayment received: ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + paidDateStr : ''}. A receipt has been emailed to you for your records.\n` : '') +
     `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- ${company}`;
 
@@ -431,7 +431,7 @@ function buildCardUpdateLinkEmail({ name, portalUrl, companyState }) {
   const company = companyName(companyState);
 
   const body =
-    `<p style="${P}">Here is a secure link to your generator care account. You can use it to update your card on file, view your invoice history, or change your contact info &mdash; all in one place.</p>`;
+    `<p style="${P}">Here is a secure link to your generator care account. You can use it to update your card on file, view your billing history, or change your contact info &mdash; all in one place.</p>`;
 
   const signoff =
     `<p style="${P}margin-top:24px;">The link is good for about an hour. If it expires before you click it, give us a call at <strong>${BRAND.phone}</strong> and we&rsquo;ll get you a fresh one.</p>` +
@@ -450,7 +450,7 @@ function buildCardUpdateLinkEmail({ name, portalUrl, companyState }) {
   const text =
     `Hi ${safeName},\n\n` +
     `Here is a secure link to your ${company} generator care account. ` +
-    `You can use it to update your card on file, view your invoice history, or change your contact info.\n\n` +
+    `You can use it to update your card on file, view your billing history, or change your contact info.\n\n` +
     `${portalUrl}\n\n` +
     `The link is good for about an hour. If it expires, give us a call at ${BRAND.phone} and we'll get you a fresh one.\n\n` +
     `-- ${company}`;
@@ -645,91 +645,9 @@ function buildCancellationEmail({ customer, periodEndDate, companyState }) {
   return { subject, html, text };
 }
 
-// --- 8. AR "ready to invoice" hand-off (internal) ---------------------------
-
-// Internal notification to Accounts Receivable when the office marks a Jonas
-// work order created. Body is the full work-order packet so AR can generate the
-// paid invoice without digging. `addons` is the generator_pending_addons rows
-// (optional). `markedBy` is the office user who marked it.
-function buildArReadyToInvoiceEmail({ subscription, customer, addons, markedBy, chargedAtSignupCents, companyState }) {
-  const sub = subscription || {};
-  const c = customer || {};
-  // Operating name for THIS customer (Florida => S.E. Bates Electric) so AR keys
-  // the Jonas work order + invoice under the legally-correct name.
-  const company = companyName(companyState != null ? companyState : c.install_state);
-  const PLAN = { semi_annual: 'Semi-Annual', annual: 'Annual' };
-  const GENC = { air_cooled: 'Air-cooled', liquid_22_38: 'Liquid-cooled (22–45 kW)', liquid_48_150: 'Liquid-cooled (48–150 kW)' };
-  const ADDON = {
-    fleet_monitoring: 'Fleet Monitoring', battery_replacement: 'Battery Replacement',
-    battery_diagnostics: 'Battery Diagnostics / Load Test', exterior_wash: 'Exterior Wash & Interior Blow-Out',
-    coolant_flush: 'Coolant System Flush', coolant_topoff: 'Coolant Top-Off Service',
-    ats_inspection: 'ATS Inspection', ats_outage_combined: 'Transfer Switch Inspection & Simulated Outage Test',
-    outage_test: 'Simulated Power Outage Test',
-  };
-
-  const name = c.name || 'Customer';
-  const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
-  const planLabel = PLAN[sub.plan] || sub.plan || '';
-  const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
-  // Renewal price = the standard per-period charge. annual_price_cents is the
-  // annualized total (semi-annual is billed at half that, twice a year).
-  const annual = sub.annual_price_cents || 0;
-  const renewalCents = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
-  // What the customer was ACTUALLY charged at signup (reflects any promo
-  // discount). Falls back to the plan price if the real charge wasn't passed.
-  const signupCents = (typeof chargedAtSignupCents === 'number') ? chargedAtSignupCents : renewalCents;
-  const addonList = []
-    .concat(sub.fleet_monitoring ? ['Fleet Monitoring'] : [])
-    .concat((addons || []).filter(a => a && a.status !== 'canceled').map(a => ADDON[a.addon_type] || a.addon_type));
-  const generator = [GENC[sub.gen_class] || sub.gen_class, sub.gen_model, sub.gen_serial && ('s/n ' + sub.gen_serial)].filter(Boolean).join(' • ');
-
-  const woNum = (sub.work_order_number || '').trim();
-  const fields = [
-    ['Work order #', woNum || '—'],
-    ['Bill under', company + (isFlorida(companyState != null ? companyState : c.install_state) ? ' (Florida DBA)' : '')],
-    ['Customer', name],
-    ['Phone', c.phone || '—'],
-    ['Email', c.email || '—'],
-    ['Install address', addr || '—'],
-    ['Plan', planLabel + (cadence ? ` (billed ${cadence})` : '')],
-    ['Generator', generator || '—'],
-    ['Add-ons', addonList.length ? addonList.join(', ') : 'None'],
-    ['Signed up', sub.signup_date ? fmtFriendlyDate(sub.signup_date) : '—'],
-    ['Amount charged at signup', fmtMoney(signupCents)],
-    ['Renews at', `${fmtMoney(renewalCents)}${cadence ? ' ' + cadence : ''}`],
-  ];
-
-  const rowsHtml = fields.map(([k, v]) =>
-    `<tr><td style="${TABLE_LABEL};width:42%;">${escHtml(k)}</td><td style="${TABLE_VALUE}">${escHtml(v)}</td></tr>`
-  ).join('');
-
-  const body =
-    (woNum ? `<p style="${P}font-size:18px;margin-bottom:6px;"><strong style="color:${BRAND.navy};">Work order #${escHtml(woNum)}</strong> created for <strong>${escHtml(name)}</strong> &mdash; ready to invoice.</p>` : '') +
-    `<p style="${P}">${escHtml(markedBy || 'The office')} marked the Jonas work order created for <strong>${escHtml(name)}</strong>. Here&rsquo;s the work-order packet &mdash; everything needed to generate and send the paid invoice from Jonas.</p>` +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;margin-top:8px;">${rowsHtml}</table>` +
-    `<p style="${P_LAST}margin-top:24px;">Once the invoice is sent, the office will mark it invoiced in the dashboard to close the loop.</p>`;
-
-  const html = renderBrandedEmail({
-    heading: 'Ready to invoice',
-    intro: `Generator Care &mdash; ${escHtml(name)}`,
-    body,
-    companyState: companyState != null ? companyState : c.install_state,
-  });
-
-  // Plain-text packet — the copy-paste-friendly version for keying into Jonas.
-  const text =
-    (woNum ? `WORK ORDER #${woNum} — READY TO INVOICE\n` : `READY TO INVOICE — Generator Care\n`) +
-    `${markedBy || 'The office'} marked the Jonas work order created.\n\n` +
-    `WORK ORDER PACKET\n` +
-    fields.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
-    `Once the invoice is sent, it will be marked invoiced in the dashboard.\n\n` +
-    `-- ${company} Generator Care`;
-
-  const subject = woNum
-    ? `Work order #${woNum} — ready to invoice: ${name}`
-    : `Generator Care — ready to invoice: ${name}`;
-  return { subject, html, text };
-}
+// (Section 8 removed: the AR "ready to invoice" hand-off email. Generator Care
+// customers are no longer invoiced — Brenda keys the work order into Jonas as an
+// internal record, and the customer's document of record is the branded receipt.)
 
 // --- 9. Payment receipt (our own, state-branded) ----------------------------
 
@@ -894,7 +812,6 @@ module.exports = {
   buildVisitCompletedEmail,
   buildRenewalUpcomingEmail,
   buildCancellationEmail,
-  buildArReadyToInvoiceEmail,
   buildReceiptEmail,
   buildRefundReceiptEmail,
 
