@@ -9,7 +9,7 @@
 // other surface detail: edit the BRAND object below. Don't hunt through
 // template files.
 
-const sgMail = require('@sendgrid/mail');
+const { sendViaBrevo } = require('./mailer');
 const { isFlorida, companyName } = require('./branding');
 
 // ============================================================================
@@ -69,52 +69,38 @@ function getFromEmail() {
 const FONT_STACK = `system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`;
 
 // ============================================================================
-// SendGrid plumbing
+// Email transport (Brevo — see lib/mailer.js)
 // ============================================================================
-let _keyConfigured = false;
-function ensureSendGridKey() {
-  const key = process.env.SENDGRID_API_KEY;
-  if (!key) return false;
-  if (!_keyConfigured) {
-    sgMail.setApiKey(key);
-    _keyConfigured = true;
-  }
-  return true;
-}
 
-// Sends an email via SendGrid. Returns { sent: boolean, reason?: string }.
+// Sends an email via Brevo. Returns { sent: boolean, reason?: string }.
 // Never throws -- webhook callers must not surface failures as 500s
 // (Stripe would retry on 500).
 async function sendEmail({ to, subject, html, text, logTag, companyState }) {
   const tag = logTag || '[email]';
-  if (!ensureSendGridKey()) {
-    console.log(`${tag} SENDGRID_API_KEY not set, skipping`);
-    return { sent: false, reason: 'SENDGRID_API_KEY not set' };
-  }
   if (!to || (Array.isArray(to) && to.length === 0)) {
     console.log(`${tag} no recipient, skipping`);
     return { sent: false, reason: 'no recipient' };
   }
   // The "From" display name is also a displayed company name, so it follows the
-  // Florida DBA rule. Domain is unchanged. When companyState isn't supplied (e.g.
-  // internal AR mail), the default Bates Electric sender name is used.
+  // Florida DBA rule (S.E. Bates Electric for FL). The From ADDRESS is unchanged.
+  // When companyState isn't supplied, the default Bates Electric sender name is used.
   const fromName = (companyState != null) ? (companyName(companyState) + ' Generator Care') : BRAND.fromName;
-  try {
-    const response = await sgMail.send({
-      to,
-      from: { email: getFromEmail(), name: fromName },
-      subject,
-      text,
-      html,
-    });
+
+  const result = await sendViaBrevo({
+    to,
+    senderEmail: getFromEmail(),
+    senderName: fromName,
+    subject,
+    html,
+    text,
+  });
+  if (result.sent) {
     const recipients = Array.isArray(to) ? to.join(', ') : to;
-    console.log(`${tag} sent to ${recipients}`);
-    return { sent: true, response };
-  } catch (err) {
-    const detail = err && err.response ? JSON.stringify(err.response.body) : (err && err.message) || String(err);
-    console.error(`${tag} error:`, detail);
-    return { sent: false, reason: (err && err.message) || 'unknown' };
+    console.log(`${tag} sent to ${recipients} via Brevo`);
+  } else {
+    console.error(`${tag} Brevo send failed:`, result.reason);
   }
+  return result;
 }
 
 // ============================================================================

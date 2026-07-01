@@ -3,18 +3,15 @@
 // Hit by an external scheduler  -  protected by a shared secret instead of user JWT.
 
 const express = require('express');
-const sgMail = require('@sendgrid/mail');
 const { supabaseAdmin } = require('../lib/supabase');
+const { sendViaBrevo } = require('../lib/mailer');
 
 const router = express.Router();
 
 const CRON_SECRET = process.env.CRON_SECRET;
-const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL = process.env.GENERATOR_DIGEST_FROM || 'no-reply@bates-electric.com';
 const TO_EMAILS = (process.env.GENERATOR_DIGEST_TO || 'cjbates@bates-electric.com,generators@bates-electric.com')
  .split(',').map(s => s.trim()).filter(Boolean);
-
-if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
 // Healthchecks.io dead-man's-switch ping. Fire-and-forget: never awaited, never
 // throws, never affects the cron response. If HEALTHCHECKS_URL is unset it's a
@@ -122,18 +119,17 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
       ? buildQuietEmail({ todayStr })
       : buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, pastDue, todayStr });
 
- if (!SENDGRID_KEY) {
- // Do NOT echo the rendered digest (subject/text contain customer names + phones).
- return res.status(500).json({ error: 'SENDGRID_API_KEY not configured' });
- }
-
- await sgMail.send({
+ // Send via Brevo. A missing BREVO_API_KEY or a provider error throws below ->
+ // caught -> 500 + Healthchecks '/fail' ping, so we hear about it.
+ const sendResult = await sendViaBrevo({
  to: TO_EMAILS,
- from: { email: FROM_EMAIL, name: 'Bates Electric Generator Care' },
+ senderEmail: FROM_EMAIL,
+ senderName: 'Bates Electric Generator Care',
  subject,
- text,
  html,
+ text,
  });
+ if (!sendResult.sent) throw new Error('digest send failed: ' + sendResult.reason);
 
  // Digest sent successfully -- signal the dead-man's switch.
  pingHealthcheck();

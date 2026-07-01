@@ -1,6 +1,6 @@
 const express = require('express');
 const archiver = require('archiver');
-const sgMail = require('@sendgrid/mail');
+const { sendViaBrevo } = require('../lib/mailer');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { buildInspectionPdf } = require('../lib/buildPdf');
@@ -11,10 +11,10 @@ const PDF_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 const router = express.Router();
 
-// Initialize SendGrid email (HTTPS-based — works on Render free tier)
-const sendgridKey = process.env.SENDGRID_API_KEY;
-if (sendgridKey) sgMail.setApiKey(sendgridKey);
-const emailFrom = process.env.GMAIL_USER || 'inspections.bateselectric@gmail.com';
+// Inspection report emails go out via Brevo. The From must be on a Brevo-
+// authenticated domain (bates-electric.com), so we use no-reply@bates-electric.com
+// rather than the old @gmail.com sender (Gmail's DMARC would reject that via Brevo).
+const emailFrom = process.env.INSPECTION_FROM_EMAIL || 'no-reply@bates-electric.com';
 
 // Pulls the indexed columns out of the form blob so the office dashboard
 // can filter fast. Everything else stays in `data`.
@@ -63,7 +63,7 @@ router.post('/', requireAuth, async (req, res) => {
     });
   }
 
-  if (row.status === 'submitted' && sendgridKey) {
+  if (row.status === 'submitted' && process.env.BREVO_API_KEY) {
     try {
       const emailBody = buildEmailHTML(data, pdfSignedUrl);
       const custEmail = data.job_email || '';
@@ -77,19 +77,20 @@ router.post('/', requireAuth, async (req, res) => {
         toAddresses.push(custEmail.trim());
       }
 
-      const msg = {
+      const sendResult = await sendViaBrevo({
         to: toAddresses,
-        from: { email: emailFrom, name: 'Bates Electric' },
+        senderEmail: emailFrom,
+        senderName: 'Bates Electric',
         subject: `Bates Electric Safety Inspection — ${custName} — ${date}`,
         html: emailBody,
-      };
-
-      await sgMail.send(msg);
-
-      console.log('Email sent successfully for inspection', inserted.id, '| to:', toAddresses.join(', '));
+      });
+      if (sendResult.sent) {
+        console.log('Email sent successfully for inspection', inserted.id, '| to:', toAddresses.join(', '));
+      } else {
+        console.error('Failed to send inspection email:', sendResult.reason);
+      }
     } catch (emailErr) {
-      const detail = emailErr.response ? JSON.stringify(emailErr.response.body) : (emailErr.message || emailErr);
-      console.error('Failed to send email:', detail);
+      console.error('Failed to send email:', emailErr && emailErr.message);
       // Don't fail the API response if email fails — the inspection was still created
     }
   }
