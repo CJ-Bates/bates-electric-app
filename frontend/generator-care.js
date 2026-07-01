@@ -249,18 +249,43 @@
       liquid_48_150: 'Liquid 48-150 KW',
     })[c] || c;
   }
-  function escapeHtml(s) {
-    // Must be quote-safe: this value is interpolated into double-quoted HTML
-    // attributes (data-desc, data-label, etc.), not just element text. The
-    // textContent/innerHTML trick does NOT escape " or ', which allowed
-    // attribute-breakout XSS. Escape the full set, matching accounting.js.
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+  // Shared quote-safe escaper from ui-dialogs.js (loaded just before this
+  // script) — one implementation for every page instead of per-file copies.
+  const escapeHtml = window.BatesUI.escapeHtml;
+
+  // ---- Display formatting (render-time only) --------------------------------
+  // Stored values are NEVER rewritten — these shape names/cities/phones for the
+  // customer list, the detail modal, and the Jonas work-order packet only. The
+  // Contact & Address edit form keeps showing the raw stored values.
+
+  // Title-case a name or city, but ONLY when the stored value is ALL-CAPS or
+  // all-lowercase (clearly untyped case). Mixed-case values pass through as
+  // typed, so deliberately-cased names ("McDonald", "DiSalvo") are never
+  // mangled; a simple Mc- fix covers the common case when we do transform.
+  function fmtNameCase(s) {
+    const v = String(s == null ? '' : s).trim();
+    const letters = v.replace(/[^A-Za-z]/g, '');
+    if (!letters) return v;
+    const allCaps = letters === letters.toUpperCase();
+    const allLower = letters === letters.toLowerCase();
+    if (!allCaps && !allLower) return v;
+    return v.toLowerCase()
+      .replace(/(^|[\s\-'.])([a-z])/g, (m, sep, ch) => sep + ch.toUpperCase())
+      .replace(/\bMc([a-z])/g, (m, ch) => 'Mc' + ch.toUpperCase());
   }
+
+  // Phone: +1XXXXXXXXXX or a bare 10-digit number renders as (XXX) XXX-XXXX.
+  // Anything else (extensions, letters, international) renders as stored.
+  function fmtPhoneDisplay(s) {
+    const v = String(s == null ? '' : s).trim();
+    if (!v || !/^[+()\-.\s\d]+$/.test(v)) return v;
+    const digits = v.replace(/\D/g, '');
+    const ten = digits.length === 10 ? digits
+      : (digits.length === 11 && digits[0] === '1' ? digits.slice(1) : null);
+    if (!ten) return v;
+    return '(' + ten.slice(0, 3) + ') ' + ten.slice(3, 6) + '-' + ten.slice(6);
+  }
+
   function fmtDate(dateStr) {
     if (!dateStr) return '—';
     return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -298,8 +323,8 @@
     return `
       <tr class="gc-row ${rowClass}" data-sub-id="${sub.id}">
         <td>
-          <div class="gc-customer-name">${escapeHtml(cust.name)}</div>
-          <div class="gc-customer-meta">${escapeHtml(cust.install_city)}, ${escapeHtml(cust.install_state)} · ${escapeHtml(cust.phone)}</div>
+          <div class="gc-customer-name">${escapeHtml(fmtNameCase(cust.name))}</div>
+          <div class="gc-customer-meta">${escapeHtml(fmtNameCase(cust.install_city))}, ${escapeHtml(cust.install_state)} · ${escapeHtml(fmtPhoneDisplay(cust.phone))}</div>
         </td>
         <td class="gc-gen-info">
           ${escapeHtml(genClassLabel(sub.gen_class))}<br>
@@ -321,8 +346,8 @@
       <div class="gc-card ${cardClass}" data-sub-id="${sub.id}">
         <div class="gc-card-header">
           <div>
-            <div class="gc-card-name">${escapeHtml(cust.name)}</div>
-            <div class="gc-card-meta">${escapeHtml(cust.install_city)} · ${escapeHtml(genClassLabel(sub.gen_class))} · ${escapeHtml(planLabel(sub.plan))}</div>
+            <div class="gc-card-name">${escapeHtml(fmtNameCase(cust.name))}</div>
+            <div class="gc-card-meta">${escapeHtml(fmtNameCase(cust.install_city))} · ${escapeHtml(genClassLabel(sub.gen_class))} · ${escapeHtml(planLabel(sub.plan))}</div>
           </div>
           ${listStatusBadge(sub)}
         </div>
@@ -372,7 +397,7 @@
   }
 
   function renderHeaderBar(customer, subscription) {
-    const phone = customer.phone || '';
+    const phone = fmtPhoneDisplay(customer.phone) || '';
     const email = customer.email || '';
     const stripeId = subscription.stripe_customer_id;
     const stripeLink = stripeId
@@ -396,7 +421,7 @@
   // when Amy toggles Edit). The internal-note editor lives outside this region so
   // an in-progress note isn't lost when entering edit mode.
   function renderContactRead(customer) {
-    const addrLine = [customer.install_address, customer.install_city, customer.install_state, customer.install_zip].filter(Boolean).join(', ');
+    const addrLine = [customer.install_address, fmtNameCase(customer.install_city), customer.install_state, customer.install_zip].filter(Boolean).join(', ');
     const fl = isFlorida(customer.install_state);
     // Florida customers operate under the S.E. Bates Electric DBA — surface it so
     // Amy/Ally use the correct legal name on Jonas work orders + AR invoices.
@@ -406,8 +431,8 @@
       : '';
     return `
       <h3 class="gc-card-h"><span>Contact &amp; Address</span><button type="button" class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-contact-edit-btn">Edit</button></h3>
-      <div class="gc-card-row"><span class="gc-meta-label">Name</span><span class="gc-meta-value">${escapeHtml(customer.name) || '&mdash;'}</span></div>
-      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(customer.phone) || '&mdash;'}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Name</span><span class="gc-meta-value">${escapeHtml(fmtNameCase(customer.name)) || '&mdash;'}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(fmtPhoneDisplay(customer.phone)) || '&mdash;'}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
       ${operatingRow}`;
@@ -507,7 +532,7 @@
   // record (customers are not invoiced). Copy with "Copy packet".
   function buildPacketText(sub, pendingAddons, actualChargeCents) {
     const c = sub.customer || {};
-    const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
+    const addr = [c.install_address, fmtNameCase(c.install_city), c.install_state, c.install_zip].filter(Boolean).join(', ');
     const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
     const annual = sub.annual_price_cents || 0;
     const renewal = sub.plan === 'semi_annual' ? Math.round(annual / 2) : annual;
@@ -520,8 +545,8 @@
     const lines = [
       ['Work order #', sub.work_order_number || '—'],
       ['Bill under', companyName(c.install_state) + (isFlorida(c.install_state) ? ' (Florida DBA)' : '')],
-      ['Customer', c.name || ''],
-      ['Phone', c.phone || ''],
+      ['Customer', fmtNameCase(c.name) || ''],
+      ['Phone', fmtPhoneDisplay(c.phone) || ''],
       ['Email', c.email || ''],
       ['Install address', addr],
       ['Plan', planLabel(sub.plan) + (cadence ? ` (billed ${cadence})` : '')],
@@ -840,7 +865,7 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { subscription, visits, pending_addons, adhoc_charges = [] } = await r.json();
       const c = subscription.customer || {};
-      title.textContent = c.name || 'Customer';
+      title.textContent = fmtNameCase(c.name) || 'Customer';
       const isCanceled = subscription.status === 'canceled';
 
       // Current visit cycle = the earliest open (not-completed, not-canceled)
@@ -1599,7 +1624,7 @@
       if (data.email_sent) {
         showStatus(`Card-update link emailed${who}${emailAddr}. Link expires in about an hour.`, 'success');
       } else {
-        // Fallback if SendGrid is down or the customer has no email on file: copy
+        // Fallback if the mail provider is down or the customer has no email on file: copy
         // the link to the clipboard so Amy can paste it to the customer.
         let copied = false;
         try { await navigator.clipboard.writeText(data.url); copied = true; } catch (_) {}

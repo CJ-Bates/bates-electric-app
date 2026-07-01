@@ -11,6 +11,8 @@ const generatorCareRouter = require('./routes/generator-care');
 const generatorTechRouter = require('./routes/generator-tech');
 const generatorCareCronRouter = require('./routes/generator-care-cron');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
+const { requireAuth } = require('./middleware/auth');
+const { CONTACTS_DIRECTORY } = require('./lib/contactsDirectory');
 
 // Initialize Sentry as early as possible, gated on the env var so it's a no-op
 // until SENTRY_DSN is set in Render. The require lives inside initSentry() and
@@ -19,6 +21,10 @@ if (process.env.SENTRY_DSN) initSentry();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// We run behind Render's proxy: trust exactly one hop so req.ip is the real
+// client IP (required for per-IP rate limiting), not the proxy's.
+app.set('trust proxy', 1);
 
 // Security headers. CSP is disabled here because this Express app also serves the
 // PWA static files below, whose inline scripts/styles a default CSP would break;
@@ -46,6 +52,11 @@ app.use(cors({
 // Stripe webhook must receive raw body for signature verification
 app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), generatorWebhookRouter);
 
+// Inspections get a tighter JSON body cap than the global 10mb: the form blob
+// is small text and photos upload directly to Supabase storage, not through
+// this API. Mounted BEFORE the global parser so this limit is the one applied.
+app.use('/inspections', express.json({ limit: '1mb' }), inspectionRoutes);
+
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', (req, res) => {
@@ -62,11 +73,17 @@ app.get('/config', (req, res) => {
   });
 });
 
+// Internal team directory for the Contacts page. Any authenticated user
+// (office or tech) may read it; it is deliberately NOT in the static HTML so
+// names/emails aren't public. Data lives in lib/contactsDirectory.js.
+app.get('/contacts-directory', requireAuth, (req, res) => {
+  res.json({ directory: CONTACTS_DIRECTORY });
+});
+
 app.use('/auth', authRoutes);
 // GET /me lives on the auth router but is commonly called without the prefix;
 // mount it there as well for convenience.
 app.use('/', authRoutes);
-app.use('/inspections', inspectionRoutes);
 
 // Serve the frontend as static files (after API routes so they take priority)
 app.use(express.static(path.join(__dirname, '..', 'frontend')));

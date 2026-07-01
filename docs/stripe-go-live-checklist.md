@@ -308,8 +308,8 @@ move is **fix forward**:
 | Stripe Dashboard | Webhook endpoint | URL + 7 events (test) | URL + 7 events (live) |
 
 Not touched during cutover (verify untouched after):
-- `SENDGRID_API_KEY`, `GENERATOR_DIGEST_FROM`, `GENERATOR_DIGEST_TO`,
-  `CRON_SECRET`, `SUPABASE_*`, `OFFICE_EMAIL`, `GMAIL_USER`.
+- `BREVO_API_KEY`, `GENERATOR_DIGEST_FROM`, `GENERATOR_DIGEST_TO`,
+  `CRON_SECRET`, `SUPABASE_*`, `OFFICE_EMAIL`.
 
 ---
 

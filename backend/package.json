@@ -11,13 +11,13 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@sendgrid/mail": "^8.1.0",
     "@sentry/node": "^10.57.0",
     "@supabase/supabase-js": "^2.103.0",
     "archiver": "^7.0.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "pdfkit": "^0.18.0",
     "stripe": "^18.0.0"

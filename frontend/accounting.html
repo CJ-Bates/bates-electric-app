@@ -19,6 +19,8 @@
     .acc-control label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
     .acc-control input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: #fff; color: #1F3A5F; }
     .acc-control input:focus { outline: none; border-color: #1F3A5F; }
+    .acc-toggle { flex-direction: row; align-items: center; gap: 8px; min-height: 38px; font-size: 0.85rem; color: #374151; cursor: pointer; user-select: none; }
+    .acc-toggle input { width: 16px; height: 16px; accent-color: #1F3A5F; cursor: pointer; }
     .acc-summary { background: #f3f4f6; padding: 18px 22px; border-radius: 10px; margin-bottom: 16px; display: flex; gap: 36px; flex-wrap: wrap; }
     .acc-summary-item .label { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
     .acc-summary-item .value { font-size: 1.5rem; font-weight: 700; color: #1F3A5F; font-variant-numeric: tabular-nums; }
@@ -101,6 +103,7 @@
        DARK MODE — scoped to html.dark only; light mode untouched.
        ============================================================ */
     html.dark .acc-control input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
+    html.dark .acc-toggle { color: var(--text-secondary); }
     html.dark .acc-summary { background: var(--bg-secondary); }
     html.dark .acc-summary-item .label { color: var(--text-secondary); }
     html.dark .acc-summary-item .value { color: var(--text-primary); }
@@ -168,6 +171,10 @@
         <input type="date" id="to-date" />
       </div>
       <button type="button" id="apply-btn" class="btn-primary btn-sm" style="height:38px;">Apply</button>
+      <label class="acc-control acc-toggle" for="hide-test-toggle">
+        <input type="checkbox" id="hide-test-toggle" checked />
+        <span>Hide early test activity</span>
+      </label>
     </div>
 
     <p class="acc-scope" id="scope-hint">Filtering by <strong>transaction date</strong> &mdash; when each charge, refund, or fee occurred.</p>

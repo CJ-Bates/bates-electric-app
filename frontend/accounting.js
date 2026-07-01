@@ -17,10 +17,19 @@
     return;
   }
 
+  // First real (paying) customer signed up 2026-06-25 — live-mode charges dated
+  // before that are CJ's early testing. The "Hide early test activity" toggle
+  // (default ON) filters them from the by-date view so the numbers Brenda sees
+  // start at real revenue. The by-payout view is NOT filtered: each payout group
+  // must tie to its bank line to the penny, and hiding constituents would break
+  // the reconciliation.
+  const FIRST_REAL_CUSTOMER_DATE = '2026-06-25';
+
   // State
   let currentView = 'date';        // 'date' | 'payout'
   let currentData = null;          // last by-date payload
   let currentPayoutData = null;    // last by-payout payload
+  let hideTestActivity = true;     // mirrors the #hide-test-toggle checkbox
 
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
@@ -115,7 +124,7 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       currentData = data;
-      render(data);
+      render();
     } catch (err) {
       console.error('Load failed:', err);
       showStatus('Failed to load: ' + err.message, 'error');
@@ -124,19 +133,44 @@
     }
   }
 
-  function render(data) {
-    const txns = data.transactions || [];
+  // The by-date rows currently visible: the server payload with the early-test
+  // filter applied when the toggle is on. Dates are YYYY-MM-DD so plain string
+  // comparison against the cutoff is correct.
+  function visibleTransactions() {
+    const txns = (currentData && currentData.transactions) || [];
+    if (!hideTestActivity) return txns;
+    return txns.filter((t) => !t.date || t.date >= FIRST_REAL_CUSTOMER_DATE);
+  }
+
+  // Totals for the VISIBLE rows — recomputed client-side because the server
+  // totals cover the whole date range, filtered or not.
+  function visibleTotals(txns) {
+    return txns.reduce((acc, t) => ({
+      gross_cents: acc.gross_cents + (t.gross_cents || 0),
+      fee_cents: acc.fee_cents + (t.fee_cents || 0),
+      net_cents: acc.net_cents + (t.net_cents || 0),
+      count: acc.count + 1,
+    }), { gross_cents: 0, fee_cents: 0, net_cents: 0, count: 0 });
+  }
+
+  function render() {
+    const txns = visibleTransactions();
+    $('empty').hidden = true;
+    $('table-wrap').hidden = true;
+    $('summary-row').hidden = true;
+    $('acc-cards').innerHTML = '';
     if (txns.length === 0) {
       $('empty').hidden = false;
       return;
     }
+    const totals = visibleTotals(txns);
 
     // Summary
     $('summary-row').hidden = false;
-    $('total-gross').textContent = fmtMoney(data.totals.gross_cents);
-    $('total-fee').textContent = fmtMoney(data.totals.fee_cents);
-    $('total-net').textContent = fmtMoney(data.totals.net_cents);
-    $('total-count').textContent = data.totals.count;
+    $('total-gross').textContent = fmtMoney(totals.gross_cents);
+    $('total-fee').textContent = fmtMoney(totals.fee_cents);
+    $('total-net').textContent = fmtMoney(totals.net_cents);
+    $('total-count').textContent = totals.count;
 
     // Desktop table
     $('table-wrap').hidden = false;
@@ -144,10 +178,10 @@
 
     // Footer totals
     $('acc-tfoot').innerHTML = `<tr>
-      <td colspan="4" style="text-align:right;">Totals (${data.totals.count} ${data.totals.count === 1 ? 'charge' : 'charges'}):</td>
-      <td class="num">${fmtMoney(data.totals.gross_cents)}</td>
-      <td class="num" style="color:#b45309;">${fmtMoney(data.totals.fee_cents)}</td>
-      <td class="num" style="color:#047857;">${fmtMoney(data.totals.net_cents)}</td>
+      <td colspan="4" style="text-align:right;">Totals (${totals.count} ${totals.count === 1 ? 'charge' : 'charges'}):</td>
+      <td class="num">${fmtMoney(totals.gross_cents)}</td>
+      <td class="num" style="color:#b45309;">${fmtMoney(totals.fee_cents)}</td>
+      <td class="num" style="color:#047857;">${fmtMoney(totals.net_cents)}</td>
       <td></td>
     </tr>`;
 
@@ -277,12 +311,15 @@
 
   function downloadCsv() {
     if (currentView === 'payout') return downloadPayoutCsv();
-    if (!currentData || !currentData.transactions || currentData.transactions.length === 0) {
+    // Export exactly what's on screen — the early-test filter applies here too.
+    const txns = currentData ? visibleTransactions() : [];
+    if (txns.length === 0) {
       showStatus('Nothing to export.', 'info'); // transient — auto-dismisses so it doesn't linger over a card
       return;
     }
+    const totals = visibleTotals(txns);
     const header = ['Date', 'Customer', 'Address', 'Description', 'Gross', 'Stripe Fee', 'Net', 'Auth Code'];
-    const rows = currentData.transactions.map(t => [
+    const rows = txns.map(t => [
       t.date,
       t.customer_name,
       t.address,
@@ -295,9 +332,9 @@
     // Add a totals row
     rows.push([
       '', '', '', 'TOTALS',
-      (currentData.totals.gross_cents / 100).toFixed(2),
-      (currentData.totals.fee_cents / 100).toFixed(2),
-      (currentData.totals.net_cents / 100).toFixed(2),
+      (totals.gross_cents / 100).toFixed(2),
+      (totals.fee_cents / 100).toFixed(2),
+      (totals.net_cents / 100).toFixed(2),
       '',
     ]);
     const csv = [header, ...rows].map(r => r.map(csvEscape).join(',')).join('\r\n');
@@ -357,16 +394,22 @@
 
   // ---- Init ----
   window.addEventListener('DOMContentLoaded', () => {
+    // Default range: first of the current month through today. Formatted in
+    // LOCAL time — toISOString() shifts to UTC, which can land a day off.
+    const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), 1);
-    $('from-date').value = start.toISOString().slice(0, 10);
-    $('to-date').value = today.toISOString().slice(0, 10);
+    $('from-date').value = ymd(new Date(today.getFullYear(), today.getMonth(), 1));
+    $('to-date').value = ymd(today);
 
     $('apply-btn').addEventListener('click', loadCurrent);
     $('refresh-btn').addEventListener('click', loadCurrent);
     $('export-csv-btn').addEventListener('click', downloadCsv);
     $('view-date').addEventListener('click', () => setView('date'));
     $('view-payout').addEventListener('click', () => setView('payout'));
+    $('hide-test-toggle').addEventListener('change', (e) => {
+      hideTestActivity = e.target.checked;
+      if (currentData) render(); // client-side filter — no refetch needed
+    });
 
     checkRole();
     loadTransactions();

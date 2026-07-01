@@ -1,8 +1,36 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { supabaseAnon, supabaseAdmin, supabaseForUser } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Rate limiters are attached PER ROUTE, not via router.use(): this router is
+// also mounted at '/' (for GET /me), so router-level middleware would run for
+// every request in the app — static files, inspections, generator-care, all
+// of it. The Stripe webhook and the cron endpoint live on other routers and
+// are not rate-limited.
+const RATE_LIMIT_MESSAGE = { error: 'Too many attempts \u2014 try again in a few minutes.' };
+
+// Credential-guessing surface: login, signup, forgot/reset password.
+const strictAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: RATE_LIMIT_MESSAGE,
+});
+
+// The rest of the auth endpoints. GET /me is exempt: it needs a valid bearer
+// token anyway and every dashboard page calls it on load, so office staff
+// sharing one IP would trip a per-IP cap during normal use.
+const generalAuthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: RATE_LIMIT_MESSAGE,
+});
 
 const PROD_ORIGIN = 'https://bates-electric-app.onrender.com';
 
@@ -32,7 +60,7 @@ function allowedBatesEmail(email) {
 }
 
 // POST /auth/signup  { email, password, full_name?, phone? }
-router.post('/signup', async (req, res) => {
+router.post('/signup', strictAuthLimiter, async (req, res) => {
   const { email, password, full_name, phone } = req.body || {};
 
   if (!email || !password) {
@@ -68,7 +96,7 @@ router.post('/signup', async (req, res) => {
 });
 
 // POST /auth/login  { email, password }
-router.post('/login', async (req, res) => {
+router.post('/login', strictAuthLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required.' });
@@ -102,7 +130,7 @@ router.post('/login', async (req, res) => {
 // tokens are short-lived (project JWT-expiry setting); the frontend calls this
 // silently on a 401 so a long-lived (remember-me) session survives without
 // re-login. Returns the rotated refresh token — callers must persist it.
-router.post('/refresh', async (req, res) => {
+router.post('/refresh', generalAuthLimiter, async (req, res) => {
   const { refresh_token } = req.body || {};
   if (!refresh_token) {
     return res.status(400).json({ error: 'Missing refresh token' });
@@ -119,7 +147,7 @@ router.post('/refresh', async (req, res) => {
 });
 
 // POST /auth/logout  (client-side is enough; this is for completeness)
-router.post('/logout', requireAuth, async (req, res) => {
+router.post('/logout', generalAuthLimiter, requireAuth, async (req, res) => {
   await supabaseAnon.auth.signOut();
   res.json({ ok: true });
 });
@@ -131,7 +159,7 @@ router.get('/me', requireAuth, (req, res) => {
 
 // PATCH /me  { full_name }  — update the caller's own profile.
 // RLS enforces self-update via the "profiles self update" policy.
-router.patch('/me', requireAuth, async (req, res) => {
+router.patch('/me', generalAuthLimiter, requireAuth, async (req, res) => {
   const { full_name } = req.body || {};
 
   if (typeof full_name !== 'string') {
@@ -160,7 +188,7 @@ router.patch('/me', requireAuth, async (req, res) => {
 // Re-verifies the current password by attempting a fresh sign-in, then
 // updates via the admin client. We use the admin updateUserById path
 // because it works server-side without needing the user's refreshed session.
-router.post('/change-password', requireAuth, async (req, res) => {
+router.post('/change-password', generalAuthLimiter, requireAuth, async (req, res) => {
   const { current_password, new_password } = req.body || {};
 
   if (!current_password || !new_password) {
@@ -196,7 +224,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
 // Always returns { ok: true } regardless of whether the account exists,
 // so a caller can't probe for valid emails.
 // Uses Supabase's built-in email service so no domain verification is needed.
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', strictAuthLimiter, async (req, res) => {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string') {
     return res.status(400).json({ error: 'Email is required.' });
@@ -233,7 +261,7 @@ router.post('/forgot-password', async (req, res) => {
 // by the backend so the recovery link works regardless of where the
 // frontend is hosted. Reads the access_token from the URL hash and POSTs
 // to /auth/reset-password.
-router.get('/reset-password-page', (req, res) => {
+router.get('/reset-password-page', generalAuthLimiter, (req, res) => {
   res.type('html').send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -419,7 +447,7 @@ router.get('/reset-password-page', (req, res) => {
 // Direct token-hash verification — bypasses Supabase's redirect flow entirely.
 // The email template links straight to our page with ?token_hash=...&type=recovery,
 // and the page POSTs the hash here so we can exchange it for a session.
-router.post('/verify-recovery', async (req, res) => {
+router.post('/verify-recovery', generalAuthLimiter, async (req, res) => {
   const { token_hash } = req.body || {};
   if (!token_hash) {
     return res.status(400).json({ error: 'Missing token.' });
@@ -453,7 +481,7 @@ router.post('/verify-recovery', async (req, res) => {
 // POST /auth/reset-password  { access_token, new_password }
 // Consumes a Supabase recovery access_token (delivered via the email link)
 // and sets the new password via the admin client.
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', strictAuthLimiter, async (req, res) => {
   const { access_token, new_password } = req.body || {};
 
   if (!access_token || !new_password) {

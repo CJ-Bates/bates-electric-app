@@ -3,7 +3,7 @@
 // All customer-facing transactional emails (welcome, card-failed, portal link,
 // visit-scheduled, visit-complete, renewal-upcoming, resend-welcome, admin
 // test-sends) go through this module so the brand header/logo/footer, phone
-// number, sender identity, and SendGrid config live in ONE place.
+// number, sender identity, and mail transport config live in ONE place.
 //
 // When you want to change the phone number, brand color, logo URL, or any
 // other surface detail: edit the BRAND object below. Don't hunt through

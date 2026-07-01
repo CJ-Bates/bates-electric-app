@@ -127,7 +127,11 @@
     empty.hidden = true;
     container.innerHTML = filtered.map(insp => {
       const date = insp.job_date ? new Date(insp.job_date).toLocaleDateString() : 'N/A';
-      const technicianId = insp.technician_id ? `Tech: ${insp.technician_id.substring(0, 8)}...` : 'Tech: Unknown';
+      // Prefer the resolved profile name; fall back to a shortened id only if
+      // the profile is gone (deleted account).
+      const techLabel = insp.technician_name
+        ? `Tech: ${escapeHtml(insp.technician_name)}`
+        : (insp.technician_id ? `Tech: ${insp.technician_id.substring(0, 8)}\u2026` : 'Tech: Unknown');
       return `
         <div class="insp-card" data-id="${insp.id}">
           <div class="insp-card-header">
@@ -139,7 +143,7 @@
             <div class="insp-card-meta">
               <p><strong>Job #:</strong> ${insp.job_number || 'N/A'}</p>
               <p><strong>Email:</strong> ${insp.customer_email || 'N/A'}</p>
-              <p><strong>${technicianId}</strong></p>
+              <p><strong>${techLabel}</strong></p>
             </div>
           </div>
           <div class="insp-card-footer">
@@ -333,7 +337,7 @@
       html += `
         <h3 class="details-section-title">Report &amp; Photos</h3>
         <div id="details-files" class="details-files">
-          <div class="files-loading">Loading files…</div>
+          <div class="files-loading">Loading files\u2026</div>
         </div>
       `;
 
@@ -398,7 +402,7 @@
   async function downloadPhotosZip(inspectionId, btn) {
     const original = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Building zip…';
+    btn.textContent = 'Building zip\u2026';
     try {
       const res = await BatesAuth.authFetch(`${API_BASE}/inspections/${inspectionId}/photos.zip`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -490,11 +494,9 @@
     return '#666';
   }
 
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
+  // Shared quote-safe escaper from ui-dialogs.js (loaded just before this
+  // script) — one implementation for every page instead of per-file copies.
+  const escapeHtml = window.BatesUI.escapeHtml;
 
   // Init
   checkRole();

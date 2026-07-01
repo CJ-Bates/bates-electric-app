@@ -2,6 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <script>
+    // Load-time auth gate — mirrors shared-nav.js (which this page doesn't load
+    // to keep the viewer chrome-free): bounce to login when no session token
+    // exists in either store. Deterrent only; the documents themselves are
+    // what this page renders, and it's useless without a session anyway.
+    try {
+      if (!localStorage.getItem('bates.auth.token') && !sessionStorage.getItem('bates.auth.token')) {
+        location.replace('index.html');
+      }
+    } catch (e) {}
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#1B2D5B" />
   <meta name="apple-mobile-web-app-capable" content="yes" />

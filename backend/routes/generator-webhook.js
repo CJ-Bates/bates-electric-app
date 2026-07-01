@@ -233,17 +233,45 @@ async function handleSubscriptionCreated(subscription) {
   const firstVisitId = firstVisitRow ? firstVisitRow.id : null;
 
   // 6. Pending add-ons (billed when performed). Tied to the first visit cycle.
+  // A row with NULL amount_cents corrupts the batch add-on charge math later,
+  // so any failure here (unparseable metadata, price lookup) is reported through
+  // the shared error sink and the row is SKIPPED — never inserted with a NULL
+  // amount. The handler still must not throw (Stripe retries on 500s); Amy can
+  // re-add a skipped add-on from the dashboard.
+  const webhookErrCtx = { route: '/webhooks/stripe (customer.subscription.created)', method: 'POST', user: 'stripe-webhook' };
   let onDemand = [];
   if (meta.on_demand_addons) {
-    try { onDemand = JSON.parse(meta.on_demand_addons); } catch {}
+    try {
+      onDemand = JSON.parse(meta.on_demand_addons);
+      if (!Array.isArray(onDemand)) throw new Error('on_demand_addons is not an array');
+    } catch (e) {
+      reportError(
+        new Error(`on_demand_addons metadata unparseable for subscription ${subscription.id} (customer ${stripeCustomerId}): ${(e && e.message) || e}`),
+        webhookErrCtx
+      ).catch(() => {});
+      onDemand = [];
+    }
   }
   for (const item of onDemand) {
     let amountCents = null;
     try {
       const price = await stripeGet(`/prices/${item.price_id}`);
       amountCents = price.unit_amount || null;
-    } catch {}
-    await supabase.from('generator_pending_addons').insert({
+    } catch (e) {
+      reportError(
+        new Error(`price lookup failed for add-on "${item.addon}" (${item.price_id}) on subscription ${subscription.id} (customer ${stripeCustomerId}): ${(e && e.message) || e}`),
+        webhookErrCtx
+      ).catch(() => {});
+      continue; // skip — do not insert a row with a NULL amount
+    }
+    if (amountCents == null) {
+      reportError(
+        new Error(`price ${item.price_id} has no unit_amount for add-on "${item.addon}" on subscription ${subscription.id} (customer ${stripeCustomerId})`),
+        webhookErrCtx
+      ).catch(() => {});
+      continue;
+    }
+    const { error: addonInsertErr } = await supabase.from('generator_pending_addons').insert({
       subscription_id: sub.id,
       addon_type: item.addon,
       stripe_price_id: item.price_id,
@@ -251,6 +279,12 @@ async function handleSubscriptionCreated(subscription) {
       status: 'pending',
       service_visit_id: firstVisitId,
     });
+    if (addonInsertErr) {
+      reportError(
+        new Error(`pending add-on insert failed for "${item.addon}" on subscription ${subscription.id} (customer ${stripeCustomerId}): ${addonInsertErr.message}`),
+        webhookErrCtx
+      ).catch(() => {});
+    }
   }
 
   // 6b. Seed the standing (auto-return) set from the RECURRING add-ons chosen at

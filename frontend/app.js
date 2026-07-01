@@ -74,7 +74,13 @@
         body: JSON.stringify({ email }),
       });
       if (!res.ok) {
-        showStatus('status', 'Could not send reset link. Try again in a moment.', 'error');
+        // Surface the server's message when it sends one (e.g. the 429
+        // rate-limit body); fall back to a generic line otherwise.
+        const data = await res.json().catch(() => ({}));
+        const msg = typeof data.error === 'string' && data.error
+          ? data.error
+          : 'Could not send reset link. Try again in a moment.';
+        showStatus('status', msg, 'error');
         return;
       }
       showStatus(
@@ -131,7 +137,10 @@
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'Sign in failed. Check your credentials.');
+        // Only render string messages — a non-JSON or oddly-shaped error body
+        // must never surface as "[object Object]".
+        const msg = [data.error, data.message].find((m) => typeof m === 'string' && m);
+        throw new Error(msg || 'Sign in failed. Check your credentials.');
       }
 
       const data = await res.json();

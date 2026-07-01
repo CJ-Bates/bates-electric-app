@@ -111,6 +111,18 @@
     window.BatesAuth = { authFetch, redirectToLogin, refreshSession, getToken, getRefreshToken, onLoginPage };
   })();
 
+  // ---- Load-time auth gate -------------------------------------------------
+  // Every page that loads shared-nav.js (all except index.html, pdf-viewer.html
+  // and reset-password.html — pdf-viewer carries its own inline guard) bounces
+  // straight to login when no session token exists in either store. This is a
+  // deterrent, not real protection — the HTML is still fetchable — the sensitive
+  // data itself lives behind authenticated API endpoints. onLoginPage() is the
+  // loop guard: never redirect the login page to itself.
+  if (!window.BatesAuth.getToken() && !window.BatesAuth.onLoginPage()) {
+    window.location.replace('index.html');
+    return;
+  }
+
   // SVG icon definitions
   const svgIcons = {
     hamburger: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>`,
@@ -126,6 +138,7 @@
     logOut: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
     fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>`,
     zap: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+    mapPin: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
     };
 
   // Drawer menu structure with SVG icons
@@ -135,8 +148,9 @@
       items: [
         { label: 'Home', icon: 'house', href: 'home.html', id: 'drawer-home' },
         { label: 'My Visits', icon: 'zap', href: 'tech.html', id: 'drawer-tech', techOnly: true },
-        { label: 'Inspections', icon: 'clipboardCheck', href: 'inspection.html', id: 'drawer-inspection' },
-        { label: 'Dashboard', icon: 'layoutDashboard', href: 'office.html', id: 'drawer-dashboard', officeOnly: true },
+        { label: 'New Inspection', icon: 'clipboardCheck', href: 'inspection.html', id: 'drawer-inspection' },
+        { label: 'Site Visit', icon: 'mapPin', href: 'site-visit.html', id: 'drawer-site-visit' },
+        { label: 'Inspection Dashboard', icon: 'layoutDashboard', href: 'office.html', id: 'drawer-dashboard', officeOnly: true },
         { label: 'Generator Care', icon: 'zap', href: 'generator-care.html', id: 'drawer-generator', officeOnly: true }
       ]
     },
@@ -312,7 +326,7 @@
 
       if (currentPage === 'home' && itemId === 'drawer-home') isActive = true;
       if (currentPage === 'inspection' && itemId === 'drawer-inspection') isActive = true;
-      if (currentPage === 'site-visit' && itemId === 'drawer-inspection') isActive = true;
+      if (currentPage === 'site-visit' && itemId === 'drawer-site-visit') isActive = true;
       if (currentPage === 'office' && itemId === 'drawer-dashboard') isActive = true;
       if (currentPage === 'documents' && itemId === 'drawer-documents') isActive = true;
       if (currentPage === 'safety-manual' && itemId === 'drawer-documents') isActive = true;

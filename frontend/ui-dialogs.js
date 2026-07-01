@@ -7,6 +7,8 @@
 //   openConfirm({ title, message, confirmText, cancelText, danger }) -> Promise<boolean>
 //   openPrompt({ title, message, fields, validate, confirmText, cancelText, danger }) -> Promise<values|null>
 //   showStatus(message, kind)   // kind: 'success' | 'error' | 'info' | 'warning'
+//   BatesUI.escapeHtml(s)       // the one shared HTML escaper (quote-safe) —
+//                               // page scripts alias it instead of re-defining it
 //
 // Styling lives in ui-dialogs.css (dialog chrome + buttons) and styles.css (.status toast).
 (function () {
@@ -131,4 +133,5 @@
   window.openConfirm = openConfirm;
   window.openPrompt = openPrompt;
   window.showStatus = showStatus;
+  window.BatesUI = { escapeHtml };
 })();

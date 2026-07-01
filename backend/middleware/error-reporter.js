@@ -4,7 +4,7 @@
 // Three escalating sinks, all optional except the console:
 //   1. console      -- always; logs route, method, user, message, stack.
 //   2. Sentry       -- if process.env.SENTRY_DSN is set (@sentry/node).
-//   3. email alert  -- if process.env.ALERT_EMAIL is set (via SendGrid).
+//   3. email alert  -- if process.env.ALERT_EMAIL is set (via Brevo).
 //
 // With NO env vars set this degrades cleanly to console-only logging, so the
 // app runs identically in dev and in prod-before-CJ-adds-the-keys. The Sentry
@@ -119,6 +119,23 @@ async function reportError(err, context = {}) {
 // Express error-handling middleware (4-arg signature). Mount LAST, after all
 // routes. Returns a generic 500 -- never leaks the stack to the client.
 function errorReporter(err, req, res, next) {
+  // Errors that middleware marked as client-caused (body-parser's malformed
+  // JSON = 400, over-limit body = 413, etc.) are not server faults: return the
+  // real status with a clean message and skip the Sentry/alert escalation.
+  const clientStatus = err && (err.status || err.statusCode);
+  if (clientStatus >= 400 && clientStatus < 500) {
+    console.warn(
+      `[error-reporter] client error ${clientStatus} on ` +
+      `${(req && req.method) || '?'} ${(req && (req.originalUrl || req.url)) || '?'}: ` +
+      ((err && err.message) || err)
+    );
+    if (res.headersSent) return next(err);
+    const message = err.type === 'entity.too.large'
+      ? 'Request body too large.'
+      : 'Invalid request.';
+    return res.status(clientStatus).json({ error: message });
+  }
+
   reportError(err, {
     route: (req && (req.originalUrl || req.url)) || undefined,
     method: req && req.method,

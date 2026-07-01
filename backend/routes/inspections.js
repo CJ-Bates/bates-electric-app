@@ -28,11 +28,50 @@ function extractIndexed(data) {
   };
 }
 
+// The four data keys extractIndexed() denormalizes into real columns — these
+// must be strings (when present) and reasonably short, or the row is rejected.
+const INDEXED_KEYS = ['job_date', 'job_num', 'job_cust', 'job_email'];
+const INDEXED_MAX_LEN = 300;
+
+// Light shape validation for the JSONB form blob. The express.json 1mb limit
+// (see server.js) is the real size cap; this checks key sanity: `data` must be
+// a plain object whose top-level values are JSON scalars, arrays, or plain
+// objects, and the indexed fields must be strings capped at 300 chars.
+// Returns an error message, or null when the payload is acceptable.
+function validateInspectionData(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return 'Form data must be an object.';
+  }
+  for (const [key, value] of Object.entries(data)) {
+    const t = typeof value;
+    const ok =
+      value === null ||
+      t === 'string' || t === 'number' || t === 'boolean' ||
+      Array.isArray(value) ||
+      (t === 'object' && Object.getPrototypeOf(value) === Object.prototype);
+    if (!ok) return `Form field "${key}" has an unsupported value type.`;
+  }
+  for (const key of INDEXED_KEYS) {
+    const value = data[key];
+    if (value == null) continue;
+    if (typeof value !== 'string') return `Form field "${key}" must be a string.`;
+    if (value.length > INDEXED_MAX_LEN) return `Form field "${key}" is too long (max ${INDEXED_MAX_LEN} characters).`;
+  }
+  return null;
+}
+
 // POST /inspections  { data: {...}, status?: 'draft' | 'submitted' }
 router.post('/', requireAuth, async (req, res) => {
   const { data, status } = req.body || {};
   if (!data || typeof data !== 'object') {
     return res.status(400).json({ error: 'Missing form data' });
+  }
+  const dataErr = validateInspectionData(data);
+  if (dataErr) {
+    return res.status(400).json({ error: dataErr });
+  }
+  if (status !== undefined && status !== 'draft' && status !== 'submitted') {
+    return res.status(400).json({ error: "status must be 'draft' or 'submitted'." });
   }
 
   const client = supabaseForUser(req.token);
@@ -257,7 +296,28 @@ router.get('/', requireAuth, async (req, res) => {
 
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ inspections: data });
+
+  // Resolve technician_id -> display name so the dashboard doesn't show raw
+  // UUIDs. Admin client is fine here: it only reads names for rows RLS already
+  // released to this caller; it grants no extra row visibility.
+  const inspections = data || [];
+  const techIds = [...new Set(inspections.map((i) => i.technician_id).filter(Boolean))];
+  if (techIds.length) {
+    const { data: profiles, error: profErr } = await supabaseAdmin
+      .from('profiles')
+      .select('id, full_name, email')
+      .in('id', techIds);
+    if (profErr) {
+      console.warn('technician name lookup failed:', profErr.message);
+    } else {
+      const nameById = new Map((profiles || []).map((p) => [p.id, p.full_name || p.email || null]));
+      for (const insp of inspections) {
+        insp.technician_name = nameById.get(insp.technician_id) || null;
+      }
+    }
+  }
+
+  res.json({ inspections });
 });
 
 // GET /inspections/:id/files
@@ -406,7 +466,11 @@ router.get('/:id', requireAuth, async (req, res) => {
 // PATCH /inspections/:id  { data?, status? } — for autosave of drafts
 router.patch('/:id', requireAuth, async (req, res) => {
   const patch = {};
-  if (req.body?.data && typeof req.body.data === 'object') {
+  if (req.body?.data !== undefined) {
+    const dataErr = validateInspectionData(req.body.data);
+    if (dataErr) {
+      return res.status(400).json({ error: dataErr });
+    }
     patch.data = req.body.data;
     Object.assign(patch, extractIndexed(req.body.data));
   }
