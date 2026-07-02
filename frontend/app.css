@@ -31,8 +31,11 @@
   justify-content: center;
   padding: max(24px, env(safe-area-inset-top)) 20px
            max(24px, env(safe-area-inset-bottom));
-  /* flat --bg + .ambient blobs (tokens.css) replace the old gradients */
-  background: transparent;
+  /* flat --bg + .ambient blobs (tokens.css) replace the old gradients.
+     Must PAINT --bg (not transparent): body's background propagates to the
+     canvas, which is the only layer behind the z-index:-1 ambient blobs —
+     transparent here leaves a white canvas in dark mode. */
+  background: var(--bg);
 }
 
 .auth-shell,
@@ -300,6 +303,9 @@ input:focus-visible {
 .status.error::before   { background: #FF9E96; }
 .status.warning::before { background: #F0C060; }
 .status.info::before    { background: #82AAFF; }
+/* display:flex above beats the UA [hidden] rule — restore it explicitly, or
+   every page shows a small empty toast pill in the corner. */
+.status[hidden] { display: none; }
 
 .legal {
   margin-top: 22px;
@@ -329,7 +335,7 @@ input:focus-visible {
    ============================================================ */
 
 .hub-body {
-  background: transparent; /* flat --bg + .ambient come from tokens.css */
+  background: var(--bg); /* paints the canvas behind the z-index:-1 ambient blobs */
   color: var(--ink);
   min-height: 100vh;
   min-height: 100dvh;
