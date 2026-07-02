@@ -132,7 +132,7 @@ const UPSELL_ITEMS = [
   { name: 'up_co',      label: 'CO detector installation' },
   { name: 'up_alum',    label: 'Aluminum wiring remediation' },
   { name: 'up_arc',     label: 'Arc fault protection upgrade' },
-  { name: 'up_svc',     label: 'Service upgrade (100A → 200A)' },
+  { name: 'up_svc',     label: 'Service upgrade (100A to 200A)' },
   { name: 'up_gen',     label: 'Whole-home generator / transfer sw.' },
   { name: 'up_outdoor', label: 'Outdoor / weatherproof outlets' },
   { name: 'up_covers',  label: 'In-use outlet covers installation' },

@@ -90,7 +90,7 @@
   function renderList(visits) {
     const list = document.getElementById('tv-list');
     if (!visits.length) {
-      list.innerHTML = `<div class="tv-empty"><div class="tv-empty-icon">✓</div>No visits assigned to you right now.<br>The office will dispatch visits here.</div>`;
+      list.innerHTML = `<div class="tv-empty"><div class="tv-empty-icon">${BatesIcons.icon('check', 24)}</div>No visits assigned to you right now.<br>The office will dispatch visits here.</div>`;
       return;
     }
     const today = todayStr();
@@ -119,13 +119,13 @@
       const st = visitStatus(v);
       let chip, when;
       if (st === 'done') {
-        chip = `<span class="tv-chip tv-chip-done">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
+        chip = `<span class="badge badge-neutral">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
         when = '';
       } else if (st === 'scheduled') {
-        chip = `<span class="tv-chip tv-chip-sched">Scheduled</span>`;
+        chip = `<span class="badge badge-ok">Scheduled</span>`;
         when = `<div class="tv-meta">${esc(fmtDateTime(v.appointment_at))}</div>`;
       } else {
-        chip = `<span class="tv-chip tv-chip-need">Needs scheduling</span>`;
+        chip = `<span class="badge badge-warn">Needs scheduling</span>`;
         when = v.scheduled_date ? `<div class="tv-meta">Due ${esc(fmtDate(v.scheduled_date))}</div>` : '';
       }
       const addr = (v.subscription && v.subscription.customer)
@@ -191,8 +191,8 @@
       <div class="tvd-sec">
         <h3>Customer</h3>
         <div class="tvd-row"><span class="k">Name</span><span class="v">${esc(c.name || '—')}</span></div>
-        ${addrFull ? `<div class="tvd-row"><span class="k">Address</span><span class="v"><a class="tvd-action" href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(addrFull)} ↗</a></span></div>` : ''}
-        ${telDigits ? `<div class="tvd-row"><span class="k">Phone</span><span class="v"><a class="tvd-action" href="tel:${esc(telDigits)}">${esc(c.phone)} 📞</a></span></div>` : ''}
+        ${addrFull ? `<div class="tvd-row"><span class="k">Address</span><span class="v"><a class="tvd-action" href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(addrFull)} ${BatesIcons.icon('external', 14)}</a></span></div>` : ''}
+        ${telDigits ? `<div class="tvd-row"><span class="k">Phone</span><span class="v"><a class="tvd-action" href="tel:${esc(telDigits)}">${esc(c.phone)} ${BatesIcons.icon('phone', 14)}</a></span></div>` : ''}
       </div>
 
       <div class="tvd-sec">
@@ -205,14 +205,14 @@
 
       ${(v.notes || v.internal_note) ? `<div class="tvd-sec">
         <h3>Notes</h3>
-        ${v.notes ? `<div style="margin-bottom:${v.internal_note ? '10px' : '0'}"><div class="k" style="font-size:0.78rem;color:#6b7280;margin-bottom:3px;">Customer-visible</div><div class="tvd-note">${esc(v.notes)}</div></div>` : ''}
-        ${v.internal_note ? `<div><div class="k" style="font-size:0.78rem;color:#92400E;margin-bottom:3px;">Internal (not shown to customer)</div><div class="tvd-note tvd-note-internal">${esc(v.internal_note)}</div></div>` : ''}
+        ${v.notes ? `<div style="margin-bottom:${v.internal_note ? '10px' : '0'}"><div class="k" style="font-size:0.78rem;color:var(--ink-2);margin-bottom:3px;">Customer-visible</div><div class="tvd-note">${esc(v.notes)}</div></div>` : ''}
+        ${v.internal_note ? `<div><div class="k" style="font-size:0.78rem;color:var(--warn);margin-bottom:3px;">Internal (not shown to customer)</div><div class="tvd-note tvd-note-internal">${esc(v.internal_note)}</div></div>` : ''}
       </div>` : ''}
 
       <div class="tvd-cta">
         ${done
           ? `<div class="tvd-done-banner">Completed ${esc(fmtDate(v.completed_date))}${v.completed_by ? ' by ' + esc(v.completed_by) : ''}</div>`
-          : `<button class="tvd-complete" id="tvd-complete-btn">Mark visit complete</button>`}
+          : `<button class="btn btn-primary tvd-complete" id="tvd-complete-btn">Mark visit complete</button>`}
       </div>
     `;
 

@@ -90,8 +90,8 @@ function renderSVPrompts() {
     div.className = 'sv-photo-prompt' + (hasDone ? ' has-file' : '');
     div.id = 'sv-prompt-' + prompt.id;
 
-    var checkIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
-    var camIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1E3A6E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+    var checkIcon = BatesIcons.icon('check', 18);
+    var camIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
 
     div.innerHTML = '<div class="sv-prompt-icon' + (hasDone ? ' done' : '') + '">' + (hasDone ? checkIcon : camIcon) + '</div>'
       + '<div class="sv-prompt-text">'
@@ -143,7 +143,7 @@ function svAddExtraUpload() {
   div.id = 'sv-extra-wrap-' + id;
   div.className = 'sv-photo-prompt';
 
-  var camIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1E3A6E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  var camIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
 
   div.innerHTML = '<div class="sv-prompt-icon">' + camIcon + '</div>'
     + '<div class="sv-prompt-text">'
@@ -329,7 +329,7 @@ function svSubmit() {
         var tUrl = f.url.indexOf('/upload/') > -1 ? f.url.replace('/upload/', '/upload/c_fill,w_200,h_150,a_exif/') : f.url;
         photoRows += '<a href="' + f.url + '" target="_blank"><img src="' + tUrl + '" style="width: 100px; height: 75px; border-radius: 6px; margin: 2px; display: block;"></a> ';
       } else {
-        photoRows += '<a href="' + f.url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none; margin: 2px;">&#9654; Video</a> ';
+        photoRows += '<a href="' + f.url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none; margin: 2px;">Video</a> ';
       }
     });
 
@@ -343,7 +343,7 @@ function svSubmit() {
       var tUrl2 = f.url.indexOf('/upload/') > -1 ? f.url.replace('/upload/', '/upload/c_fill,w_200,h_150,a_exif/') : f.url;
       photoRows += '<a href="' + f.url + '" target="_blank"><img src="' + tUrl2 + '" style="width: 100px; height: 75px; border-radius: 6px; margin: 2px; display: block;"></a>';
     } else {
-      photoRows += '<a href="' + f.url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none;">&#9654; Video</a>';
+      photoRows += '<a href="' + f.url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none;">Video</a>';
     }
 
     photoRows += '</td></tr>';
@@ -390,7 +390,7 @@ function svSubmit() {
     },
     function(err) {
       btn.disabled = false;
-      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Submit to Estimator';
+      btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Submit to Estimator';
       svSetStatus(statusEl, 'error', 'Email failed: ' + (err.text || 'unknown error') + '. Data saved locally.');
     }
   );
@@ -398,7 +398,7 @@ function svSubmit() {
 
 function svShowSuccess(btn, statusEl, totalFiles, offline) {
   btn.disabled = false;
-  btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Submitted!';
+  btn.innerHTML = BatesIcons.icon('check', 20) + ' Submitted!';
   svSetStatus(statusEl, 'success', offline ? 'Saved locally. ' : 'Sent to ' + OFFICE_EMAIL + '! ' + totalFiles + ' file' + (totalFiles === 1 ? '' : 's') + ' uploaded to Cloudinary.');
 
   setTimeout(function() {
@@ -443,7 +443,7 @@ function svResetForm() {
 
   var sb = document.getElementById('sv-submit-btn');
   if (sb) {
-    sb.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Submit to Estimator';
+    sb.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Submit to Estimator';
   }
 
   var ss = document.getElementById('sv-submit-status');
@@ -512,7 +512,7 @@ function svLoadDashboard() {
         if (f.type === 'image') {
           thumbs += '<a href="' + f.url + '" target="_blank"><img class="sv-dash-thumb-img" src="' + f.url + '"></a>';
         } else {
-          thumbs += '<a href="' + f.url + '" target="_blank" class="sv-dash-thumb-vid">&#9654; Vid</a>';
+          thumbs += '<a href="' + f.url + '" target="_blank" class="sv-dash-thumb-vid"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:3px;flex-shrink:0"><polygon points="8 5 19 12 8 19 8 5"/></svg>Vid</a>';
         }
       });
 

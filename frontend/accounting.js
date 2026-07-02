@@ -59,11 +59,11 @@
   const rowTr = (t) => `<tr>
       <td>${t.date}</td>
       <td>${escapeHtml(t.customer_name)}</td>
-      <td style="color:#6b7280;font-size:0.82rem;">${escapeHtml(t.address)}</td>
+      <td style="color:var(--ink-2);font-size:0.82rem;">${escapeHtml(t.address)}</td>
       <td>${escapeHtml(t.description)}</td>
       <td class="num">${fmtMoney(t.gross_cents)}</td>
-      <td class="num" style="color:#b45309;">${fmtMoney(t.fee_cents)}</td>
-      <td class="num" style="color:#047857;font-weight:600;">${fmtMoney(t.net_cents)}</td>
+      <td class="num" style="color:var(--warn);">${fmtMoney(t.fee_cents)}</td>
+      <td class="num" style="color:var(--ok);font-weight:600;">${fmtMoney(t.net_cents)}</td>
       <td><span class="acc-auth-code">${escapeHtml(t.auth_code || '—')}</span></td>
     </tr>`;
 
@@ -180,8 +180,8 @@
     $('acc-tfoot').innerHTML = `<tr>
       <td colspan="4" style="text-align:right;">Totals (${totals.count} ${totals.count === 1 ? 'charge' : 'charges'}):</td>
       <td class="num">${fmtMoney(totals.gross_cents)}</td>
-      <td class="num" style="color:#b45309;">${fmtMoney(totals.fee_cents)}</td>
-      <td class="num" style="color:#047857;">${fmtMoney(totals.net_cents)}</td>
+      <td class="num" style="color:var(--warn);">${fmtMoney(totals.fee_cents)}</td>
+      <td class="num" style="color:var(--ok);">${fmtMoney(totals.net_cents)}</td>
       <td></td>
     </tr>`;
 
@@ -226,15 +226,26 @@
     </div>`;
   }
 
+  // Stripe payout status -> shared badge intent (Design System v3):
+  // paid = ok · pending / in_transit = warn · failed = danger ·
+  // canceled = neutral. Anything unexpected falls back to neutral.
+  const STATUS_BADGE = {
+    paid: 'badge-ok',
+    in_transit: 'badge-warn',
+    pending: 'badge-warn',
+    failed: 'badge-danger',
+    canceled: 'badge-neutral',
+  };
+
   function payoutCardHtml(g) {
     const dirClass = g.direction === 'debit' ? 'debit' : 'deposit';
     const dirLabel = g.direction === 'debit' ? 'Debit from bank' : 'Deposit to bank';
-    const statusClass = String(g.status || '').replace(/[^a-z_]/gi, '');
+    const badgeClass = STATUS_BADGE[String(g.status || '').toLowerCase()] || 'badge-neutral';
     const niceStatus = String(g.status || '').replace(/_/g, ' ');
     const tied = !!g.ties;
     const head = `<div class="payout-head">
         <div>
-          <div class="payout-date">${niceDate(g.arrival_date)}<span class="payout-status ${statusClass}">${escapeHtml(niceStatus)}</span></div>
+          <div class="payout-date">${niceDate(g.arrival_date)}<span class="badge ${badgeClass} payout-status">${escapeHtml(niceStatus)}</span></div>
           <div class="payout-id">${escapeHtml(g.id)}</div>
         </div>
         <div class="payout-bank ${dirClass}">
@@ -255,7 +266,7 @@
       ${txnTableHtml(g.transactions)}
       ${txnCardsHtml(g.transactions)}
       <div class="payout-recon ${tied ? 'tied' : 'untied'}">
-        <span class="chk">${tied ? '✓' : '⚠'}</span>
+        <span class="chk">${tied ? BatesIcons.icon('check', 16) : BatesIcons.icon('warn', 16)}</span>
         <span>Transactions net: ${fmtMoney(g.transactions_net_cents)} &nbsp;=&nbsp; ${dirLabel}: ${fmtMoney(g.bank_amount_cents)}${tied ? ' — ties to the penny' : ' — does NOT tie; review this payout'}</span>
       </div>
     </div>`;

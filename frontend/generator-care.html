@@ -11,134 +11,76 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric &mdash; Generator Care</title>
   <style>
-    /* Generator Care specific styles */
+    /* Generator Care page styles — layout + page-specific bits only.
+       Buttons/badges/chips/filter pills come from components.css; every color
+       reads tokens.css, so html.dark themes this page with no overrides. */
     .gc-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-    .gc-tab { padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; cursor: pointer; font-size: 0.9rem; font-family: inherit; }
-    .gc-tab.active { background: #1F3A5F; color: #fff; border-color: #1F3A5F; }
-    .gc-tab .count { display: inline-block; margin-left: 6px; background: rgba(0,0,0,0.1); padding: 1px 7px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
-    .gc-tab.active .count { background: rgba(255,255,255,0.25); }
-    .gc-table-wrap { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; }
+    .gc-table-wrap { background: var(--surface); border-radius: 8px; box-shadow: var(--shadow-1); overflow: hidden; }
     .gc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    .gc-table th { background: #f3f4f6; padding: 10px 14px; text-align: left; font-weight: 600; color: #374151; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
-    .gc-table td { padding: 12px 14px; border-bottom: 1px solid #f3f4f6; }
+    .gc-table th { background: var(--surface-2); padding: 10px 14px; text-align: left; font-weight: 600; color: var(--ink-2); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--line); }
+    .gc-table td { padding: 12px 14px; border-bottom: 1px solid var(--line); }
     .gc-row { cursor: pointer; transition: background 0.1s; }
-    .gc-row:hover { background: #f9fafb; }
-    .gc-row.overdue { background: #fef2f2; }
-    .gc-row.overdue:hover { background: #fee2e2; }
-    .gc-row.soon { background: #fefce8; }
-    .gc-row.soon:hover { background: #fef3c7; }
-    .gc-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; }
-    .gc-badge-overdue { background: #fee2e2; color: #991b1b; }
-    .gc-badge-soon { background: #fef3c7; color: #92400e; }
-    .gc-badge-active { background: #d1fae5; color: #065f46; }
-    .gc-badge-fleet { background: #dbeafe; color: #1e3a8a; }
-    .gc-customer-name { font-weight: 600; color: #1F3A5F; }
-    .gc-customer-meta { color: #6b7280; font-size: 0.82rem; }
-    .gc-gen-info { color: #374151; font-size: 0.85rem; }
-    .gc-empty { padding: 60px 20px; text-align: center; color: #6b7280; }
+    .gc-row:hover { background: var(--surface-2); }
+    .gc-row.overdue { background: var(--danger-bg); }
+    .gc-row.overdue:hover { background: color-mix(in srgb, var(--danger) 14%, var(--surface)); }
+    .gc-row.soon { background: var(--warn-bg); }
+    .gc-row.soon:hover { background: color-mix(in srgb, var(--warn) 16%, var(--surface)); }
+    .gc-customer-name { font-weight: 600; color: var(--accent); }
+    .gc-customer-meta { color: var(--ink-2); font-size: 0.82rem; }
+    .gc-gen-info { color: var(--ink-2); font-size: 0.85rem; }
+    .gc-empty { padding: 60px 20px; text-align: center; color: var(--ink-2); }
     .gc-mobile-card { display: none; }
     @media (max-width: 768px) {
       .gc-table { display: none; }
       .gc-mobile-card { display: block; }
-      .gc-card { background: #fff; padding: 14px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid #d1d5db; cursor: pointer; }
-      .gc-card.overdue { border-left-color: #ef4444; }
-      .gc-card.soon { border-left-color: #f59e0b; }
+      .gc-card { background: var(--surface); padding: 14px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--line); cursor: pointer; }
+      .gc-card.overdue { border-left-color: var(--danger); }
+      .gc-card.soon { border-left-color: var(--warn); }
       .gc-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
-      .gc-card-name { font-weight: 600; color: #1F3A5F; font-size: 1rem; }
-      .gc-card-meta { color: #6b7280; font-size: 0.82rem; }
+      .gc-card-name { font-weight: 600; color: var(--accent); font-size: 1rem; }
+      .gc-card-meta { color: var(--ink-2); font-size: 0.82rem; }
       .gc-card-due { font-size: 0.85rem; font-weight: 600; margin-top: 8px; }
-      .gc-card-due.overdue { color: #991b1b; }
-      .gc-card-due.soon { color: #92400e; }
-    
-      /* Mobile tap target improvements */
-      .gc-mark-done { padding: 12px 16px; font-size: 0.95rem; min-height: 44px; border-radius: 6px; }
-      .gc-mark-done.gc-mark-done-sm { padding: 10px 14px; font-size: 0.88rem; min-height: 40px; }
-      .gc-tab { padding: 10px 14px; font-size: 0.95rem; }
-      .dashboard-header-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-      .dashboard-header-actions .btn-secondary { padding: 8px 12px; font-size: 0.85rem; min-height: 36px; }
+      .gc-card-due.overdue { color: var(--danger); }
+      .gc-card-due.soon { color: var(--warn); }
+
       /* Detail modal: stack action buttons + give them room */
       .modal-content { width: 95% !important; max-width: 95% !important; max-height: 92vh !important; }
       .modal-body { padding: 16px !important; }
-      .gc-detail-section { margin-bottom: 18px; }
-      .gc-visit-row { flex-wrap: wrap; gap: 8px; padding: 12px 0; }
-      .gc-visit-row .gc-mark-done { width: 100%; }
       /* Inputs at least 16px to prevent iOS zoom */
       .modal-body input, .modal-body select, .modal-body textarea { font-size: 16px !important; }
     }
-    /* Detail modal styles */
-    .gc-detail-section { margin-bottom: 24px; }
-    .gc-detail-h { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
-    .gc-detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; font-size: 0.9rem; }
-    .gc-detail-grid dt { color: #6b7280; }
-    .gc-detail-grid dd { color: #111827; margin: 0; }
-    .gc-visit-row { padding: 10px 0; border-bottom: 1px solid #f3f4f6; display: flex; justify-content: space-between; align-items: center; }
-    .gc-visit-row:last-child { border-bottom: none; }
-    .gc-mark-done { padding: 6px 12px; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem; font-family: inherit; }
-    .gc-mark-done:hover { background: #059669; }
-    .gc-mark-done:disabled { background: #9ca3af; cursor: not-allowed; }
 
     /* ---- Detail modal v2: card-based layout ---- */
     .gc-modal-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .gc-modal-subhead { color: #6b7280; font-size: 0.85rem; margin-top: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .gc-modal-subhead a { color: #1F3A5F; text-decoration: none; font-weight: 600; }
+    .gc-modal-subhead { color: var(--ink-2); font-size: 0.85rem; margin-top: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .gc-modal-subhead a { color: var(--accent); text-decoration: none; font-weight: 600; }
     .gc-modal-subhead a:hover { text-decoration: underline; }
 
-    .gc-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
-    .gc-card-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; font-weight: 600; margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid #f3f4f6; }
-    .gc-card-h .gc-card-h-count { color: #9ca3af; font-weight: 500; margin-left: 6px; }
-    .gc-card-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+    .gc-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    .gc-card-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 600; margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .gc-card-h .gc-card-h-count { color: var(--ink-3); font-weight: 500; margin-left: 6px; }
+    .gc-card-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
     .gc-card-row:last-child { border-bottom: none; padding-bottom: 0; }
     .gc-card-row:first-of-type { padding-top: 0; }
-    .gc-meta-label { color: #6b7280; font-size: 0.82rem; }
-    .gc-meta-value { color: #111827; font-weight: 600; font-size: 0.88rem; }
-    .gc-card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid #f3f4f6; justify-content: flex-end; }
+    .gc-meta-label { color: var(--ink-2); font-size: 0.82rem; }
+    .gc-meta-value { color: var(--ink); font-weight: 600; font-size: 0.88rem; }
+    .gc-card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); justify-content: flex-end; }
 
-    /* Status pill in the header */
-    .gc-status-pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
-    .gc-status-pill-active { background: #d1fae5; color: #065f46; }
-    .gc-status-pill-past_due { background: #fef3c7; color: #92400e; }
-    .gc-status-pill-canceled { background: #f3f4f6; color: #374151; }
-    .gc-status-pill-incomplete { background: #fef3c7; color: #92400e; }
-
-    /* Three-tier button system */
-    .gc-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-size: 0.82rem; font-family: inherit; font-weight: 600; cursor: pointer; border: 1px solid transparent; line-height: 1.2; white-space: nowrap; }
-    .gc-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .gc-btn-primary { background: #1F3A5F; color: #fff; }
-    .gc-btn-primary:hover:not(:disabled) { background: #16304F; }
-    .gc-btn-secondary { background: #fff; color: #1F3A5F; border-color: #1F3A5F; }
-    .gc-btn-secondary:hover:not(:disabled) { background: #f3f6fa; }
-    .gc-btn-destructive { background: #DC2626; color: #fff; }
-    .gc-btn-destructive:hover:not(:disabled) { background: #B91C1C; }
-    .gc-btn-ghost { background: transparent; color: #1F3A5F; border: 1px solid #e5e7eb; }
-    .gc-btn-ghost:hover:not(:disabled) { background: #f9fafb; }
-    .gc-btn-sm { padding: 6px 10px; font-size: 0.75rem; }
-    .gc-btn-icon { padding: 6px 10px; color: #9ca3af; border: 1px solid #e5e7eb; background: #fff; }
-    .gc-btn-icon:hover:not(:disabled) { color: #DC2626; border-color: #DC2626; background: #fef2f2; }
-
-    /* Row-level status chips (smaller than the header pill) */
-    .gc-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-    .gc-chip-pending { background: #fef3c7; color: #92400e; }
-    .gc-chip-performed { background: #fef3c7; color: #92400e; }
-    .gc-chip-charged { background: #d1fae5; color: #065f46; }
-    .gc-chip-refunded { background: #f3f4f6; color: #374151; }
-    .gc-chip-partial { background: #fef3c7; color: #92400e; }
-    .gc-chip-failed { background: #fee2e2; color: #991b1b; }
-    .gc-chip-completed { background: #d1fae5; color: #065f46; }
-    .gc-chip-tentative { background: #fef3c7; color: #92400e; }
-    .gc-chip-scheduled { background: #dbeafe; color: #1e3a8a; }
-    .gc-chip-paid { background: #d1fae5; color: #065f46; }
-    .gc-chip-open { background: #fef3c7; color: #92400e; }
+    /* Square icon button — sits on the shared .btn base (btn btn-secondary btn-sm gc-btn-icon) */
+    .gc-btn-icon { width: 28px; height: 28px; padding: 0; }
 
     /* Internal note editor */
-    .gc-note-editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6; }
-    .gc-note-editor textarea { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.88rem; line-height: 1.5; resize: vertical; min-height: 60px; box-sizing: border-box; }
-    .gc-note-editor textarea:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.1); }
-    .gc-packet { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; line-height: 1.5; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; resize: vertical; background: #fff; color: #111827; }
-    .gc-wo-input { width: 130px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem; font-family: inherit; background: #fff; color: #111827; }
+    .gc-note-editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .gc-note-editor textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 0.88rem; line-height: 1.5; resize: vertical; min-height: 60px; box-sizing: border-box; }
+    .gc-note-editor textarea:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+    .gc-packet { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; line-height: 1.5; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; resize: vertical; background: var(--surface); color: var(--ink); }
+    .gc-wo-input { width: 130px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--ink); }
     .gc-note-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 
 
@@ -146,146 +88,65 @@
     .gc-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 12px; }
     .gc-edit-field { display: flex; flex-direction: column; }
     .gc-edit-field.gc-edit-full { grid-column: 1 / -1; }
-    .gc-edit-field > span { font-size: 0.8rem; color: #6b7280; font-weight: 600; margin-bottom: 5px; }
-    .gc-edit-input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.9rem; color: #111827; background: #fff; }
-    .gc-edit-input:focus { outline: none; border-color: #1F3A5F; box-shadow: 0 0 0 3px rgba(31,58,95,0.1); }
+    .gc-edit-field > span { font-size: 0.8rem; color: var(--ink-2); font-weight: 600; margin-bottom: 5px; }
+    .gc-edit-input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.9rem; color: var(--ink); background: var(--surface); }
+    .gc-edit-input:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
     select.gc-edit-input { cursor: pointer; }
-    .gc-edit-error { color: #b91c1c; font-size: 0.8rem; font-weight: 600; margin-bottom: 10px; }
+    .gc-edit-error { color: var(--danger); font-size: 0.8rem; font-weight: 600; margin-bottom: 10px; }
     @media (max-width: 640px) { .gc-edit-grid { grid-template-columns: 1fr; } }
 
     /* Skeleton loader */
-    @keyframes gc-skeleton-pulse { 0%, 100% { background-color: #e5e7eb; } 50% { background-color: #f3f4f6; } }
-    .gc-skeleton { display: inline-block; background: #e5e7eb; border-radius: 4px; animation: gc-skeleton-pulse 1.5s ease-in-out infinite; min-height: 1em; }
+    @keyframes gc-skeleton-pulse { 0%, 100% { background-color: var(--neutral-bg); } 50% { background-color: var(--surface-2); } }
+    .gc-skeleton { display: inline-block; background: var(--neutral-bg); border-radius: 4px; animation: gc-skeleton-pulse 1.5s ease-in-out infinite; min-height: 1em; }
     .gc-skeleton-line { display: block; height: 14px; margin: 8px 0; }
     .gc-skeleton-text-sm { width: 120px; }
     .gc-skeleton-text-md { width: 200px; }
     .gc-skeleton-text-lg { width: 280px; }
-    .gc-skeleton-card-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+    .gc-skeleton-card-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line); }
 
     /* Danger zone footer */
-    .gc-danger-zone { background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-    .gc-danger-zone-text { color: #7f1d1d; font-size: 0.82rem; }
+    .gc-danger-zone { background: var(--danger-bg); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); border-radius: 10px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .gc-danger-zone-text { color: var(--danger); font-size: 0.82rem; }
 
     /* Canceled banner replaces danger zone */
-    .gc-canceled-banner { background: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #9ca3af; border-radius: 6px; padding: 14px 16px; color: #374151; font-size: 0.88rem; margin-bottom: 16px; }
+    .gc-canceled-banner { background: var(--surface-2); border: 1px solid var(--line); border-left: 4px solid var(--ink-3); border-radius: 6px; padding: 14px 16px; color: var(--ink-2); font-size: 0.88rem; margin-bottom: 16px; }
 
     /* Mobile reflow for the modal */
     @media (max-width: 640px) {
-      /* Filter chips: single horizontally-scrollable row instead of wrapping. */
+      /* Filter pills: single horizontally-scrollable row instead of wrapping. */
       .gc-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; padding-right: 12px; }
       .gc-tabs::-webkit-scrollbar { display: none; }
       .gc-tab { flex: 0 0 auto; }
       .gc-card { padding: 16px; margin-bottom: 12px; }
       .gc-card-actions { flex-direction: column; }
-      .gc-card-actions .gc-btn { width: 100%; justify-content: center; }
+      .gc-card-actions .btn { width: 100%; justify-content: center; }
       .gc-card-row { flex-direction: column; gap: 4px; }
       .gc-card-row .gc-meta-value { font-size: 1rem; }
       .gc-danger-zone { flex-direction: column; align-items: stretch; text-align: center; }
-      .gc-danger-zone .gc-btn { width: 100%; justify-content: center; }
+      .gc-danger-zone .btn { width: 100%; justify-content: center; }
     }
-
-    /* ============================================================
-       DARK MODE — scoped to html.dark only; light mode untouched.
-       Surfaces use the shared dark tokens (var(--bg-*), --text-*, --glass-border)
-       so they match the home screen / body that already switch correctly.
-       ============================================================ */
-    /* Filter tabs (unselected render white in light mode) */
-    html.dark .gc-tab { background: rgba(255,255,255,0.05); color: var(--text-primary); border-color: var(--glass-border); }
-    html.dark .gc-tab .count { background: rgba(255,255,255,0.14); }
-    html.dark .gc-tab.active { background: var(--accent); color: #0F1420; border-color: var(--accent); }
-    html.dark .gc-tab.active .count { background: rgba(0,0,0,0.2); }
-
-    /* Subscriptions table */
-    html.dark .gc-table-wrap { background: var(--bg-secondary); }
-    html.dark .gc-table th { background: var(--bg-tertiary); color: var(--text-secondary); border-bottom-color: var(--glass-border); }
-    html.dark .gc-table td { border-bottom-color: var(--glass-border); color: var(--text-primary); }
-    html.dark .gc-row:hover { background: rgba(255,255,255,0.04); }
-    html.dark .gc-row.overdue { background: rgba(239,68,68,0.13); }
-    html.dark .gc-row.overdue:hover { background: rgba(239,68,68,0.2); }
-    html.dark .gc-row.soon { background: rgba(245,158,11,0.13); }
-    html.dark .gc-row.soon:hover { background: rgba(245,158,11,0.2); }
-    html.dark .gc-customer-name { color: var(--text-primary); }
-    html.dark .gc-customer-meta, html.dark .gc-gen-info { color: var(--text-secondary); }
-    html.dark .gc-empty { color: var(--text-secondary); }
-
-    /* Mobile list cards + modal detail cards (both .gc-card) */
-    html.dark .gc-card { background: var(--bg-secondary); border-color: var(--glass-border); }
-    html.dark .gc-card-name { color: var(--text-primary); }
-    html.dark .gc-card-meta { color: var(--text-secondary); }
-
-    /* Modal: detail sections, meta rows, headers */
-    html.dark .gc-detail-h { color: var(--text-secondary); border-bottom-color: var(--glass-border); }
-    html.dark .gc-detail-grid dt { color: var(--text-secondary); }
-    html.dark .gc-detail-grid dd { color: var(--text-primary); }
-    html.dark .gc-visit-row { border-bottom-color: var(--glass-border); }
-    html.dark .gc-modal-subhead { color: var(--text-secondary); }
-    html.dark .gc-modal-subhead a { color: var(--accent); }
-    html.dark .gc-card-h { color: var(--text-secondary); border-bottom-color: var(--glass-border); }
-    html.dark .gc-card-h .gc-card-h-count { color: var(--text-tertiary); }
-    html.dark .gc-card-row { border-bottom-color: var(--glass-border); }
-    html.dark .gc-card-actions { border-top-color: var(--glass-border); }
-    html.dark .gc-meta-label { color: var(--text-secondary); }
-    html.dark .gc-meta-value { color: var(--text-primary); }
-
-    /* White / outlined buttons (navy/primary + colored ones already read on dark) */
-    html.dark .gc-btn-secondary { background: rgba(255,255,255,0.05); color: var(--text-primary); border-color: var(--glass-border); }
-    html.dark .gc-btn-secondary:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
-    html.dark .gc-btn-ghost { color: var(--text-primary); border-color: var(--glass-border); }
-    html.dark .gc-btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.05); }
-    html.dark .gc-btn-icon { background: rgba(255,255,255,0.05); border-color: var(--glass-border); color: var(--text-tertiary); }
-
-    /* Neutral (gray) status pills/chips would otherwise be light boxes */
-    html.dark .gc-status-pill-canceled, html.dark .gc-chip-refunded { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
-
-    /* Internal note editor */
-    html.dark .gc-note-editor { border-top-color: var(--glass-border); }
-    html.dark .gc-note-editor textarea { border-color: var(--glass-border); }
-    html.dark .gc-packet { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
-    html.dark .gc-wo-input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
-
-    /* Refund dialog + contact edit form */
-    html.dark .gc-edit-field > span { color: var(--text-secondary); }
-    html.dark .gc-edit-input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
-
-    /* Danger zone + canceled banner */
-    html.dark .gc-danger-zone { background: rgba(220,38,38,0.13); border-color: rgba(220,38,38,0.4); }
-    html.dark .gc-danger-zone-text { color: #FCA5A5; }
-    html.dark .gc-canceled-banner { background: var(--bg-secondary); border-color: var(--glass-border); border-left-color: var(--text-tertiary); color: var(--text-secondary); }
-
-    /* Skeleton loader (transient, but otherwise a light pulse) */
-    @keyframes gc-skeleton-pulse-dark { 0%, 100% { background-color: rgba(255,255,255,0.06); } 50% { background-color: rgba(255,255,255,0.12); } }
-    html.dark .gc-skeleton { background: rgba(255,255,255,0.06); animation-name: gc-skeleton-pulse-dark; }
-
-    /* Admin tools — these are inline-styled in the HTML, so the dark overrides
-       need !important to win. */
-    html.dark #gc-admin-tools { background: var(--bg-secondary) !important; border-color: var(--glass-border) !important; }
-    html.dark #gc-admin-tools summary { color: var(--text-secondary) !important; }
-    html.dark #gc-admin-tools > div { border-top-color: var(--glass-border) !important; }
-    html.dark #gc-admin-tools h3 { color: var(--text-primary) !important; }
-    html.dark #gc-admin-tools p, html.dark #gc-admin-tools label { color: var(--text-secondary) !important; }
-    html.dark #gc-test-template { background: var(--bg-tertiary) !important; color: var(--text-primary) !important; border-color: var(--glass-border) !important; }
-    html.dark #gc-test-email { border-color: var(--glass-border) !important; }
   </style>
 </head>
 <body class="hub-body dashboard-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <main class="dashboard-main">
     <div class="dashboard-header gc-page-header">
-      <a href="home.html" class="btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care</h1>
+      <a href="home.html" class="btn btn-secondary btn-sm" style="margin-right:12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care</h1>
       <div class="dashboard-header-actions">
         <span id="result-count" class="result-count"></span>
-        <button type="button" id="manage-techs-btn" class="btn-secondary btn-sm">Manage techs</button>
-        <button type="button" id="refresh-btn" class="btn-secondary btn-sm">Refresh</button>
+        <button type="button" id="manage-techs-btn" class="btn btn-secondary btn-sm">Manage techs</button>
+        <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
       </div>
     </div>
 
     <nav class="section-tabs" data-section-tabs aria-label="Generator Care sections"></nav>
 
     <div class="gc-tabs" id="gc-tabs">
-      <button class="gc-tab active" data-filter="all">All Active <span class="count" id="count-all">0</span></button>
-      <button class="gc-tab" data-filter="overdue">Overdue <span class="count" id="count-overdue">0</span></button>
-      <button class="gc-tab" data-filter="soon">Due in 14 days <span class="count" id="count-soon">0</span></button>
-      <button class="gc-tab" data-filter="month">Due this month <span class="count" id="count-month">0</span></button>
+      <button class="filter gc-tab active" data-filter="all">All Active <span class="count" id="count-all">0</span></button>
+      <button class="filter gc-tab" data-filter="overdue">Overdue <span class="count" id="count-overdue">0</span></button>
+      <button class="filter gc-tab" data-filter="soon">Due in 14 days <span class="count" id="count-soon">0</span></button>
+      <button class="filter gc-tab" data-filter="month">Due this month <span class="count" id="count-month">0</span></button>
     </div>
 
     <section class="dashboard-filters">
@@ -299,7 +160,7 @@
       <div id="loading" class="loading-state" hidden><p>Loading subscriptions...</p></div>
       <div id="empty" class="gc-empty" hidden>
         <p style="font-size: 1.1rem;">No matching customers.</p>
-        <p style="font-size: 0.85rem; margin-top: 8px;">Try a different filter or check back after a customer signs up at <a href="https://generator.bates-electric.com" target="_blank" style="color: #1F3A5F;">generator.bates-electric.com</a>.</p>
+        <p style="font-size: 0.85rem; margin-top: 8px;">Try a different filter or check back after a customer signs up at <a href="https://generator.bates-electric.com" target="_blank" style="color: var(--accent);">generator.bates-electric.com</a>.</p>
       </div>
 
       <!-- Desktop table -->
@@ -324,19 +185,19 @@
 
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
-    <details id="gc-admin-tools" style="margin-top: 32px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb;">
-      <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; color: #6b7280; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;">
+    <details id="gc-admin-tools" style="margin-top: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);">
+      <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; color: var(--ink-2); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;">
         Admin tools
       </summary>
-      <div style="padding: 16px 16px 20px; border-top: 1px solid #e5e7eb;">
-        <h3 style="margin: 0 0 6px; font-size: 0.95rem; color: #1F3A5F;">Send test email</h3>
-        <p style="margin: 0 0 14px; font-size: 0.82rem; color: #6b7280; line-height: 1.5;">
+      <div style="padding: 16px 16px 20px; border-top: 1px solid var(--line);">
+        <h3 style="margin: 0 0 6px; font-size: 0.95rem; color: var(--accent);">Send test email</h3>
+        <p style="margin: 0 0 14px; font-size: 0.82rem; color: var(--ink-2); line-height: 1.5;">
           Renders a customer-facing template with sample data and sends it to the address below. Subject is prefixed with <code>[TEST]</code>. Useful for previewing rendering before flipping Stripe to live.
         </p>
         <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
           <div>
-            <label for="gc-test-template" style="display:block; font-size: 0.78rem; color: #6b7280; margin-bottom: 4px;">Template</label>
-            <select id="gc-test-template" style="padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9rem; font-family: inherit; min-width: 200px; background: #fff;">
+            <label for="gc-test-template" style="display:block; font-size: 0.78rem; color: var(--ink-2); margin-bottom: 4px;">Template</label>
+            <select id="gc-test-template" style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 4px; font-size: 0.9rem; font-family: inherit; min-width: 200px; background: var(--surface); color: var(--ink);">
               <option value="welcome">Welcome</option>
               <option value="visit_scheduled">Visit scheduled</option>
               <option value="visit_complete">Visit complete</option>
@@ -346,10 +207,10 @@
             </select>
           </div>
           <div style="flex: 1; min-width: 220px;">
-            <label for="gc-test-email" style="display:block; font-size: 0.78rem; color: #6b7280; margin-bottom: 4px;">Send to</label>
-            <input type="email" id="gc-test-email" placeholder="you@example.com" style="width: 100%; padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9rem; font-family: inherit; box-sizing: border-box;" />
+            <label for="gc-test-email" style="display:block; font-size: 0.78rem; color: var(--ink-2); margin-bottom: 4px;">Send to</label>
+            <input type="email" id="gc-test-email" placeholder="you@example.com" style="width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 4px; font-size: 0.9rem; font-family: inherit; box-sizing: border-box; background: var(--surface); color: var(--ink);" />
           </div>
-          <button type="button" id="gc-test-send-btn" class="gc-mark-done" style="background:#1F3A5F; font-size: 0.85rem; padding: 8px 16px;">Send test</button>
+          <button type="button" id="gc-test-send-btn" class="btn btn-primary btn-sm gc-mark-done">Send test</button>
         </div>
         <p id="gc-test-result" style="margin: 12px 0 0; font-size: 0.82rem; min-height: 1.2em;" aria-live="polite"></p>
       </div>
@@ -362,13 +223,13 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="modal-title">Customer Detail</h2>
-        <button type="button" class="modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
+        <button type="button" class="modal-close" id="modal-close-btn" aria-label="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div id="modal-body" class="modal-body">
         <p>Loading&hellip;</p>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn-secondary" id="modal-close-btn2">Close</button>
+        <button type="button" class="btn btn-secondary" id="modal-close-btn2">Close</button>
       </div>
     </div>
   </div>
@@ -379,23 +240,23 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2>Field techs</h2>
-        <button type="button" class="modal-close" id="techs-close-btn" aria-label="Close">&times;</button>
+        <button type="button" class="modal-close" id="techs-close-btn" aria-label="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="modal-body">
         <p class="gc-meta-label" style="margin-top:0;">Create a tech account (they get a set-password email) and dispatch them to visits from each customer's Service Visits. Tech emails must be a <strong>*.bateselectric@gmail.com</strong> address.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:12px 0 16px;">
           <label style="flex:1;min-width:140px;"><span class="gc-meta-label">Name</span>
-            <input type="text" id="new-tech-name" placeholder="Jordan Tech" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit;" />
+            <input type="text" id="new-tech-name" placeholder="Jordan Tech" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-family:inherit;background:var(--surface);color:var(--ink);" />
           </label>
           <label style="flex:1.4;min-width:180px;"><span class="gc-meta-label">Email</span>
-            <input type="email" id="new-tech-email" placeholder="jordan.bateselectric@gmail.com" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit;" />
+            <input type="email" id="new-tech-email" placeholder="jordan.bateselectric@gmail.com" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-family:inherit;background:var(--surface);color:var(--ink);" />
           </label>
-          <button type="button" class="gc-btn gc-btn-primary gc-btn-sm" id="add-tech-btn">Create + invite</button>
+          <button type="button" class="btn btn-primary btn-sm" id="add-tech-btn">Create + invite</button>
         </div>
         <div id="techs-list"><p class="gc-meta-label">Loading…</p></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn-secondary" id="techs-close-btn2">Close</button>
+        <button type="button" class="btn btn-secondary" id="techs-close-btn2">Close</button>
       </div>
     </div>
   </div>

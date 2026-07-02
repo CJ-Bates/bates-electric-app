@@ -1,0 +1,103 @@
+/* tokens.css — Bates Portal Design System v3 foundations.
+   Single source of truth for color/radius/shadow/type/spacing/glass/motion.
+   Values are copied verbatim from "Bates Portal — Design System v3" (approved
+   spec). Dark theme = the html.dark token swap below; component CSS should
+   read tokens, not hardcode colors, so it themes automatically. */
+
+:root{
+  --navy-900:#131F3F; --navy-800:#1B2D5B; --navy-700:#27408B; --navy-600:#3556B0;
+  --navy-100:#DCE4F5; --navy-50:#EEF2FB;
+  --bg:#F4F6FA; --surface:#FFFFFF; --surface-2:#F8FAFD; --line:#E3E8F1;
+  --ink:#1A2233; --ink-2:#5A6577; --ink-3:#8C93A4; --ink-inverse:#FFFFFF;
+  --accent:#1B2D5B; --accent-hover:#27408B; --accent-soft:#EEF2FB; --focus:#3556B0;
+  --ok:#16803C; --ok-bg:#E4F5EA; --warn:#9A6A00; --warn-bg:#FBF1DA;
+  --danger:#C22A21; --danger-bg:#FCE9E7; --info:#2458C5; --info-bg:#E7EEFC;
+  --neutral:#5A6577; --neutral-bg:#EDF0F5;
+  --radius:12px; --radius-sm:8px; --radius-pill:999px;
+  --shadow-1:0 1px 2px rgba(19,31,63,.06); --shadow-2:0 4px 16px rgba(19,31,63,.10);
+  --font:'Exo 2',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --fs-xs:12px; --fs-sm:13.5px; --fs-md:15px; --fs-lg:18px; --fs-xl:24px; --fs-2xl:32px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
+
+  /* Glass tokens (chrome only — bars, drawers, scrims; never content) */
+  --glass-bg:rgba(255,255,255,.62);
+  --glass-bg-strong:rgba(255,255,255,.78);
+  --glass-line:rgba(255,255,255,.55);
+  --glass-shadow:0 8px 32px rgba(19,31,63,.12);
+  --glass-blur:blur(18px) saturate(1.6);
+  /* Motion tokens */
+  --ease-spring:cubic-bezier(.2,.9,.25,1.2);
+  --dur-fast:.14s; --dur-med:.24s;
+  /* Focus-ring wash — the v3 field-focus recipe, packaged for reuse */
+  --focus-ring:color-mix(in srgb, var(--focus) 18%, transparent);
+}
+html.dark{
+  --navy-50:#1A2440; --navy-100:#233158;
+  --bg:#0F1420; --surface:#161D30; --surface-2:#1C2438; --line:#2A3350;
+  --ink:#E8ECF5; --ink-2:#A7B0C2; --ink-3:#6C7489; --ink-inverse:#0F1420;
+  --accent:#8FB0FF; --accent-hover:#A8C2FF; --accent-soft:#1E2A4C; --focus:#8FB0FF;
+  --ok:#5ED08A; --ok-bg:#12301E; --warn:#F0C060; --warn-bg:#33290F;
+  --danger:#FF8A80; --danger-bg:#3A1512; --info:#82AAFF; --info-bg:#152449;
+  --neutral:#A7B0C2; --neutral-bg:#222B42;
+  --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 4px 16px rgba(0,0,0,.5);
+  --glass-bg:rgba(22,29,48,.55);
+  --glass-bg-strong:rgba(22,29,48,.75);
+  --glass-line:rgba(255,255,255,.09);
+  --glass-shadow:0 8px 32px rgba(0,0,0,.5);
+}
+
+/* ============ BASE ============ */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;min-height:100%}
+body{
+  font-family:var(--font);
+  background:var(--bg);
+  color:var(--ink);
+  font-size:var(--fs-md);
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;
+  overflow-x:hidden;
+  transition:background .2s,color .2s;
+}
+
+/* ============ AMBIENT BACKGROUND ============
+   Three soft blurred blobs behind everything — gives glass something to
+   sample. Replaces the old per-page hard gradients. */
+.ambient{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.ambient i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5}
+.ambient i:nth-child(1){width:520px;height:520px;left:-140px;top:-120px;background:#B9CCF2}
+.ambient i:nth-child(2){width:460px;height:460px;right:-120px;top:32%;background:#CFE0F8}
+.ambient i:nth-child(3){width:520px;height:520px;left:28%;bottom:-220px;background:#DCE7F7}
+html.dark .ambient i:nth-child(1){background:#1B2D5B;opacity:.55}
+html.dark .ambient i:nth-child(2){background:#27408B;opacity:.35}
+html.dark .ambient i:nth-child(3){background:#131F3F;opacity:.6}
+
+/* ============ GLASS (chrome only) ============ */
+.glass{background:var(--glass-bg);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow)}
+.glass-strong{background:var(--glass-bg-strong);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow)}
+
+/* Where backdrop-filter isn't supported, glass falls back to solid surface. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+  .glass,.glass-strong{background:var(--surface);border-color:var(--line)}
+}
+
+/* ============ MOTION + A11Y ============ */
+/* Press = scale(.965), 140ms spring — universal on interactive elements. */
+button,.btn,.filter,.tab,a[role="button"],[role="button"],
+.tile,.quick-card,.section-tab,.shared-drawer-item,.filter-pill{
+  transition:transform var(--dur-fast) var(--ease-spring);
+}
+button:not([disabled]):active,.btn:not([disabled]):active,.filter:active,
+a[role="button"]:active,[role="button"]:active,
+.tile:active,.quick-card:active,.section-tab:active,.shared-drawer-item:active{
+  transform:scale(.965);
+}
+
+/* Keyboard focus ring — consistent everywhere. */
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+  button:active,.btn:active,.filter:active{transform:none}
+}

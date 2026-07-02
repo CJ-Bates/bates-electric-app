@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="theme-color" content="#F4F6FA" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Bates Electric" />
@@ -11,7 +11,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link href="styles.css" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
   <!-- Chart.js (CDN per spec). Note: not precached by the service worker, so the
        charts need a connection; the rest of the page works from cache offline. -->
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -19,63 +21,51 @@
   <style>
     .m-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 18px; }
     .m-control { display: flex; flex-direction: column; }
-    .m-control label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-    .m-control input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: #fff; color: #1F3A5F; }
-    .m-control input:focus { outline: none; border-color: #1F3A5F; }
+    .m-control label { font-size: 0.75rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .m-control input { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
+    .m-control input:focus { outline: none; border-color: var(--focus); }
 
     /* Headline stat cards */
     .m-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
-    .m-stat { background: #fff; border-radius: 10px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border-top: 3px solid #1F3A5F; }
-    .m-stat .label { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-    .m-stat .value { font-size: 1.9rem; font-weight: 800; color: #1F3A5F; font-variant-numeric: tabular-nums; line-height: 1.1; }
-    .m-stat .sub { font-size: 0.78rem; color: #6b7280; margin-top: 6px; }
-    .m-stat .sub .up { color: #047857; font-weight: 600; }
-    .m-stat .sub .down { color: #b45309; font-weight: 600; }
-    .m-stat .sub .flat { color: #6b7280; font-weight: 600; }
+    .m-stat { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); border-top: 3px solid var(--accent); }
+    .m-stat .label { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .m-stat .value { font-size: 1.9rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .m-stat .sub { font-size: 0.78rem; color: var(--ink-3); margin-top: 6px; }
+    .m-stat .sub .up { color: var(--ok); font-weight: 600; }
+    .m-stat .sub .down { color: var(--danger); font-weight: 600; }
+    .m-stat .sub .flat { color: var(--ink-3); font-weight: 600; }
+    #stat-new-sub svg{vertical-align:-2px}
 
     /* Chart panels */
     .m-panels { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-    .m-panel { background: #fff; border-radius: 10px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); min-width: 0; }
+    .m-panel { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); min-width: 0; }
     .m-panel.wide { grid-column: 1 / -1; }
-    .m-panel-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #374151; font-weight: 700; margin: 0 0 4px; }
-    .m-panel-note { font-size: 0.76rem; color: #6b7280; margin: 0 0 12px; }
+    .m-panel-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 700; margin: 0 0 4px; }
+    .m-panel-note { font-size: 0.76rem; color: var(--ink-3); margin: 0 0 12px; }
     .m-canvas-wrap { position: relative; height: 260px; }
     .m-canvas-wrap.tall { height: 300px; }
-    .m-empty-note { color: #6b7280; font-size: 0.85rem; padding: 28px 4px; text-align: center; }
+    .m-empty-note { color: var(--ink-3); font-size: 0.85rem; padding: 28px 4px; text-align: center; }
 
     @media (max-width: 760px) {
       .m-panels { grid-template-columns: 1fr; }
       .m-panel.wide { grid-column: auto; }
       .m-stat .value { font-size: 1.6rem; }
     }
-
-    /* ============================================================
-       DARK MODE — scoped to html.dark only; light mode untouched.
-       Chart.js tick/grid/legend/series colors are set in metrics.js.
-       ============================================================ */
-    html.dark .m-control input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
-    html.dark .m-stat { background: var(--bg-secondary); border-top-color: var(--accent); }
-    html.dark .m-stat .label { color: var(--text-secondary); }
-    html.dark .m-stat .value { color: var(--text-primary); }
-    html.dark .m-stat .sub { color: var(--text-secondary); }
-    html.dark .m-panel { background: var(--bg-secondary); }
-    html.dark .m-panel-h { color: var(--text-primary); }
-    html.dark .m-panel-note { color: var(--text-secondary); }
-    html.dark .m-empty-note { color: var(--text-secondary); }
   </style>
 </head>
 <body class="hub-body dashboard-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
   <main class="dashboard-main">
     <div class="dashboard-header gc-page-header">
-      <a href="home.html" class="btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care Metrics</h1>
+      <a href="home.html" class="btn btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care Metrics</h1>
       <div class="dashboard-header-actions">
-        <button type="button" id="refresh-btn" class="btn-secondary btn-sm">Refresh</button>
+        <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
       </div>
     </div>
 
     <nav class="section-tabs" data-section-tabs aria-label="Generator Care sections"></nav>
 
-    <p style="color:#6b7280;font-size:0.9rem;margin-bottom:18px;max-width:720px;">
+    <p style="color:var(--ink-3);font-size:0.9rem;margin-bottom:18px;max-width:720px;">
       How the Generator Care program is doing at a glance. The stat cards and plan/add-on charts reflect your <strong>current active book</strong>; signups, channel, and cancellations follow the date range below.
     </p>
 
@@ -88,7 +78,7 @@
         <label for="to-date">To</label>
         <input type="date" id="to-date" />
       </div>
-      <button type="button" id="apply-btn" class="btn-primary btn-sm" style="height:38px;">Apply</button>
+      <button type="button" id="apply-btn" class="btn btn-primary btn-sm" style="height:38px;">Apply</button>
     </div>
 
     <div id="loading" class="loading-state"><p>Loading metrics&hellip;</p></div>
@@ -162,6 +152,7 @@
   </main>
 
   <script src="shared-nav.js"></script>
+  <script src="icons.js"></script>
   <script src="metrics.js"></script>
 </body>
 </html>

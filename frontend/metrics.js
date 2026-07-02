@@ -19,10 +19,11 @@
     return;
   }
 
-  // ---- Palette (Bates navy + complements) ----
-  const NAVY = '#1F3A5F';
-  const BLUE = '#5B95C9';
-  const CATEGORICAL = ['#1F3A5F', '#5B95C9', '#8FB3D9', '#0F766E', '#B45309', '#6b7280', '#9333EA', '#0EA5E9'];
+  // ---- Palette: read from the v3 design tokens at render time ----
+  // getComputedStyle reflects the html.dark token swap, so charts follow
+  // light/dark automatically (render() re-runs on Refresh after a toggle).
+  const tok = (name) =>
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   const CHANNEL_LABELS = {
     existing_customer: 'Installed/serviced by Bates',
@@ -125,25 +126,24 @@
   function render(data) {
     const h = data.headline || {};
 
-    // ----- Dark-mode-aware chart colors -----
-    // Chart.js defaults to dark text/gridlines, which vanish on a dark panel.
-    // Point its global text + grid colors (used by ticks, legend labels, and
-    // gridlines) at light values in dark mode, and brighten the series fills so
-    // bars/segments stay legible on the dark surface. Recomputed each render so
-    // a theme toggle + Refresh repaints correctly.
-    const darkMode = document.documentElement.classList.contains('dark');
+    // ----- Theme-aware chart colors, straight from the tokens -----
+    // Chart.js global text/grid colors + all series fills read the v3 tokens,
+    // so both themes come from the same source of truth as the rest of the UI.
+    // Recomputed each render so a theme toggle + Refresh repaints correctly.
     const mobile = window.innerWidth <= 640;
     if (typeof Chart !== 'undefined') {
-      Chart.defaults.color = darkMode ? '#A7B0C2' : '#5A6473';
-      Chart.defaults.borderColor = darkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
+      Chart.defaults.color = tok('--ink-2');
+      Chart.defaults.borderColor = tok('--line');
+      Chart.defaults.font.family = tok('--font') || "'Exo 2', sans-serif";
     }
-    const cBar    = darkMode ? '#7FA3FF' : NAVY;       // primary bars (signups, gen class)
-    const cBar2   = darkMode ? '#5B95C9' : BLUE;       // secondary bars (add-ons)
-    const cAmber  = darkMode ? '#FBBF24' : '#B45309';  // cancellations
-    const cDonut  = darkMode ? ['#7FA3FF', '#3E6FB0', '#8FB3D9'] : [NAVY, BLUE, '#8FB3D9'];
-    const cCats   = darkMode
-      ? ['#7FA3FF', '#5B95C9', '#8FB3D9', '#34D399', '#FBBF24', '#A7B0C2', '#C084FC', '#38BDF8']
-      : CATEGORICAL;
+    const cBar   = tok('--accent');   // primary bars (signups, gen class)
+    const cBar2  = tok('--info');     // secondary bars (add-ons)
+    const cAmber = tok('--warn');     // cancellations
+    const cDonut = [tok('--accent'), tok('--navy-600'), tok('--navy-100')];
+    const cCats  = [
+      tok('--accent'), tok('--info'), tok('--navy-600'), tok('--ok'),
+      tok('--warn'), tok('--neutral'), tok('--danger'), tok('--navy-700'),
+    ];
 
     // ----- Headline stat cards -----
     $('stat-active').textContent = (h.active_subscriptions || 0).toLocaleString('en-US');
@@ -157,7 +157,9 @@
     } else {
       const pct = Math.round(((nm - lm) / lm) * 100);
       const cls = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
-      const arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '▬');
+      // Trend arrows are house-style inline SVG (icons.js) — no glyph icons.
+      const iconName = pct > 0 ? 'trendUp' : (pct < 0 ? 'trendDown' : 'trendFlat');
+      const arrow = window.BatesIcons ? BatesIcons.icon(iconName, 13) : '';
       deltaHtml = `<span class="${cls}">${arrow} ${Math.abs(pct)}%</span> vs last month (${lm})`;
     }
     $('stat-new-sub').innerHTML = deltaHtml;
@@ -290,10 +292,9 @@
   }
 
   function emptyDoughnut() {
-    const dark = document.documentElement.classList.contains('dark');
     return {
       type: 'doughnut',
-      data: { labels: ['No active subs'], datasets: [{ data: [1], backgroundColor: [dark ? 'rgba(255,255,255,0.12)' : '#e5e7eb'] }] },
+      data: { labels: ['No active subs'], datasets: [{ data: [1], backgroundColor: [tok('--neutral-bg')] }] },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } },
     };
   }

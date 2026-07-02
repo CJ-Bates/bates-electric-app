@@ -20,13 +20,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
   <title>Bates Electric — Document Viewer</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
-      font-family: 'Exo 2', sans-serif;
-      background: #F5F7FA;
+      font-family: var(--font);
+      background: var(--bg);
     }
     .viewer-bar {
       display: flex;
@@ -34,19 +35,19 @@
       gap: 12px;
       padding: 12px 16px;
       padding-top: max(12px, env(safe-area-inset-top));
-      background: #1B2D5B;
-      color: #FFFFFF;
+      background: var(--accent);
+      color: var(--ink-inverse);
     }
     .viewer-back {
       display: flex;
       align-items: center;
       gap: 6px;
       background: rgba(255,255,255,0.15);
-      color: #FFFFFF;
+      color: var(--ink-inverse);
       border: none;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 8px 14px;
-      font-family: 'Exo 2', sans-serif;
+      font-family: var(--font);
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
@@ -73,7 +74,7 @@
       width: 100%;
       height: calc(100% - 52px - max(0px, env(safe-area-inset-top)));
       border: none;
-      background: #FFFFFF;
+      background: var(--surface);
     }
 
     /* Inline PDF.js viewer (mobile) */

@@ -9,7 +9,7 @@
     try { if (localStorage.getItem('bates.theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="theme-color" content="#F4F6FA" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Bates Electric" />
@@ -20,10 +20,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/lucide-static@latest/font/lucide.min.css" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
   <title>Bates Electric</title>
 </head>
 <body class="auth-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
   <main class="auth-shell">
     <section class="auth-card glass-card" aria-labelledby="auth-title">
       <header class="brand">
@@ -69,7 +72,7 @@
           <a href="#" class="forgot" id="forgot-link">Forgot password?</a>
         </div>
 
-        <button type="submit" class="btn-primary" id="submit-btn">
+        <button type="submit" class="btn btn-primary btn-lg" id="submit-btn">
           <span class="btn-label">Sign In</span>
         </button>
 
@@ -118,7 +121,7 @@
           </div>
         </div>
 
-        <button type="submit" class="btn-primary" id="signup-btn">
+        <button type="submit" class="btn btn-primary btn-lg" id="signup-btn">
           <span class="btn-label">Create Account</span>
         </button>
 

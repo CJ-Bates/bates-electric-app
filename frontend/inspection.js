@@ -332,7 +332,7 @@
       // "Done adding photos" — created once, inserted after the Add button.
       const doneBtn = document.createElement('button');
       doneBtn.type = 'button';
-      doneBtn.className = 'btn-text photo-done';
+      doneBtn.className = 'btn btn-text photo-done';
       doneBtn.textContent = 'Done adding photos';
       doneBtn.hidden = true;
       doneBtn.addEventListener('click', () => {
@@ -356,7 +356,7 @@
           sectionPhotos[key].push(entry);
           const div = document.createElement('div');
           div.className = 'photo-thumb';
-          div.innerHTML = `<img src="${url}" alt="photo"><button type="button" class="photo-remove" aria-label="Remove photo">&times;</button>`;
+          div.innerHTML = `<img src="${url}" alt="photo"><button type="button" class="photo-remove" aria-label="Remove photo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`;
           div.querySelector('.photo-remove').addEventListener('click', () => {
             URL.revokeObjectURL(url);
             const idx = sectionPhotos[key].indexOf(entry);
@@ -684,7 +684,7 @@
     if (!modal || !okBtn) {
       // Fallback: if the modal isn't in the DOM for some reason, fall back to
       // the inline status + redirect so the user still gets some confirmation.
-      showStatus(`✓ ${message}`, 'success');
+      showStatus(message, 'success');
       setTimeout(() => window.location.replace('home.html'), 3000);
       return;
     }

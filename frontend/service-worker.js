@@ -1,8 +1,11 @@
-const CACHE = 'bates-shell-v99';
+const CACHE = 'bates-shell-v100';
 const ASSETS = [
   './',
   './ui-dialogs.js',
   './ui-dialogs.css',
+  './tokens.css',
+  './components.css',
+  './icons.js',
   './index.html',
   './home.html',
   './tech.html',
@@ -23,7 +26,7 @@ const ASSETS = [
   './site-visit.html',
   './pdf-viewer.html',
   './reset-password.html',
-  './styles.css',
+  './app.css',
   './app.js',
   './home.js',
   './inspection.js',

@@ -11,58 +11,53 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric &mdash; My Visits</title>
   <style>
-    /* Field-tech view — mobile-first. Cards, not tables. */
+    /* Field-tech view — mobile-first. Cards, not tables.
+       v3: colors/radii/shadows read tokens.css; status chips use the shared
+       .badge system and buttons the shared .btn system (components.css), so
+       dark mode is the token swap — no html.dark overrides needed here. */
     .tv-wrap { max-width: 720px; margin: 0 auto; padding: 4px 0 40px; }
-    .tv-h { font-size: 1.25rem; font-weight: 800; color: #1F3A5F; margin: 4px 2px 2px; }
-    .tv-sub { color: #6b7280; font-size: 0.85rem; margin: 0 2px 14px; }
+    .tv-h { font-size: 1.25rem; font-weight: 800; color: var(--ink); margin: 4px 2px 2px; }
+    .tv-sub { color: var(--ink-2); font-size: 0.85rem; margin: 0 2px 14px; }
     .tv-group { margin-bottom: 22px; }
-    .tv-group-h { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; margin: 0 2px 8px; }
-    .tv-card { background: #fff; border: 1px solid #eef0f3; border-radius: 12px; padding: 13px 14px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; transition: box-shadow 0.12s, transform 0.04s; }
+    .tv-group-h { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); margin: 0 2px 8px; }
+    .tv-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 14px; margin-bottom: 10px; box-shadow: var(--shadow-1); cursor: pointer; transition: box-shadow 0.12s, transform 0.04s; }
     .tv-card:active { transform: scale(0.995); }
     .tv-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-    .tv-cust { font-weight: 700; color: #1F3A5F; font-size: 1.02rem; }
-    .tv-meta { color: #6b7280; font-size: 0.84rem; margin-top: 2px; }
-    .tv-chip { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
-    .tv-chip-need { background: #FEF3C7; color: #92400E; }
-    .tv-chip-sched { background: #DCFCE7; color: #166534; }
-    .tv-chip-done { background: #E5E7EB; color: #374151; }
-    .tv-empty { text-align: center; color: #6b7280; padding: 40px 16px; }
-    .tv-empty-icon { font-size: 2.2rem; opacity: 0.5; margin-bottom: 8px; }
+    .tv-cust { font-weight: 700; color: var(--ink); font-size: 1.02rem; }
+    .tv-meta { color: var(--ink-2); font-size: 0.84rem; margin-top: 2px; }
+    .tv-empty { text-align: center; color: var(--ink-2); padding: 40px 16px; }
+    .tv-empty-icon { opacity: 0.5; margin-bottom: 8px; }
 
     /* Detail modal (full-screen on phones) */
     .tvd-overlay { position: fixed; inset: 0; z-index: 1400; background: rgba(0,0,0,0.45); display: none; align-items: flex-start; justify-content: center; padding: 0; overflow-y: auto; }
     .tvd-overlay.open { display: flex; }
-    .tvd-panel { background: #F5F7FA; width: 100%; max-width: 640px; min-height: 100vh; }
-    .tvd-head { position: sticky; top: 0; background: #1F3A5F; color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px; z-index: 2; }
-    .tvd-back { background: rgba(255,255,255,0.15); border: none; color: #fff; font-size: 1.1rem; width: 36px; height: 36px; border-radius: 9px; cursor: pointer; line-height: 1; }
+    .tvd-panel { background: var(--bg); width: 100%; max-width: 640px; min-height: 100vh; }
+    .tvd-head { position: sticky; top: 0; background: var(--accent); color: var(--ink-inverse); padding: 14px 16px; display: flex; align-items: center; gap: 12px; z-index: 2; }
+    .tvd-back { background: rgba(255,255,255,0.15); color: var(--ink-inverse); font-size: 1.1rem; width: 36px; height: 36px; padding: 0; border-radius: var(--radius-sm); line-height: 1; }
     .tvd-title { font-weight: 700; font-size: 1.05rem; }
     .tvd-body { padding: 14px 16px 40px; }
-    .tvd-sec { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-    .tvd-sec h3 { margin: 0 0 10px; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; }
+    .tvd-sec { background: var(--surface); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+    .tvd-sec h3 { margin: 0 0 10px; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); }
     .tvd-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 0.92rem; }
-    .tvd-row .k { color: #6b7280; flex-shrink: 0; }
-    .tvd-row .v { color: #111827; text-align: right; font-weight: 600; }
-    .tvd-action { display: inline-flex; align-items: center; gap: 6px; color: #1F3A5F; font-weight: 700; text-decoration: none; }
-    .tvd-note { font-size: 0.9rem; color: #374151; line-height: 1.5; white-space: pre-wrap; }
-    .tvd-note-internal { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 9px 11px; }
-    .tvd-cta { position: sticky; bottom: 0; background: #F5F7FA; padding: 12px 0 max(12px, env(safe-area-inset-bottom)); margin-top: 4px; }
-    .tvd-complete { width: 100%; padding: 15px; font-size: 1rem; font-weight: 700; color: #fff; background: #16A34A; border: none; border-radius: 12px; cursor: pointer; }
-    .tvd-complete:disabled { opacity: 0.6; }
-    .tvd-done-banner { background: #DCFCE7; color: #166534; border-radius: 10px; padding: 12px; text-align: center; font-weight: 700; font-size: 0.92rem; }
-
-    html.dark .tv-card { background: var(--bg-secondary); border-color: var(--glass-border); }
-    html.dark .tv-cust { color: var(--text-primary); }
-    html.dark .tvd-panel { background: var(--bg-primary); }
-    html.dark .tvd-sec { background: var(--bg-secondary); }
-    html.dark .tvd-row .v { color: var(--text-primary); }
-    html.dark .tvd-cta { background: var(--bg-primary); }
+    .tvd-row .k { color: var(--ink-2); flex-shrink: 0; }
+    .tvd-row .v { color: var(--ink); text-align: right; font-weight: 600; }
+    .tvd-action { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 700; text-decoration: none; }
+    .tvd-action svg { flex-shrink: 0; }
+    .tvd-note { font-size: 0.9rem; color: var(--ink); line-height: 1.5; white-space: pre-wrap; }
+    .tvd-note-internal { background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--radius-sm); padding: 9px 11px; }
+    .tvd-cta { position: sticky; bottom: 0; background: var(--bg); padding: 12px 0 max(12px, env(safe-area-inset-bottom)); margin-top: 4px; }
+    .tvd-complete { width: 100%; padding: 15px; font-size: 1rem; font-weight: 700; border-radius: var(--radius); }
+    .tvd-done-banner { background: var(--ok-bg); color: var(--ok); border-radius: var(--radius); padding: 12px; text-align: center; font-weight: 700; font-size: 0.92rem; }
   </style>
 </head>
 <body class="hub-body dashboard-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <main class="dashboard-main">
     <div class="tv-wrap">
@@ -76,7 +71,7 @@
   <div id="tvd" class="tvd-overlay" aria-hidden="true">
     <div class="tvd-panel">
       <div class="tvd-head">
-        <button type="button" class="tvd-back" id="tvd-back" aria-label="Back">&larr;</button>
+        <button type="button" class="btn btn-ghost btn-sm tvd-back" id="tvd-back" aria-label="Back">&larr;</button>
         <div class="tvd-title">Visit detail</div>
       </div>
       <div class="tvd-body" id="tvd-body"><p>Loading…</p></div>
@@ -84,6 +79,7 @@
   </div>
 
   <script src="shared-nav.js"></script>
+  <script src="icons.js"></script>
   <script src="ui-dialogs.js"></script>
   <script src="tech.js"></script>
 </body>

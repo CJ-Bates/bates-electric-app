@@ -46,8 +46,8 @@
           <h3 class="gc-rd-title">${escapeHtml(title)}</h3>
           ${message ? `<div class="gc-rd-sub">${escapeHtml(message)}</div>` : ''}
           <div class="gc-rd-actions">
-            <button type="button" class="gc-rd-btn gc-rd-btn-secondary gc-rd-cancel">${escapeHtml(cancelText)}</button>
-            <button type="button" class="gc-rd-btn ${danger ? 'gc-rd-btn-danger' : 'gc-rd-btn-primary'} gc-rd-submit">${escapeHtml(confirmText)}</button>
+            <button type="button" class="btn btn-secondary gc-rd-cancel">${escapeHtml(cancelText)}</button>
+            <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'} gc-rd-submit">${escapeHtml(confirmText)}</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);
@@ -95,8 +95,8 @@
           ${fieldHtml}
           <div class="gc-rd-error" hidden></div>
           <div class="gc-rd-actions">
-            <button type="button" class="gc-rd-btn gc-rd-btn-secondary gc-rd-cancel">${escapeHtml(cancelText)}</button>
-            <button type="button" class="gc-rd-btn ${danger ? 'gc-rd-btn-danger' : 'gc-rd-btn-primary'} gc-rd-submit">${escapeHtml(confirmText)}</button>
+            <button type="button" class="btn btn-secondary gc-rd-cancel">${escapeHtml(cancelText)}</button>
+            <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'} gc-rd-submit">${escapeHtml(confirmText)}</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);

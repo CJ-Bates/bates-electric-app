@@ -11,74 +11,78 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link href="styles.css" rel="stylesheet" />
+  <link href="tokens.css" rel="stylesheet" />
+  <link href="components.css" rel="stylesheet" />
+  <link href="app.css" rel="stylesheet" />
   <title>Bates Electric — Accounting</title>
   <style>
+    /* Page CSS reads tokens.css only — no raw colors — so dark mode themes
+       automatically via the html.dark token swap (old per-rule dark overrides
+       are gone). Buttons/badges/filter pills come from components.css. */
     .acc-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
     .acc-control { display: flex; flex-direction: column; }
-    .acc-control label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-    .acc-control input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: #fff; color: #1F3A5F; }
-    .acc-control input:focus { outline: none; border-color: #1F3A5F; }
-    .acc-toggle { flex-direction: row; align-items: center; gap: 8px; min-height: 38px; font-size: 0.85rem; color: #374151; cursor: pointer; user-select: none; }
-    .acc-toggle input { width: 16px; height: 16px; accent-color: #1F3A5F; cursor: pointer; }
-    .acc-summary { background: #f3f4f6; padding: 18px 22px; border-radius: 10px; margin-bottom: 16px; display: flex; gap: 36px; flex-wrap: wrap; }
-    .acc-summary-item .label { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
-    .acc-summary-item .value { font-size: 1.5rem; font-weight: 700; color: #1F3A5F; font-variant-numeric: tabular-nums; }
-    .acc-summary-item.fee .value { color: #b45309; }
-    .acc-summary-item.net .value { color: #047857; }
-    .acc-table-wrap { background: #fff; border-radius: 8px; overflow: auto; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    .acc-control label { font-size: 0.75rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .acc-control input { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
+    .acc-control input:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+    .acc-toggle { flex-direction: row; align-items: center; gap: 8px; min-height: 38px; font-size: 0.85rem; color: var(--ink-2); cursor: pointer; user-select: none; }
+    .acc-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+    .acc-summary { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; border-radius: var(--radius); box-shadow: var(--shadow-1); margin-bottom: 16px; display: flex; gap: 36px; flex-wrap: wrap; }
+    .acc-summary-item .label { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .acc-summary-item .value { font-size: 1.5rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .acc-summary-item.fee .value { color: var(--warn); }
+    .acc-summary-item.net .value { color: var(--ok); }
+    .acc-table-wrap { background: var(--surface); border-radius: var(--radius-sm); overflow: auto; box-shadow: var(--shadow-1); }
     .acc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    .acc-table th { background: #f3f4f6; padding: 10px 14px; text-align: left; font-weight: 600; color: #374151; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
-    .acc-table td { padding: 12px 14px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+    .acc-table th { background: var(--surface-2); padding: 10px 14px; text-align: left; font-weight: 600; color: var(--ink-3); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    .acc-table td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
     .acc-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .acc-table tbody tr:hover { background: #fafbfc; }
-    .acc-table tfoot td { background: #f9fafb; font-weight: 700; color: #1F3A5F; }
+    .acc-table tbody tr:hover { background: var(--accent-soft); }
+    .acc-table tfoot td { background: var(--surface-2); font-weight: 700; color: var(--ink); }
     .acc-auth-code { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; letter-spacing: 0.03em; }
     .acc-mobile-cards { display: none; }
-    .acc-card { background: #fff; padding: 14px 16px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid #1F3A5F; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    .acc-card { background: var(--surface); padding: 14px 16px; margin-bottom: 10px; border-radius: var(--radius-sm); border-left: 4px solid var(--accent); box-shadow: var(--shadow-1); }
     .acc-card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
-    .acc-card-name { font-weight: 600; color: #1F3A5F; }
-    .acc-card-amount { font-weight: 700; color: #1F3A5F; font-variant-numeric: tabular-nums; }
-    .acc-card-meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 8px; }
-    .acc-card-footer { display: flex; justify-content: space-between; font-size: 0.78rem; color: #6b7280; padding-top: 8px; border-top: 1px solid #f3f4f6; }
-    .acc-card-footer .fee { color: #b45309; }
-    .acc-card-footer .net { color: #047857; }
+    .acc-card-name { font-weight: 600; color: var(--ink); }
+    .acc-card-amount { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .acc-card-meta { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 8px; }
+    .acc-card-footer { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--ink-2); padding-top: 8px; border-top: 1px solid var(--line); }
+    .acc-card-footer .fee { color: var(--warn); }
+    .acc-card-footer .net { color: var(--ok); }
 
-    /* ---- View toggle: By date vs By payout ---- */
-    .acc-viewtabs { display: inline-flex; background: #f3f4f6; border-radius: 8px; padding: 3px; margin-bottom: 14px; }
-    .acc-viewtab { border: none; background: transparent; padding: 8px 16px; border-radius: 6px; font-family: inherit; font-size: 0.85rem; font-weight: 600; color: #6b7280; cursor: pointer; min-height: 38px; }
-    .acc-viewtab.active { background: #1F3A5F; color: #fff; }
-    .acc-scope { font-size: 0.8rem; color: #6b7280; margin: -6px 0 16px; }
-    .acc-scope strong { color: #1F3A5F; }
+    /* ---- View toggle: By date vs By payout ----
+       Visuals come from the shared .filter pill; this wrapper is layout only. */
+    .acc-viewtabs { display: inline-flex; gap: 6px; margin-bottom: 14px; }
+    .acc-scope { font-size: 0.8rem; color: var(--ink-2); margin: -6px 0 16px; }
+    .acc-scope strong { color: var(--ink); }
 
     /* ---- Payout reconciliation cards ---- */
-    .payout-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+    .payout-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 16px; box-shadow: var(--shadow-1); }
     .payout-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-    .payout-date { font-size: 1.05rem; font-weight: 700; color: #1F3A5F; }
-    .payout-id { font-size: 0.72rem; color: #9ca3af; font-family: ui-monospace, Menlo, monospace; margin-top: 2px; }
-    .payout-status { display: inline-block; font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
-    .payout-status.paid { background: #dcfce7; color: #166534; }
-    .payout-status.in_transit, .payout-status.pending { background: #fef3c7; color: #92400e; }
-    .payout-status.failed, .payout-status.canceled { background: #fee2e2; color: #991b1b; }
+    .payout-date { font-size: 1.05rem; font-weight: 700; color: var(--ink); }
+    .payout-id { font-size: 0.72rem; color: var(--ink-3); font-family: ui-monospace, Menlo, monospace; margin-top: 2px; }
+    /* Status colors come from the shared .badge system — layout only here. */
+    .payout-status { margin-left: 8px; vertical-align: middle; }
     .payout-bank { text-align: right; }
-    .payout-bank .lbl { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; display: block; }
+    .payout-bank .lbl { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); display: block; }
     .payout-bank .amt { font-size: 1.4rem; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .payout-bank.deposit .amt { color: #047857; }
-    .payout-bank.debit .amt { color: #b45309; }
-    .payout-recon { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 0.85rem; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
-    .payout-recon.tied { background: #f0fdf4; color: #166534; }
-    .payout-recon.untied { background: #fef2f2; color: #991b1b; font-weight: 600; }
-    .payout-recon .chk { font-size: 1.05rem; line-height: 1; }
+    .payout-bank.deposit .amt { color: var(--ok); }
+    .payout-bank.debit .amt { color: var(--warn); }
+    .payout-recon { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.85rem; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+    .payout-recon.tied { background: var(--ok-bg); color: var(--ok); }
+    .payout-recon.untied { background: var(--danger-bg); color: var(--danger); font-weight: 600; }
+    .payout-recon .chk { display: inline-flex; flex-shrink: 0; }
+    .payout-recon.tied .chk { color: var(--ok); }
+    .payout-recon.untied .chk { color: var(--warn); }
 
     /* ---- Pending (not yet settled) group ---- */
-    .pending-card { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; }
+    .pending-card { background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px; }
     .pending-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-    .pending-title { font-size: 1.05rem; font-weight: 700; color: #92400e; }
-    .pending-amt { font-size: 1.3rem; font-weight: 800; color: #92400e; font-variant-numeric: tabular-nums; }
-    .pending-note { font-size: 0.8rem; color: #92400e; margin: 4px 0 12px; opacity: 0.92; }
+    .pending-title { font-size: 1.05rem; font-weight: 700; color: var(--warn); }
+    .pending-amt { font-size: 1.3rem; font-weight: 800; color: var(--warn); font-variant-numeric: tabular-nums; }
+    .pending-note { font-size: 0.8rem; color: var(--warn); margin: 4px 0 12px; opacity: 0.92; }
 
     /* Explanatory note for payouts with no itemized constituents (e.g. auto-debits). */
-    .payout-note { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 0.85rem; background: #f3f4f6; color: #4b5563; border-left: 3px solid #9ca3af; }
+    .payout-note { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.85rem; background: var(--surface-2); color: var(--ink-2); border-left: 3px solid var(--ink-3); }
 
     /* Tables nested inside payout/pending cards sit flat (no inner card chrome). */
     .payout-card .acc-table-wrap, .pending-card .acc-table-wrap { box-shadow: none; background: transparent; border-radius: 0; }
@@ -96,69 +100,30 @@
       /* When the payout header wraps, align the bank amount under the date. */
       .payout-bank { text-align: left; }
       .acc-viewtabs { display: flex; width: 100%; }
-      .acc-viewtab { flex: 1 1 0; }
+      .acc-viewtab { flex: 1 1 0; justify-content: center; }
     }
-
-    /* ============================================================
-       DARK MODE — scoped to html.dark only; light mode untouched.
-       ============================================================ */
-    html.dark .acc-control input { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--glass-border); }
-    html.dark .acc-toggle { color: var(--text-secondary); }
-    html.dark .acc-summary { background: var(--bg-secondary); }
-    html.dark .acc-summary-item .label { color: var(--text-secondary); }
-    html.dark .acc-summary-item .value { color: var(--text-primary); }
-    html.dark .acc-summary-item.fee .value { color: #FBBF24; }
-    html.dark .acc-summary-item.net .value { color: #4ADE80; }
-    html.dark .acc-table-wrap { background: var(--bg-secondary); }
-    html.dark .acc-table th { background: var(--bg-tertiary); color: var(--text-secondary); border-bottom-color: var(--glass-border); }
-    html.dark .acc-table td { border-bottom-color: var(--glass-border); color: var(--text-primary); }
-    html.dark .acc-table tbody tr:hover { background: rgba(255,255,255,0.04); }
-    html.dark .acc-table tfoot td { background: var(--bg-tertiary); color: var(--text-primary); }
-    html.dark .acc-card { background: var(--bg-secondary); border-left-color: var(--accent); }
-    html.dark .acc-card-name, html.dark .acc-card-amount { color: var(--text-primary); }
-    html.dark .acc-card-meta { color: var(--text-secondary); }
-    html.dark .acc-card-footer { border-top-color: var(--glass-border); }
-    html.dark .acc-card-footer .fee { color: #FBBF24; }
-    html.dark .acc-card-footer .net { color: #4ADE80; }
-    html.dark .acc-viewtabs { background: var(--bg-tertiary); }
-    html.dark .acc-viewtab { color: var(--text-secondary); }
-    html.dark .acc-viewtab.active { background: var(--accent); color: #0F1420; }
-    html.dark .acc-scope { color: var(--text-secondary); }
-    html.dark .acc-scope strong { color: var(--text-primary); }
-    html.dark .payout-card { background: var(--bg-secondary); border-color: var(--glass-border); }
-    html.dark .payout-date { color: var(--text-primary); }
-    html.dark .payout-bank .lbl { color: var(--text-secondary); }
-    html.dark .payout-bank.deposit .amt { color: #4ADE80; }
-    html.dark .payout-bank.debit .amt { color: #FBBF24; }
-    html.dark .payout-recon.tied { background: rgba(74,222,128,0.12); color: #4ADE80; }
-    html.dark .payout-recon.untied { background: rgba(248,113,113,0.14); color: #FCA5A5; }
-    html.dark .payout-status.paid { background: rgba(74,222,128,0.18); color: #4ADE80; }
-    html.dark .payout-status.in_transit, html.dark .payout-status.pending { background: rgba(251,191,36,0.18); color: #FBBF24; }
-    html.dark .payout-status.failed, html.dark .payout-status.canceled { background: rgba(248,113,113,0.18); color: #FCA5A5; }
-    html.dark .pending-card { background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.32); }
-    html.dark .pending-title, html.dark .pending-amt, html.dark .pending-note { color: #FBBF24; }
-    html.dark .payout-note { background: var(--bg-tertiary); color: var(--text-secondary); border-left-color: var(--glass-border); }
   </style>
 </head>
 <body class="hub-body dashboard-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
   <main class="dashboard-main">
     <div class="dashboard-header gc-page-header">
-      <a href="home.html" class="btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Accounting</h1>
+      <a href="home.html" class="btn btn-secondary btn-sm" style="margin-right:12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Accounting</h1>
       <div class="dashboard-header-actions">
-        <button type="button" id="export-csv-btn" class="btn-secondary btn-sm">Download CSV</button>
-        <button type="button" id="refresh-btn" class="btn-secondary btn-sm">Refresh</button>
+        <button type="button" id="export-csv-btn" class="btn btn-secondary btn-sm">Download CSV</button>
+        <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
       </div>
     </div>
 
     <nav class="section-tabs" data-section-tabs aria-label="Generator Care sections"></nav>
 
-    <p style="color:#6b7280;font-size:0.9rem;margin-bottom:18px;max-width:680px;">
+    <p style="color:var(--ink-2);font-size:0.9rem;margin-bottom:18px;max-width:680px;">
       Every customer charge processed through Stripe, with our 2.9% + 30&cent; processing fee broken out so you can record the gross amount in Jonas and the fee as a separate expense line. Use the date range to pick your reconciliation period.
     </p>
 
     <div class="acc-viewtabs" role="tablist" aria-label="Accounting view">
-      <button type="button" id="view-date" class="acc-viewtab active" data-view="date" role="tab" aria-selected="true">By date</button>
-      <button type="button" id="view-payout" class="acc-viewtab" data-view="payout" role="tab" aria-selected="false">By payout</button>
+      <button type="button" id="view-date" class="filter acc-viewtab active" data-view="date" role="tab" aria-selected="true">By date</button>
+      <button type="button" id="view-payout" class="filter acc-viewtab" data-view="payout" role="tab" aria-selected="false">By payout</button>
     </div>
 
     <div class="acc-controls">
@@ -170,7 +135,7 @@
         <label for="to-date">To</label>
         <input type="date" id="to-date" />
       </div>
-      <button type="button" id="apply-btn" class="btn-primary btn-sm" style="height:38px;">Apply</button>
+      <button type="button" id="apply-btn" class="btn btn-primary">Apply</button>
       <label class="acc-control acc-toggle" for="hide-test-toggle">
         <input type="checkbox" id="hide-test-toggle" checked />
         <span>Hide early test activity</span>
@@ -259,6 +224,7 @@
   </main>
 
   <script src="shared-nav.js"></script>
+  <script src="icons.js"></script>
   <script src="accounting.js"></script>
 </body>
 </html>

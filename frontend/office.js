@@ -136,7 +136,7 @@
         <div class="insp-card" data-id="${insp.id}">
           <div class="insp-card-header">
             <div class="insp-card-date">${date}</div>
-            <div class="insp-card-status ${insp.status}">${insp.status}</div>
+            <span class="badge ${insp.status === 'draft' ? 'badge-info' : 'badge-ok'} insp-card-status ${insp.status}">${insp.status}</span>
           </div>
           <div class="insp-card-body">
             <h3>${insp.customer_name || 'Unknown Customer'}</h3>
@@ -147,8 +147,8 @@
             </div>
           </div>
           <div class="insp-card-footer">
-            <button type="button" class="btn-secondary btn-sm view-btn" data-id="${insp.id}">View Details</button>
-            <button type="button" class="btn-danger btn-sm delete-btn" data-id="${insp.id}">Delete</button>
+            <button type="button" class="btn btn-secondary btn-sm view-btn" data-id="${insp.id}">View Details</button>
+            <button type="button" class="btn btn-danger-soft btn-sm delete-btn" data-id="${insp.id}">Delete</button>
           </div>
         </div>
       `;
@@ -272,7 +272,7 @@
         up_co: 'CO detector installation',
         up_alum: 'Aluminum wiring remediation',
         up_arc: 'Arc fault protection upgrade',
-        up_svc: 'Service upgrade (100A → 200A)',
+        up_svc: 'Service upgrade (100A to 200A)',
         up_gen: 'Whole-home generator / transfer sw.',
         up_outdoor: 'Outdoor / weatherproof outlets',
         up_covers: 'In-use outlet covers installation',
@@ -366,10 +366,10 @@
       let html = '';
       html += `<div class="files-actions">`;
       if (pdfUrl) {
-        html += `<a class="btn-primary btn-sm" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open PDF Report</a>`;
+        html += `<a class="btn btn-primary btn-sm" href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Open PDF Report</a>`;
       }
       if (photos && photos.length) {
-        html += `<button type="button" class="btn-secondary btn-sm" id="download-zip-btn">Download All Photos (.zip)</button>`;
+        html += `<button type="button" class="btn btn-secondary btn-sm" id="download-zip-btn">Download All Photos (.zip)</button>`;
       }
       html += `</div>`;
 

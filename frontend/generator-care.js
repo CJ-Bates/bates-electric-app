@@ -319,7 +319,7 @@
     const b = bucket(sub);
     const rowClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
     const cust = sub.customer || {};
-    const fleet = sub.fleet_monitoring ? '<span class="gc-badge gc-badge-fleet" title="Fleet Monitoring enabled">FM</span>' : '';
+    const fleet = sub.fleet_monitoring ? '<span class="chip" title="Fleet Monitoring enabled">FM</span>' : '';
     return `
       <tr class="gc-row ${rowClass}" data-sub-id="${sub.id}">
         <td>
@@ -357,26 +357,25 @@
   }
 
   function badgeForBucket(b) {
-    if (b === 'overdue') return '<span class="gc-badge gc-badge-overdue">Overdue</span>';
-    if (b === 'soon') return '<span class="gc-badge gc-badge-soon">Soon</span>';
-    return '<span class="gc-badge gc-badge-active">Active</span>';
+    if (b === 'overdue') return '<span class="badge badge-danger">Overdue</span>';
+    if (b === 'soon') return '<span class="badge badge-warn">Soon</span>';
+    return '<span class="badge badge-ok">Active</span>';
   }
 
   // List STATUS column: surface visit scheduling state at a glance. Booked
-  // appointment -> "Scheduled <date>"; otherwise "Needs scheduling" colored by
-  // due urgency (red overdue / amber soon / gray future). Inline-styled so it
-  // doesn't depend on new CSS classes.
+  // appointment -> "Scheduled <date>" (ok); otherwise "Needs scheduling" —
+  // danger when overdue, warn otherwise (per the v3 status semantics).
+  // Inactive/canceled subs read neutral.
   function listStatusBadge(sub) {
-    const pill = (bg, fg, text) => `<span class="gc-badge" style="background:${bg};color:${fg};">${escapeHtml(text)}</span>`;
-    if (sub.status !== 'active') return pill('#E5E7EB', '#374151', (sub.status || 'inactive').replace(/^\w/, c => c.toUpperCase()));
+    const pill = (intent, text) => `<span class="badge ${intent}">${escapeHtml(text)}</span>`;
+    if (sub.status !== 'active') return pill('badge-neutral', (sub.status || 'inactive').replace(/^\w/, c => c.toUpperCase()));
     const ov = sub.open_visit;
     if (ov && ov.appointment_at) {
-      return pill('#DCFCE7', '#166534', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`);
+      return pill('badge-ok', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`);
     }
     const b = bucket(sub);
-    if (b === 'overdue') return pill('#FEE2E2', '#991B1B', 'Needs scheduling');
-    if (b === 'soon') return pill('#FEF3C7', '#92400E', 'Needs scheduling');
-    return pill('#F3F4F6', '#4B5563', 'Needs scheduling');
+    if (b === 'overdue') return pill('badge-danger', 'Needs scheduling');
+    return pill('badge-warn', 'Needs scheduling');
   }
 
   // ---- Detail modal ----
@@ -392,8 +391,19 @@
   }
 
   function statusPill(status) {
-    const cls = `gc-status-pill-${status || 'active'}`;
-    return `<span class="gc-status-pill ${cls}">${escapeHtml(status || 'active')}</span>`;
+    const s = status || 'active';
+    // Stripe subscription statuses -> v3 badge intents (raw status stays visible).
+    const m = ({
+      active: 'badge-ok',
+      trialing: 'badge-ok',
+      past_due: 'badge-warn',
+      incomplete: 'badge-warn',
+      unpaid: 'badge-danger',
+      canceled: 'badge-neutral',
+      incomplete_expired: 'badge-neutral',
+      paused: 'badge-neutral',
+    })[s] || 'badge-neutral';
+    return `<span class="badge ${m}">${escapeHtml(s)}</span>`;
   }
 
   function renderHeaderBar(customer, subscription) {
@@ -401,7 +411,7 @@
     const email = customer.email || '';
     const stripeId = subscription.stripe_customer_id;
     const stripeLink = stripeId
-      ? `<a href="https://dashboard.stripe.com/customers/${encodeURIComponent(stripeId)}" target="_blank" rel="noopener noreferrer">Open in Stripe &#8599;</a>`
+      ? `<a href="https://dashboard.stripe.com/customers/${encodeURIComponent(stripeId)}" target="_blank" rel="noopener noreferrer">Open in Stripe <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px;"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="8 7 17 7 17 16"/></svg></a>`
       : '';
     const contactBits = [
       phone ? `<span>${escapeHtml(phone)}</span>` : '',
@@ -425,12 +435,12 @@
     const fl = isFlorida(customer.install_state);
     // Florida customers operate under the S.E. Bates Electric DBA — surface it so
     // Amy/Ally use the correct legal name on Jonas work orders + AR invoices.
-    const flBadge = '<span style="display:inline-block;background:#fef3c7;color:#92400e;font-size:0.68rem;font-weight:700;padding:2px 9px;border-radius:999px;letter-spacing:0.03em;">FL &middot; S.E. Bates Electric</span>';
+    const flBadge = '<span class="chip chip-warn">FL &middot; S.E. Bates Electric</span>';
     const operatingRow = fl
       ? `<div class="gc-card-row"><span class="gc-meta-label">Operating as</span><span class="gc-meta-value">${flBadge}</span></div>`
       : '';
     return `
-      <h3 class="gc-card-h"><span>Contact &amp; Address</span><button type="button" class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-contact-edit-btn">Edit</button></h3>
+      <h3 class="gc-card-h"><span>Contact &amp; Address</span><button type="button" class="btn btn-ghost btn-sm" id="gc-contact-edit-btn">Edit</button></h3>
       <div class="gc-card-row"><span class="gc-meta-label">Name</span><span class="gc-meta-value">${escapeHtml(fmtNameCase(customer.name)) || '&mdash;'}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(fmtPhoneDisplay(customer.phone)) || '&mdash;'}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
@@ -466,8 +476,8 @@
       </div>
       <div class="gc-edit-error" id="gc-contact-error" hidden></div>
       <div class="gc-note-editor-actions">
-        <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-contact-cancel-btn">Cancel</button>
-        <button type="button" class="gc-btn gc-btn-primary gc-btn-sm" id="gc-contact-save-btn">Save changes</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="gc-contact-cancel-btn">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="gc-contact-save-btn">Save changes</button>
       </div>`;
   }
 
@@ -479,7 +489,7 @@
           <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Internal note (office only)</span>
           <textarea id="gc-customer-note" data-customer-id="${customer.id}" placeholder="Anything Amy or Brenda should know about this customer.">${escapeHtml(customer.notes || '')}</textarea>
           <div class="gc-note-editor-actions">
-            <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-save-note-btn">Save note</button>
+            <button class="btn btn-secondary btn-sm" id="gc-save-note-btn">Save note</button>
           </div>
         </div>
       </div>`;
@@ -490,11 +500,11 @@
     const lastVisitText = subscription.last_visit_date ? fmtDate(subscription.last_visit_date) : '&mdash; (none yet)';
     const accountActions = isCanceled ? '' : `
       <div class="gc-card-actions">
-        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-change-plan-btn" data-plan="${escapeHtml(subscription.plan)}" data-genclass="${escapeHtml(subscription.gen_class)}">Change plan</button>
-        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-change-tier-btn">Change tier</button>
+        <button class="btn btn-secondary btn-sm" id="gc-change-plan-btn" data-plan="${escapeHtml(subscription.plan)}" data-genclass="${escapeHtml(subscription.gen_class)}">Change plan</button>
+        <button class="btn btn-secondary btn-sm" id="gc-change-tier-btn">Change tier</button>
         <span id="gc-fleet-action"></span>
-        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-welcome-btn">Resend Welcome</button>
-        <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
+        <button class="btn btn-secondary btn-sm" id="gc-resend-welcome-btn">Resend Welcome</button>
+        <button class="btn btn-secondary btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
       </div>`;
     return `
       <div class="gc-card">
@@ -511,8 +521,8 @@
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <span class="gc-meta-label">Next due (target)</span>
             <span class="gc-meta-value">
-              <input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
-              <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-next-visit-save" style="margin-left:6px;">Save</button>
+              <input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+              <button class="btn btn-secondary btn-sm" id="gc-next-visit-save" style="margin-left:6px;">Save</button>
             </span>
           </div>
           <div class="gc-meta-label" style="margin-top:4px;opacity:0.8;font-size:0.78rem;">Auto-set from the plan cadence. Book the actual appointment in Service Visits below.</div>
@@ -568,8 +578,9 @@
     const woNum = subscription.work_order_number;
     const packet = escapeHtml(buildPacketText(subscription, pendingAddons));
 
+    const check = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
     const dot = (done, n) =>
-      `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:0.72rem;font-weight:700;flex-shrink:0;background:${done ? '#16A34A' : 'var(--bg-tertiary)'};color:${done ? '#fff' : 'var(--text-tertiary)'};">${done ? '&#10003;' : n}</span>`;
+      `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:0.72rem;font-weight:700;flex-shrink:0;background:${done ? 'var(--ok)' : 'var(--neutral-bg)'};color:${done ? 'var(--ink-inverse)' : 'var(--ink-3)'};">${done ? check : n}</span>`;
     const stepRow = (n, label, done, value) => `
       <div class="gc-card-row" style="align-items:center;">
         <span class="gc-meta-label" style="display:flex;align-items:center;gap:8px;">${dot(done, n)}${label}</span>
@@ -577,23 +588,23 @@
       </div>`;
 
     const woValue = woAt
-      ? `<span style="font-weight:400;color:var(--text-secondary);">${woNum ? '<strong style="color:var(--text-primary);">WO# ' + escapeHtml(woNum) + '</strong> &middot; ' : ''}${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-wo-undo-btn">Undo</button>`
+      ? `<span style="font-weight:400;color:var(--ink-2);">${woNum ? '<strong style="color:var(--ink);">WO# ' + escapeHtml(woNum) + '</strong> &middot; ' : ''}${fmtStamp(woAt)}${woBy ? ' &middot; ' + escapeHtml(woBy) : ''}</span> <button class="btn btn-ghost btn-sm" id="gc-wo-undo-btn">Undo</button>`
       : `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
           <input type="text" id="gc-wo-number" class="gc-wo-input" style="width:120px;flex:0 0 auto;font-size:0.8rem;padding:5px 8px;" placeholder="Jonas WO #" autocomplete="off" />
-          <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-wo-created-btn">Mark work order created</button>
+          <button class="btn btn-primary btn-sm" id="gc-wo-created-btn">Mark work order created</button>
         </span>
-        <div id="gc-wo-validation" style="display:none;color:#DC2626;font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
+        <div id="gc-wo-validation" style="display:none;color:var(--danger);font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
 
     return `
       <div class="gc-card">
         <h3 class="gc-card-h">Jonas Work Order <span class="gc-card-h-count">internal record</span></h3>
-        ${stepRow('1', 'Signed up', true, `<span style="font-weight:400;color:var(--text-secondary);">${fmtDate(subscription.signup_date)}</span>`)}
+        ${stepRow('1', 'Signed up', true, `<span style="font-weight:400;color:var(--ink-2);">${fmtDate(subscription.signup_date)}</span>`)}
         ${stepRow('2', 'Work order created', !!woAt, woValue)}
         <div class="gc-note-editor">
           <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Work-order packet &mdash; for keying into Jonas</span>
           <textarea id="gc-packet" class="gc-packet" readonly rows="9">${packet}</textarea>
           <div class="gc-note-editor-actions">
-            <button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-copy-packet-btn">Copy packet</button>
+            <button class="btn btn-secondary btn-sm" id="gc-copy-packet-btn">Copy packet</button>
           </div>
         </div>
       </div>`;
@@ -613,11 +624,11 @@
 
       let badge;
       if (completed) {
-        badge = `<span class="gc-chip gc-chip-completed">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
+        badge = `<span class="badge badge-neutral">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
       } else if (scheduled) {
-        badge = `<span class="gc-chip" style="background:#DCFCE7;color:#166534;">Scheduled &middot; ${escapeHtml(fmtDateTime(v.appointment_at))}</span>`;
+        badge = `<span class="badge badge-ok">Scheduled &middot; ${escapeHtml(fmtDateTime(v.appointment_at))}</span>`;
       } else {
-        badge = `<span class="gc-chip" style="background:#FEF3C7;color:#92400E;">Needs scheduling</span>`;
+        badge = `<span class="badge badge-warn">Needs scheduling</span>`;
       }
 
       // Audit trail (who/when), like the Jonas hand-off stamps.
@@ -636,19 +647,19 @@
         actions = `
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
             <label class="gc-meta-label" style="display:flex;align-items:center;gap:5px;">Assign tech:
-              <select class="gc-assign-select" data-assign-visit="${v.id}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;">${techOptions(v.assigned_tech_id)}</select>
+              <select class="gc-assign-select" data-assign-visit="${v.id}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;">${techOptions(v.assigned_tech_id)}</select>
             </label>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
-            <input type="datetime-local" class="gc-appt-input" data-visit="${v.id}" value="${localVal}" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;font-family:inherit;" />
-            <button class="gc-btn gc-btn-secondary gc-btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
-            <button class="gc-btn gc-btn-primary gc-btn-sm" data-complete-visit="${v.id}">Mark complete</button>
+            <input type="datetime-local" class="gc-appt-input" data-visit="${v.id}" value="${localVal}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+            <button class="btn btn-secondary btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
+            <button class="btn btn-primary btn-sm" data-complete-visit="${v.id}">Mark complete</button>
           </div>`;
       }
       // Notes: customer-visible (on completed) + internal (office/tech only).
       const noteLines = [];
       if (completed && v.notes) noteLines.push(`<div class="gc-meta-label" style="margin-top:4px;">Customer note: ${escapeHtml(v.notes)}</div>`);
-      if (v.internal_note) noteLines.push(`<div class="gc-meta-label" style="margin-top:4px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:5px 8px;color:#92400E;">Internal: ${escapeHtml(v.internal_note)}</div>`);
+      if (v.internal_note) noteLines.push(`<div class="gc-meta-label" style="margin-top:4px;background:var(--warn-bg);border:1px solid color-mix(in srgb, var(--warn) 35%, transparent);border-radius:6px;padding:5px 8px;color:var(--warn);">Internal: ${escapeHtml(v.internal_note)}</div>`);
 
       const due = !completed ? dueCtx(v) : null;
       return `<div class="gc-card-row" style="display:block;">
@@ -686,37 +697,37 @@
     const label = escapeHtml(addonLabel(a.addon_type));
     let chip = '', action = '';
     if (a.status === 'pending') {
-      chip = `<span class="gc-chip gc-chip-pending">Pending</span>`;
+      chip = `<span class="badge badge-warn">Pending</span>`;
       action = `<div style="display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="gc-btn gc-btn-primary gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>
-        <button class="gc-btn gc-btn-icon gc-btn-sm" data-remove-addon="${a.id}" data-label="${label}" title="Remove">&times;</button>
+        <button class="btn btn-primary btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>
+        <button class="btn btn-secondary btn-sm gc-btn-icon" data-remove-addon="${a.id}" data-label="${label}" title="Remove" aria-label="Remove"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>`;
     } else if (a.status === 'performed') {
-      chip = `<span class="gc-chip gc-chip-performed">Performed &middot; unbilled</span>`;
-      action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-unmark="${a.id}">Undo</button>`;
+      chip = `<span class="badge badge-warn">Performed &middot; unbilled</span>`;
+      action = `<button class="btn btn-ghost btn-sm" data-unmark="${a.id}">Undo</button>`;
     } else if (a.status === 'charged') {
       const refunded = parseTotalRefundedCents(a.notes);
       const chargedOn = a.date_charged ? ' &middot; ' + escapeHtml(fmtDate(a.date_charged)) : '';
       if (refunded >= a.amount_cents) {
-        chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
+        chip = `<span class="badge badge-neutral">Refunded</span>`;
       } else if (refunded > 0) {
-        chip = `<span class="gc-chip gc-chip-partial">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
-        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${label}">Refund more</button>`;
+        chip = `<span class="badge badge-warn">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
+        action = `<button class="btn btn-ghost btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="${refunded}" data-label="${label}">Refund more</button>`;
       } else {
-        chip = `<span class="gc-chip gc-chip-charged">Charged ${amtStr}${chargedOn}</span>`;
-        action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
+        chip = `<span class="badge badge-ok">Charged ${amtStr}${chargedOn}</span>`;
+        action = `<button class="btn btn-ghost btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
       }
     } else if (a.status === 'failed') {
-      chip = `<span class="gc-chip gc-chip-failed">Failed</span>`;
-      action = `<button class="gc-btn gc-btn-destructive gc-btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
+      chip = `<span class="badge badge-danger">Failed</span>`;
+      action = `<button class="btn btn-danger-soft btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
     } else {
-      chip = `<span class="gc-chip">${escapeHtml(a.status)}</span>`;
+      chip = `<span class="badge badge-neutral">${escapeHtml(a.status)}</span>`;
     }
     const visibleNotes = stripRefundLines(a.notes);
-    const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
+    const noteHtml = visibleNotes ? `<div style="color:var(--danger);font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
     return `<div class="gc-card-row">
       <div>
-        <div class="gc-meta-value">${label} ${amtStr ? `<span style="color:#6b7280;font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
+        <div class="gc-meta-value">${label} ${amtStr ? `<span style="color:var(--ink-2);font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
         <div style="margin-top:4px;">${chip}</div>
         ${noteHtml}
       </div>
@@ -732,7 +743,7 @@
     const histSet = new Set(history);
     const current = visible.filter(a => !histSet.has(a));
 
-    const headerAction = isCanceled ? '' : `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
+    const headerAction = isCanceled ? '' : `<button class="btn btn-secondary btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
     const header = `<h3 class="gc-card-h"><span>Add-ons<span class="gc-card-h-count">(${current.length})</span></span>${headerAction}</h3>`;
 
     const currentRows = current.length
@@ -743,8 +754,8 @@
     const performedUnbilled = current.filter(a => a.status === 'performed' && a.amount_cents > 0);
     const performedTotal = performedUnbilled.reduce((s, a) => s + a.amount_cents, 0);
     const batchBtn = (!isCanceled && performedUnbilled.length)
-      ? `<div class="gc-card-row" style="justify-content:flex-end;border-top:1px solid #eef0f3;padding-top:10px;margin-top:4px;">
-          <button class="gc-btn gc-btn-primary gc-btn-sm" id="gc-charge-addons-btn">Charge performed add-ons ($${(performedTotal/100).toFixed(2)})</button>
+      ? `<div class="gc-card-row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:10px;margin-top:4px;">
+          <button class="btn btn-primary btn-sm" id="gc-charge-addons-btn">Charge performed add-ons ($${(performedTotal/100).toFixed(2)})</button>
         </div>`
       : '';
 
@@ -752,7 +763,7 @@
     const standing = new Set((subscription && subscription.standing_addons) || []);
     const recurringAvail = availableRecurringTypes(subscription && subscription.gen_class);
     const standingHtml = (!isCanceled && recurringAvail.length)
-      ? `<div style="border-top:1px solid #eef0f3;margin-top:10px;padding-top:8px;">
+      ? `<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px;">
           <div class="gc-meta-label" style="margin-bottom:6px;">Standing add-ons <span style="opacity:0.75;font-weight:400;">&mdash; auto-return as Pending each visit</span></div>
           ${recurringAvail.map(t => `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.88rem;cursor:pointer;">
             <input type="checkbox" class="gc-standing-cb" data-type="${escapeHtml(t)}"${standing.has(t) ? ' checked' : ''} />
@@ -762,8 +773,8 @@
       : '';
 
     const historyHtml = history.length
-      ? `<details style="border-top:1px solid #eef0f3;margin-top:10px;padding-top:8px;">
-          <summary style="cursor:pointer;font-size:0.85rem;color:#6b7280;font-weight:600;">Past visits / history (${history.length})</summary>
+      ? `<details style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px;">
+          <summary style="cursor:pointer;font-size:0.85rem;color:var(--ink-2);font-weight:600;">Past visits / history (${history.length})</summary>
           <div style="margin-top:6px;">${history.map(addonRowHtml).join('')}</div>
         </details>`
       : '';
@@ -773,7 +784,7 @@
 
   function renderChargesCard(adhoc_charges, isCanceled) {
     const visible = (adhoc_charges || []).filter(c => c.status !== 'canceled');
-    const headerAction = isCanceled ? '' : `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-charge-btn">+ Add Charge</button>`;
+    const headerAction = isCanceled ? '' : `<button class="btn btn-secondary btn-sm" id="gc-add-charge-btn">+ Add Charge</button>`;
     const header = `<h3 class="gc-card-h"><span>Other Charges<span class="gc-card-h-count">(${visible.length})</span></span>${headerAction}</h3>`;
     if (visible.length === 0) {
       const empty = `<div class="gc-meta-label" style="padding:6px 0;">No ad-hoc charges. Use this for non-program work (parts, repairs, etc).</div>`;
@@ -785,29 +796,29 @@
       let chip = '', action = '';
       if (c.status === 'pending') {
         const label = c.billing_method === 'renewal' ? 'Pending &middot; bills at renewal' : 'Pending';
-        chip = `<span class="gc-chip gc-chip-pending">${label}</span>`;
-        action = `<button class="gc-btn gc-btn-icon gc-btn-sm" data-cancel-charge="${c.id}" data-desc="${desc}" title="Cancel">&times;</button>`;
+        chip = `<span class="badge badge-warn">${label}</span>`;
+        action = `<button class="btn btn-secondary btn-sm gc-btn-icon" data-cancel-charge="${c.id}" data-desc="${desc}" title="Cancel" aria-label="Cancel"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
       } else if (c.status === 'charged') {
         const refunded = parseTotalRefundedCents(c.notes);
         if (refunded >= c.amount_cents) {
-          chip = `<span class="gc-chip gc-chip-refunded">Refunded</span>`;
+          chip = `<span class="badge badge-neutral">Refunded</span>`;
         } else if (refunded > 0) {
-          chip = `<span class="gc-chip gc-chip-partial">Charged &middot; partial refund $${(refunded/100).toFixed(2)}</span>`;
-          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="${refunded}" data-desc="${desc}">Refund more</button>`;
+          chip = `<span class="badge badge-warn">Charged &middot; partial refund $${(refunded/100).toFixed(2)}</span>`;
+          action = `<button class="btn btn-ghost btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="${refunded}" data-desc="${desc}">Refund more</button>`;
         } else {
-          chip = `<span class="gc-chip gc-chip-charged">${c.date_charged ? 'Charged ' + escapeHtml(c.date_charged) : 'Charged'}</span>`;
-          action = `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${desc}">Refund</button>`;
+          chip = `<span class="badge badge-ok">${c.date_charged ? 'Charged ' + escapeHtml(c.date_charged) : 'Charged'}</span>`;
+          action = `<button class="btn btn-ghost btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${desc}">Refund</button>`;
         }
       } else if (c.status === 'failed') {
-        chip = `<span class="gc-chip gc-chip-failed">Failed</span>`;
+        chip = `<span class="badge badge-danger">Failed</span>`;
       } else {
-        chip = `<span class="gc-chip">${escapeHtml(c.status)}</span>`;
+        chip = `<span class="badge badge-neutral">${escapeHtml(c.status)}</span>`;
       }
       const visibleNotes = stripRefundLines(c.notes);
-      const noteHtml = visibleNotes ? `<div style="color:#DC2626;font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
+      const noteHtml = visibleNotes ? `<div style="color:var(--danger);font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
       return `<div class="gc-card-row">
         <div>
-          <div class="gc-meta-value">${desc} ${amtStr ? `<span style="color:#6b7280;font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
+          <div class="gc-meta-value">${desc} ${amtStr ? `<span style="color:var(--ink-2);font-weight:500;">&middot; ${amtStr}</span>` : ''}</div>
           <div style="margin-top:4px;">${chip}</div>
           ${noteHtml}
         </div>
@@ -843,7 +854,7 @@
     }
     return `<div class="gc-danger-zone">
       <span class="gc-danger-zone-text">Cancel ends the subscription at the period end. Customer keeps service through the paid-through date.</span>
-      <button class="gc-btn gc-btn-destructive gc-btn-sm" id="gc-cancel-sub-btn">Cancel Subscription</button>
+      <button class="btn btn-danger btn-sm" id="gc-cancel-sub-btn">Cancel Subscription</button>
     </div>`;
   }
 
@@ -995,7 +1006,7 @@
 
     } catch (err) {
       console.error('Detail load failed:', err);
-      body.innerHTML = `<div class="gc-card"><p style="color:#DC2626;">Failed to load: ${escapeHtml(err.message)}</p></div>`;
+      body.innerHTML = `<div class="gc-card"><p style="color:var(--danger);">Failed to load: ${escapeHtml(err.message)}</p></div>`;
     }
   }
 
@@ -1407,8 +1418,8 @@
           <div class="gc-meta-label">${escapeHtml(t.email)}</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button class="gc-btn gc-btn-secondary gc-btn-sm" data-resend-tech="${escapeHtml(t.id)}">Resend link</button>
-          <button class="gc-btn ${inactive ? 'gc-btn-primary' : 'gc-btn-secondary'} gc-btn-sm" data-toggle-tech="${escapeHtml(t.id)}" data-active="${inactive ? '1' : '0'}">${inactive ? 'Reactivate' : 'Deactivate'}</button>
+          <button class="btn btn-secondary btn-sm" data-resend-tech="${escapeHtml(t.id)}">Resend link</button>
+          <button class="btn ${inactive ? 'btn-primary' : 'btn-secondary'} btn-sm" data-toggle-tech="${escapeHtml(t.id)}" data-active="${inactive ? '1' : '0'}">${inactive ? 'Reactivate' : 'Deactivate'}</button>
         </div>
       </div>`;
     }).join('');
@@ -1652,7 +1663,7 @@
       const to = (emailInput.value || '').trim();
       if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
         resultEl.textContent = 'Please enter a valid email address.';
-        resultEl.style.color = '#991b1b';
+        resultEl.style.color = 'var(--danger)';
         return;
       }
       btn.disabled = true;
@@ -1669,15 +1680,15 @@
         if (!r.ok || !data.sent) {
           const reason = data.error || `HTTP ${r.status}`;
           resultEl.textContent = `Failed: ${reason}`;
-          resultEl.style.color = '#991b1b';
+          resultEl.style.color = 'var(--danger)';
           return;
         }
         resultEl.textContent = `Sent to ${to} (check your inbox).`;
-        resultEl.style.color = '#065f46';
+        resultEl.style.color = 'var(--ok)';
       } catch (err) {
         console.error('Test email send failed:', err);
         resultEl.textContent = `Failed: ${err.message}`;
-        resultEl.style.color = '#991b1b';
+        resultEl.style.color = 'var(--danger)';
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -1743,11 +1754,11 @@
     if (!wrap) return;
     if (pendingChange && (pendingChange.fleet_change || pendingChange.plan_changed)) { wrap.innerHTML = ''; return; }
     if (hasFleet) {
-      wrap.innerHTML = `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-remove-fleet-btn">Remove Fleet Monitoring</button>`;
+      wrap.innerHTML = `<button class="btn btn-secondary btn-sm" id="gc-remove-fleet-btn">Remove Fleet Monitoring</button>`;
       const b = document.getElementById('gc-remove-fleet-btn');
       if (b) b.addEventListener('click', () => removeFleet(subscriptionId, customerId));
     } else {
-      wrap.innerHTML = `<button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-add-fleet-btn">Add Fleet Monitoring</button>`;
+      wrap.innerHTML = `<button class="btn btn-secondary btn-sm" id="gc-add-fleet-btn">Add Fleet Monitoring</button>`;
       const b = document.getElementById('gc-add-fleet-btn');
       if (b) b.addEventListener('click', () => addFleet(subscriptionId, customerId));
     }
@@ -1925,8 +1936,8 @@
       if (pmEl) {
         const pm = data.payment_method;
         pmEl.innerHTML = pm
-          ? `${escapeHtml(pm.brand || 'card')} &middot; &bull;&bull;&bull;&bull; ${escapeHtml(pm.last4 || '')} <span style="color:#6b7280;font-weight:500;">exp ${String(pm.exp_month || '').padStart(2,'0')}/${String(pm.exp_year || '').slice(-2)}</span>`
-          : `<span style="color:#9ca3af;font-weight:500;">No card on file</span>`;
+          ? `${escapeHtml(pm.brand || 'card')} &middot; &bull;&bull;&bull;&bull; ${escapeHtml(pm.last4 || '')} <span style="color:var(--ink-2);font-weight:500;">exp ${String(pm.exp_month || '').padStart(2,'0')}/${String(pm.exp_year || '').slice(-2)}</span>`
+          : `<span style="color:var(--ink-3);font-weight:500;">No card on file</span>`;
       }
 
       // Lifetime billed row
@@ -1945,10 +1956,10 @@
       const renewsEl = body.querySelector('#gc-renews-value');
       if (renewsRow && renewsEl && pb) {
         if (pb.pending_change) {
-          renewsEl.innerHTML = `${money(pb.pending_change.new_renewal_amount_cents)} ${cadenceText(pb.pending_change.new_plan)} <span style="color:#6b7280;font-weight:500;">(from ${fmtDate(pb.pending_change.effective_date)})</span>`;
+          renewsEl.innerHTML = `${money(pb.pending_change.new_renewal_amount_cents)} ${cadenceText(pb.pending_change.new_plan)} <span style="color:var(--ink-2);font-weight:500;">(from ${fmtDate(pb.pending_change.effective_date)})</span>`;
           renewsRow.style.display = '';
         } else if (pb.current_renewal_amount_cents != null) {
-          renewsEl.innerHTML = `${money(pb.current_renewal_amount_cents)} ${cadenceText(subscription.plan)}${pb.current_period_end ? ` <span style="color:#6b7280;font-weight:500;">(next: ${fmtDate(pb.current_period_end)})</span>` : ''}`;
+          renewsEl.innerHTML = `${money(pb.current_renewal_amount_cents)} ${cadenceText(subscription.plan)}${pb.current_period_end ? ` <span style="color:var(--ink-2);font-weight:500;">(next: ${fmtDate(pb.current_period_end)})</span>` : ''}`;
           renewsRow.style.display = '';
         }
       }
@@ -1977,9 +1988,9 @@
             msg = `Switching to <strong>${escapeHtml(planLabel(pc.new_plan))}</strong>${pc.fleet_change === 'removing' ? ' (Fleet Monitoring ends)' : pc.fleet_change === 'adding' ? ' (Fleet Monitoring added)' : ''} at renewal (${fmtDate(pc.effective_date)}). No charge until then.`;
             undoLabel = 'Keep current plan';
           }
-          pendingEl.innerHTML = `<div style="margin:6px 0 2px;padding:9px 11px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;font-size:0.83rem;color:#92400E;line-height:1.45;">`
+          pendingEl.innerHTML = `<div style="margin:6px 0 2px;padding:9px 11px;background:var(--warn-bg);border:1px solid color-mix(in srgb, var(--warn) 35%, transparent);border-radius:6px;font-size:0.83rem;color:var(--warn);line-height:1.45;">`
             + msg
-            + ` <button class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-revert-plan-btn" style="margin-left:4px;">${undoLabel}</button></div>`;
+            + ` <button class="btn btn-ghost btn-sm" id="gc-revert-plan-btn" style="margin-left:4px;">${undoLabel}</button></div>`;
           pendingEl.style.display = '';
           const revertBtn = body.querySelector('#gc-revert-plan-btn');
           if (revertBtn) revertBtn.addEventListener('click', () => revertPlanChange(subscriptionId));
@@ -1999,29 +2010,29 @@
           const rows = invoices.map(inv => {
             const dateStr = inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
             const amt = `$${((inv.amount_paid || 0) / 100).toFixed(2)}`;
-            const chipCls = inv.status === 'paid' ? 'gc-chip-paid' : (inv.status === 'open' ? 'gc-chip-open' : 'gc-chip');
+            const chipCls = inv.status === 'paid' ? 'badge-ok' : (inv.status === 'open' ? 'badge-warn' : 'badge-neutral');
             const chargeAmt = inv.charge_amount_cents || inv.amount_paid || 0;
             const refunded = inv.amount_refunded_cents || 0;
             // Refund-status chip next to the paid chip.
             let refundChip = '';
             if (refunded > 0 && refunded >= chargeAmt) {
-              refundChip = ` <span class="gc-chip gc-chip-refunded">Refunded</span>`;
+              refundChip = ` <span class="badge badge-neutral">Refunded</span>`;
             } else if (refunded > 0) {
-              refundChip = ` <span class="gc-chip gc-chip-partial">Partial refund $${(refunded / 100).toFixed(2)}</span>`;
+              refundChip = ` <span class="badge badge-warn">Partial refund $${(refunded / 100).toFixed(2)}</span>`;
             }
             // Refund button only when the backend says it's refundable (paid, has a
             // charge, not already fully refunded). Hidden on open/refunded invoices.
             const refundBtn = inv.refundable
-              ? `<button class="gc-btn gc-btn-ghost gc-btn-sm" data-refund-invoice="${inv.id}" data-charge-amount="${chargeAmt}" data-refunded="${refunded}" data-amount="${amt}" data-card-brand="${escapeHtml(inv.card_brand || '')}" data-card-last4="${escapeHtml(inv.card_last4 || '')}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`
+              ? `<button class="btn btn-ghost btn-sm" data-refund-invoice="${inv.id}" data-charge-amount="${chargeAmt}" data-refunded="${refunded}" data-amount="${amt}" data-card-brand="${escapeHtml(inv.card_brand || '')}" data-card-last4="${escapeHtml(inv.card_last4 || '')}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`
               : '';
             return `<div class="gc-card-row">
               <div>
-                <div class="gc-meta-value">${escapeHtml(dateStr)} <span style="color:#6b7280;font-weight:500;">&middot; ${amt}</span></div>
-                <div style="margin-top:4px;"><span class="gc-chip ${chipCls}">${escapeHtml(inv.status || '')}</span>${refundChip}</div>
+                <div class="gc-meta-value">${escapeHtml(dateStr)} <span style="color:var(--ink-2);font-weight:500;">&middot; ${amt}</span></div>
+                <div style="margin-top:4px;"><span class="badge ${chipCls}">${escapeHtml(inv.status || '')}</span>${refundChip}</div>
               </div>
               <div style="display:flex;gap:6px;align-items:center;">
                 ${refundBtn}
-                <a href="${inv.stripe_dashboard_url}" target="_blank" rel="noopener noreferrer" class="gc-btn gc-btn-ghost gc-btn-sm" style="text-decoration:none;">View in Stripe &#8599;</a>
+                <a href="${inv.stripe_dashboard_url}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">View in Stripe <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="8 7 17 7 17 16"/></svg></a>
               </div>
             </div>`;
           }).join('');
@@ -2029,7 +2040,7 @@
           // (paid) invoice — recent_invoices is newest-first and paid-only.
           const last = invoices[0];
           const custEmail = (subscription && subscription.customer && subscription.customer.email) || '';
-          const resendBtn = `<div class="gc-card-actions"><button class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-resend-receipt-btn" data-invoice="${last.id}" data-date="${last.created || ''}" data-amount="${last.amount_paid || 0}" data-email="${escapeHtml(custEmail)}">Resend receipt</button></div>`;
+          const resendBtn = `<div class="gc-card-actions"><button class="btn btn-secondary btn-sm" id="gc-resend-receipt-btn" data-invoice="${last.id}" data-date="${last.created || ''}" data-amount="${last.amount_paid || 0}" data-email="${escapeHtml(custEmail)}">Resend receipt</button></div>`;
           invEl.innerHTML = rows + resendBtn;
           const resend = body.querySelector('#gc-resend-receipt-btn');
           if (resend) resend.addEventListener('click', () => resendReceipt(subscriptionId, resend));
@@ -2054,7 +2065,7 @@
       }
     } catch (err) {
       console.error('[stripe-data] load failed:', err);
-      const fail = `<span style="color:#9ca3af;font-weight:500;font-size:0.82rem;">Couldn't load &mdash; refresh to retry</span>`;
+      const fail = `<span style="color:var(--ink-3);font-weight:500;font-size:0.82rem;">Couldn't load &mdash; refresh to retry</span>`;
       const pmEl = body.querySelector('#gc-payment-method-value');
       if (pmEl) pmEl.innerHTML = fail;
       const ltEl = body.querySelector('#gc-lifetime-value');
@@ -2141,7 +2152,7 @@
     return `
       <div class="gc-card-row"><span class="gc-meta-label">Generator</span>
         <span class="gc-meta-value">${escapeHtml(genClassLabel(subscription.gen_class))} &mdash; ${escapeHtml(subscription.gen_model || 'model n/a')}
-          <button type="button" class="gc-btn gc-btn-ghost gc-btn-sm" id="gc-generator-edit-btn" style="margin-left:6px;">Edit</button></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="gc-generator-edit-btn" style="margin-left:6px;">Edit</button></span>
       </div>
       <div class="gc-card-row"><span class="gc-meta-label">Serial</span><span class="gc-meta-value">${subscription.gen_serial ? escapeHtml(subscription.gen_serial) : '&mdash; (not on file)'}</span></div>`;
   }
@@ -2156,8 +2167,8 @@
         </div>
         <div class="gc-edit-error" id="gc-generator-error" hidden></div>
         <div class="gc-note-editor-actions">
-          <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm" id="gc-generator-cancel-btn">Cancel</button>
-          <button type="button" class="gc-btn gc-btn-primary gc-btn-sm" id="gc-generator-save-btn">Save changes</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="gc-generator-cancel-btn">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="gc-generator-save-btn">Save changes</button>
         </div>
       </div>`;
   }
@@ -2327,8 +2338,8 @@
           <div class="gc-rd-card">Refunds to <strong>${escapeHtml(cardText)}</strong></div>
           <p class="gc-rd-note">Refunding does <strong>not</strong> cancel the plan &mdash; use &ldquo;Cancel Subscription&rdquo; for that. Stripe keeps its original processing fee on refunds (it isn&rsquo;t returned).</p>
           <div class="gc-rd-actions">
-            <button type="button" class="gc-btn gc-btn-secondary gc-btn-sm gc-rd-cancel">Cancel</button>
-            <button type="button" class="gc-btn gc-btn-primary gc-btn-sm gc-rd-submit">Refund $${remainingDollars}</button>
+            <button type="button" class="btn btn-secondary btn-sm gc-rd-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary btn-sm gc-rd-submit">Refund $${remainingDollars}</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);

@@ -12,11 +12,29 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric — Site Visit Form</title>
+  <style>
+    /* UI-uplift slice 1: these controls now carry the Design System v3
+       component classes (components.css). Their legacy visual rules still
+       live in app.css (owned by another slice) and load after components.css,
+       so the few diverging declarations are neutralized here — delete this
+       block once app.css drops its .sv-tab-btn / .sv-dash-refresh-btn visuals. */
+    .filter.sv-tab-btn { flex: 0 1 auto; max-width: none; background: transparent; border-color: transparent; border-radius: var(--radius-pill); padding: 6px 14px; font-size: var(--fs-sm); box-shadow: none; }
+    .filter.sv-tab-btn:hover { background: var(--accent-soft); }
+    .filter.sv-tab-btn.active { background: var(--accent); color: var(--ink-inverse); box-shadow: none; }
+    .btn.sv-dash-refresh-btn { background: var(--surface); color: var(--ink); padding: 5px 10px; }
+    .btn.sv-dash-refresh-btn:hover { background: var(--surface); border-color: var(--ink-3); }
+    /* Photo-prompt icons are stroke/currentColor per the v3 icon style. */
+    .sv-prompt-icon { color: var(--accent); }
+    .sv-prompt-icon.done { color: var(--ok); }
+  </style>
 </head>
 <body class="hub-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <main class="hub-main">
     <section class="hub-welcome">
@@ -26,10 +44,10 @@
 
     <!-- Tab Navigation -->
     <div class="sv-tab-form">
-      <button class="sv-tab-btn active" id="tab-form-btn" onclick="svShowTab('form')">
+      <button class="filter sv-tab-btn active" id="tab-form-btn" onclick="svShowTab('form')">
         New Visit
       </button>
-      <button class="sv-tab-btn" id="tab-dash-btn" onclick="svShowTab('dash')">
+      <button class="filter sv-tab-btn" id="tab-dash-btn" onclick="svShowTab('dash')">
         Dashboard
       </button>
     </div>
@@ -187,8 +205,8 @@
       <!-- Submit -->
       <div class="sv-footer-actions">
         <div id="sv-submit-status" class="sv-submit-status"></div>
-        <button id="sv-submit-btn" class="sv-submit-btn" onclick="svSubmit()">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        <button id="sv-submit-btn" class="btn btn-primary btn-lg sv-submit-btn" onclick="svSubmit()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           Submit to Estimator
         </button>
       </div>
@@ -199,7 +217,7 @@
     <div id="dash-tab-content" class="sv-dash-tab" style="display: none;">
       <div class="sv-dash-header">
         <div class="sv-dash-count" id="sv-dash-count">Loading submissions...</div>
-        <button onclick="svLoadDashboard()" class="sv-dash-refresh-btn">Refresh</button>
+        <button onclick="svLoadDashboard()" class="btn btn-secondary btn-sm sv-dash-refresh-btn">Refresh</button>
       </div>
       <div id="sv-dash-list" class="sv-dash-list"></div>
     </div>
@@ -208,6 +226,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3.2.0/dist/email.min.js"></script>
   <script src="shared-nav.js"></script>
+  <script src="icons.js"></script>
   <script src="ui-dialogs.js"></script>
   <script src="site-visit.js"></script>
 </body>

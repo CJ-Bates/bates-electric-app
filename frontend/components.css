@@ -1,0 +1,106 @@
+/* components.css — Bates Portal Design System v3 shared components.
+   Copied from the approved v3 spec; reads tokens.css only. One button system,
+   one badge system, one filter pill, one chip — every page migrates to these.
+   Glass is for chrome (bars/drawers/scrims); tables/cards/forms stay solid. */
+
+/* ============ CARD ============ */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-1);padding:var(--sp-4)}
+.stack{display:flex;flex-direction:column;gap:var(--sp-3)}
+
+/* ============ BUTTONS ============
+   Sizes: sm 28px (inline row actions) · md 38px (default) · lg 46px (mobile
+   primary / form submits). One primary per view. */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  font-family:var(--font);font-weight:600;font-size:var(--fs-sm);
+  border-radius:var(--radius-sm);border:1px solid transparent;
+  padding:9px 16px;cursor:pointer;text-decoration:none;line-height:1.2;
+  transition:background var(--dur-fast),border-color var(--dur-fast),transform var(--dur-fast) var(--ease-spring);
+}
+.btn:active{transform:scale(.965)}
+.btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.btn-primary{background:var(--accent);color:var(--ink-inverse)} .btn-primary:hover{background:var(--accent-hover)}
+.btn-secondary{background:var(--surface);color:var(--ink);border-color:var(--line)} .btn-secondary:hover{border-color:var(--ink-3)}
+.btn-ghost{background:transparent;color:var(--accent)} .btn-ghost:hover{background:var(--accent-soft)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger-soft{background:var(--danger-bg);color:var(--danger);border-color:transparent}
+.btn-sm{padding:5px 10px;font-size:var(--fs-xs)}
+.btn-lg{padding:12px 22px;font-size:var(--fs-md);border-radius:10px}
+.btn[disabled],.btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.btn svg{flex-shrink:0;pointer-events:none}
+
+/* ============ BADGES (5 intents, dot included) ============
+   ok = scheduled / paid / active · warn = needs-scheduling / pending ·
+   danger = overdue / failed · info = FM / informational · neutral = completed */
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:700;border-radius:var(--radius-pill);padding:3px 10px}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.badge-ok{background:var(--ok-bg);color:var(--ok)}
+.badge-warn{background:var(--warn-bg);color:var(--warn)}
+.badge-danger{background:var(--danger-bg);color:var(--danger)}
+.badge-info{background:var(--info-bg);color:var(--info)}
+.badge-neutral{background:var(--neutral-bg);color:var(--neutral)}
+
+/* ============ CHIP (FM, TEST, small square-ish tags) ============ */
+.chip{display:inline-flex;align-items:center;font-size:var(--fs-xs);font-weight:700;background:var(--info-bg);color:var(--info);border-radius:6px;padding:2px 7px}
+.chip-warn{background:var(--warn-bg);color:var(--warn)}
+.chip-ok{background:var(--ok-bg);color:var(--ok)}
+.chip-danger{background:var(--danger-bg);color:var(--danger)}
+.chip-neutral{background:var(--neutral-bg);color:var(--neutral)}
+
+/* ============ FILTER PILLS ============ */
+.filter{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-sm);font-weight:600;border:1px solid transparent;background:transparent;color:var(--ink-2);border-radius:var(--radius-pill);padding:6px 14px;cursor:pointer;font-family:var(--font);transition:background var(--dur-fast),transform var(--dur-fast) var(--ease-spring)}
+.filter:hover{background:var(--accent-soft)}
+.filter.active{background:var(--accent);color:var(--ink-inverse)}
+.filter .count{background:var(--neutral-bg);color:var(--ink-2);border-radius:var(--radius-pill);font-size:var(--fs-xs);padding:1px 8px;font-weight:700}
+.filter.active .count{background:rgba(255,255,255,.22);color:var(--ink-inverse)}
+html.dark .filter.active .count{background:rgba(15,20,32,.25)}
+
+/* Sticky filter bar reads as a floating glass pill when detached on scroll. */
+.glass-filterbar{position:sticky;top:56px;z-index:9;border-radius:var(--radius-pill);padding:8px 10px;display:inline-flex;gap:8px;margin:6px 0}
+
+/* ============ TABLE ============ */
+table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-1)}
+table.data th{background:var(--surface-2);color:var(--ink-3);font-size:var(--fs-xs);font-weight:700;letter-spacing:.6px;text-transform:uppercase;text-align:left;padding:10px 14px;border-bottom:1px solid var(--line)}
+table.data td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.data tr:last-child td{border-bottom:none}
+table.data tbody tr:hover{background:var(--accent-soft)}
+.cell-main{font-weight:700}
+.cell-sub{font-size:var(--fs-xs);color:var(--ink-2)}
+
+/* ============ FIELDS ============ */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:var(--fs-sm);font-weight:600;color:var(--ink)}
+.field label .req{color:var(--danger)}
+.field input,.field select,.field textarea{font-family:var(--font);font-size:var(--fs-md);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:9px 12px;transition:border-color .15s}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 3px var(--focus-ring)}
+.field .help{font-size:var(--fs-xs);color:var(--ink-3)}
+.field.invalid input{border-color:var(--danger)}
+.field.invalid .help{color:var(--danger)}
+
+/* ============ STAT TILES ============ */
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-1);padding:var(--sp-4);min-width:170px}
+.stat .k{font-size:var(--fs-xs);font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--ink-3)}
+.stat .v{font-size:var(--fs-2xl);font-weight:800;line-height:1.15}
+.stat .d{font-size:var(--fs-sm);color:var(--ink-2)}
+
+/* ============ DIALOG (solid body — scrim provides the glass) ============ */
+.dialog{max-width:420px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-2);padding:var(--sp-5)}
+.dialog h4{margin:0 0 6px;font-size:var(--fs-lg)}
+.dialog p{margin:0 0 var(--sp-4);color:var(--ink-2);font-size:var(--fs-sm)}
+
+/* Dialog scrim = 6px blur + navy tint; focuses the eye on the decision. */
+.dialog-scrim{background:rgba(19,31,63,.28);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+html.dark .dialog-scrim{background:rgba(0,0,0,.45)}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+  .dialog-scrim{background:rgba(19,31,63,.55)}
+  html.dark .dialog-scrim{background:rgba(0,0,0,.7)}
+}
+
+/* ============ TOAST ============ */
+.toast{display:inline-flex;align-items:center;gap:10px;background:var(--navy-900);color:#fff;border-radius:var(--radius-sm);padding:10px 16px;font-size:var(--fs-sm);font-weight:600;box-shadow:var(--shadow-2)}
+.toast .tico{line-height:0;color:#7DE3A5}
+.toast.err .tico{color:#FF9E96}
+
+/* ============ EMPTY STATE ============ */
+.empty{border:1.5px dashed var(--line);border-radius:var(--radius);padding:var(--sp-6);text-align:center;color:var(--ink-2)}
+.empty .big{font-size:var(--fs-lg);font-weight:700;color:var(--ink);margin-bottom:4px}
