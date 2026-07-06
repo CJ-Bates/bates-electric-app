@@ -77,7 +77,12 @@ router.post('/', async (req, res) => {
       await handleSubscriptionDeleted(event.data.object);
     } else if (event.type === 'customer.updated') {
       await handleCustomerUpdated(event.data.object);
-    } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
+    } else if (event.type === 'invoice.paid') {
+      // Canonical paid event. invoice.payment_succeeded is intentionally NOT
+      // handled: Stripe fires BOTH for every card payment, which double-ran
+      // this handler (double receipts). invoice.paid is the superset — it also
+      // covers out-of-band payments. Retried deliveries of invoice.paid itself
+      // are deduped by the receipt_sent_at guard in lib/receipts.js.
       await handleInvoicePaid(event.data.object);
     } else if (event.type === 'charge.refunded') {
       await handleChargeRefunded(event.data.object);
@@ -253,7 +258,7 @@ async function handleSubscriptionCreated(subscription) {
     }
   }
   for (const item of onDemand) {
-    let amountCents = null;
+    let amountCents;
     try {
       const price = await stripeGet(`/prices/${item.price_id}`);
       amountCents = price.unit_amount || null;
@@ -543,7 +548,10 @@ async function handleInvoicePaid(invoice) {
   // (Stripe's automatic receipt is account-level and can't vary per customer).
   // Covers signup, renewal, add-on, and ad-hoc — they all flow through invoices.
   // Non-blocking; a mail hiccup must never fail the webhook (Stripe retries 500s).
-  sendReceiptEmail(invoice).catch((e) => console.error('[receipt-email] unexpected:', e && e.message));
+  // dedupe: exactly one receipt per invoice even if the delivery is retried;
+  // failures alert through reportError inside sendReceiptEmail.
+  sendReceiptEmail(invoice, { dedupe: true, source: '/webhooks/stripe invoice.paid' })
+    .catch((e) => console.error('[receipt-email] unexpected:', e && e.message));
 }
 
 async function handleChargeRefunded(charge) {
@@ -640,8 +648,7 @@ async function handleInvoiceUpcoming(invoice) {
     return;
   }
 
-  // Look up our customer + subscription rows.
-  const stripeCustomerId = invoice.customer;
+  // Look up our subscription row (joined to its customer).
   const stripeSubId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription.id;
 
   const { data: sub } = await supabase
