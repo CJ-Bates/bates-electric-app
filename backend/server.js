@@ -10,6 +10,7 @@ const generatorWebhookRouter = require('./routes/generator-webhook');
 const generatorCareRouter = require('./routes/generator-care');
 const generatorTechRouter = require('./routes/generator-tech');
 const generatorCareCronRouter = require('./routes/generator-care-cron');
+const customerRouter = require('./routes/customer');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
 const { requireAuth } = require('./middleware/auth');
 const { CONTACTS_DIRECTORY } = require('./lib/contactsDirectory');
@@ -94,6 +95,8 @@ app.use(express.static(path.join(__dirname, '..', 'frontend')));
 app.use('/api/generator-care/tech', generatorTechRouter);
 app.use('/api/generator-care', generatorCareRouter);
 app.use('/api/cron/generator-care', generatorCareCronRouter);
+// Customer Dashboard v1 (my.html) — customer-role-gated, read-mostly portal.
+app.use('/api/my', customerRouter);
 
 // Global error handler -- mounted LAST so it catches errors from every route
 // above (including the generator-care + cron routers). Logs + optional Sentry
