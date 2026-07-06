@@ -51,6 +51,18 @@
     .tvd-action svg { flex-shrink: 0; }
     .tvd-note { font-size: 0.9rem; color: var(--ink); line-height: 1.5; white-space: pre-wrap; }
     .tvd-note-internal { background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--radius-sm); padding: 9px 11px; }
+    /* Phase 2: visit photos + add-on checklist (tokens only, no hex) */
+    .tvd-photo-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+    .tvd-photo-thumb { position: relative; width: 64px; height: 64px; }
+    .tvd-photo-thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); display: block; }
+    .tvd-photo-del { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink-2); cursor: pointer; box-shadow: var(--shadow-1); }
+    .tvd-photo-muted { color: var(--ink-2); font-size: 0.85rem; }
+    .tvd-photo-status { color: var(--ink-2); font-size: 0.82rem; margin-bottom: 8px; }
+    .tvd-addon-hint { font-size: 0.78rem; color: var(--ink-2); margin: -4px 0 8px; }
+    .tvd-addon-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .tvd-addon-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .tvd-addon-label { font-size: 0.92rem; font-weight: 600; color: var(--ink); }
+    .tvd-addon-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
     .tvd-cta { position: sticky; bottom: 0; background: var(--bg); padding: 12px 0 max(12px, env(safe-area-inset-bottom)); margin-top: 4px; }
     .tvd-complete { width: 100%; padding: 15px; font-size: 1rem; font-weight: 700; border-radius: var(--radius); }
     .tvd-done-banner { background: var(--ok-bg); color: var(--ok); border-radius: var(--radius); padding: 12px; text-align: center; font-weight: 700; font-size: 0.92rem; }

@@ -6,6 +6,7 @@
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { completeServiceVisit } = require('../../lib/completeVisit');
+const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
 const { sendEmail, buildVisitScheduledEmail } = require('../../lib/emails');
 
 const router = express.Router();
@@ -54,19 +55,14 @@ router.post('/visits/:id/schedule', async (req, res) => {
 
     const bookedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
 
-    const { data: updated, error: vErr } = await supabaseAdmin
-      .from('generator_service_visits')
-      .update({
-        appointment_at: when.toISOString(),
-        scheduled_by: bookedBy,
-        scheduled_at: new Date().toISOString(),
-        status: 'scheduled',
-      })
-      .eq('id', id)
-      .neq('status', 'completed')
-      .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email, install_state))')
-      .maybeSingle();
-    if (vErr) throw vErr;
+    // Core update lives in lib/scheduleVisit.js — shared with the field-tech
+    // reschedule endpoint (which sends an internal email instead of this
+    // customer email). Behavior here is unchanged.
+    const { visit: updated } = await scheduleServiceVisit({
+      visitId: id,
+      appointmentAt: when,
+      bookedBy,
+    });
     if (!updated) return res.status(404).json({ error: 'visit not found or already completed' });
 
     // Notify the customer their appointment is booked (existing template). Future
@@ -131,6 +127,46 @@ router.post('/visits/:id/assign', async (req, res) => {
     res.json({ ok: true, visit: data });
   } catch (err) {
     console.error('[generator-care] assign visit error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ============================================================================
+// TECH-DASHBOARD PHASE 2 (additive block) — visit photos, office side.
+// GET /api/generator-care/visits/:id/photos
+// Photos techs attached to a visit (bucket generator-visit-photos, table
+// generator_visit_photos — see sql/010_tech_phase2.sql). Returns short-lived
+// signed URLs for the office modal's photo strip. Office-gated by ./index.js.
+// ============================================================================
+const VISIT_PHOTOS_BUCKET = 'generator-visit-photos';
+const VISIT_PHOTO_URL_TTL_SECONDS = 60 * 60; // 1 hour — the modal is ephemeral
+
+router.get('/visits/:id/photos', async (req, res) => {
+  try {
+    const { data: rows, error } = await supabaseAdmin
+      .from('generator_visit_photos')
+      .select('id, storage_path, uploaded_by, created_at')
+      .eq('visit_id', req.params.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    if (!rows || !rows.length) return res.json({ photos: [] });
+
+    const { data: signed, error: signErr } = await supabaseAdmin
+      .storage
+      .from(VISIT_PHOTOS_BUCKET)
+      .createSignedUrls(rows.map((r) => r.storage_path), VISIT_PHOTO_URL_TTL_SECONDS);
+    if (signErr) throw signErr;
+
+    const bySigned = new Map((signed || []).map((s) => [s.path, s.signedUrl]));
+    res.json({
+      photos: rows.map((r) => ({
+        id: r.id,
+        created_at: r.created_at,
+        url: bySigned.get(r.storage_path) || null,
+      })).filter((p) => p.url),
+    });
+  } catch (err) {
+    console.error('[generator-care] visit photos error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

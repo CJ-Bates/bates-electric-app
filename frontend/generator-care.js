@@ -672,6 +672,8 @@
           <div style="flex-shrink:0;">${badge}</div>
         </div>
         ${noteLines.join('')}
+        <!-- TECH-DASHBOARD PHASE 2 (additive): tech photo strip mounts here; filled by the loader in showDetail -->
+        <div class="gc-visit-photos" data-visit-photos="${v.id}" style="margin-top:6px;"></div>
         ${actions}
       </div>`;
     }).join('');
@@ -999,6 +1001,44 @@
           }
         });
       }
+
+      // ---- TECH-DASHBOARD PHASE 2 (additive): tech visit photos ----
+      // Fills each visit row's .gc-visit-photos mount (renderVisitsCard) with a
+      // strip of thumbnails from GET /api/generator-care/visits/:id/photos
+      // (short-lived signed URLs). Clicking a thumb opens a minimal lightbox.
+      // Photos are additive: any fetch error/404 leaves the mount empty and
+      // must never break the modal.
+      body.querySelectorAll('[data-visit-photos]').forEach(async (holder) => {
+        try {
+          const vid = holder.getAttribute('data-visit-photos');
+          const pr = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${vid}/photos`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!pr.ok) return;
+          const { photos } = await pr.json();
+          if (!photos || !photos.length) return;
+          holder.innerHTML =
+            `<div class="gc-meta-label" style="margin-bottom:4px;">Photos (${photos.length})</div>` +
+            `<div style="display:flex;flex-wrap:wrap;gap:6px;">` +
+            photos.map((p) => `<img src="${escapeHtml(p.url)}" alt="Visit photo" data-photo-full="${escapeHtml(p.url)}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:pointer;" />`).join('') +
+            `</div>`;
+          holder.querySelectorAll('[data-photo-full]').forEach((img) => {
+            img.addEventListener('click', () => {
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;background:rgba(19,31,63,0.55);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+              overlay.innerHTML = `<img src="${escapeHtml(img.getAttribute('data-photo-full'))}" alt="Visit photo" style="max-width:90vw;max-height:85vh;border-radius:8px;" />`;
+              const closeLightbox = () => { document.removeEventListener('keydown', onLightboxKey); overlay.remove(); };
+              const onLightboxKey = (e) => { if (e.key === 'Escape') closeLightbox(); };
+              document.addEventListener('keydown', onLightboxKey);
+              overlay.addEventListener('click', closeLightbox); // click anywhere closes
+              document.body.appendChild(overlay);
+            });
+          });
+        } catch (e) {
+          // Leave the strip empty — photos must never break the modal.
+        }
+      });
+      // ---- end TECH-DASHBOARD PHASE 2 (additive) ----
 
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
       // and the work-order packet's actual signup charge)
