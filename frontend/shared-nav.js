@@ -148,10 +148,10 @@
       items: [
         { label: 'Home', icon: 'house', href: 'home.html', id: 'drawer-home' },
         { label: 'My Visits', icon: 'zap', href: 'tech.html', id: 'drawer-tech', techOnly: true },
-        { label: 'New Inspection', icon: 'clipboardCheck', href: 'inspection.html', id: 'drawer-inspection' },
+        { label: 'Inspections', icon: 'clipboardCheck', href: 'inspection.html', id: 'drawer-inspection' },
         { label: 'Site Visit', icon: 'mapPin', href: 'site-visit.html', id: 'drawer-site-visit' },
-        { label: 'Inspection Dashboard', icon: 'layoutDashboard', href: 'office.html', id: 'drawer-dashboard', officeOnly: true },
-        { label: 'Generator Care', icon: 'zap', href: 'generator-care.html', id: 'drawer-generator', officeOnly: true }
+        { label: 'Generator Care', icon: 'zap', href: 'generator-care.html', id: 'drawer-generator', officeOnly: true },
+        { label: 'Members', icon: 'users', href: 'members.html', id: 'drawer-members', officeOnly: true }
       ]
     },
     {
@@ -173,9 +173,10 @@
   // Page title mapping
   const pageTitles = {
     'home': 'Home',
-    'inspection': 'Inspection',
+    'inspection': 'Inspections',
     'site-visit': 'Site Visit',
-    'office': 'Dashboard',
+    'office': 'Inspections',
+    'members': 'Members',
     'documents': 'Documents',
     'safety-manual': 'Safety Manual',
     'sds-sheets': 'SDS Sheets',
@@ -304,6 +305,7 @@
    */
   function getCurrentPage() {
     const pathname = window.location.pathname;
+    if (pathname.includes('members')) return 'members';
     if (pathname.includes('office')) return 'office';
     if (pathname.includes('site-visit')) return 'site-visit';
     if (pathname.includes('inspection')) return 'inspection';
@@ -329,7 +331,8 @@
       if (currentPage === 'home' && itemId === 'drawer-home') isActive = true;
       if (currentPage === 'inspection' && itemId === 'drawer-inspection') isActive = true;
       if (currentPage === 'site-visit' && itemId === 'drawer-site-visit') isActive = true;
-      if (currentPage === 'office' && itemId === 'drawer-dashboard') isActive = true;
+      if (currentPage === 'office' && itemId === 'drawer-inspection') isActive = true;
+      if (currentPage === 'members' && itemId === 'drawer-members') isActive = true;
       if (currentPage === 'documents' && itemId === 'drawer-documents') isActive = true;
       if (currentPage === 'safety-manual' && itemId === 'drawer-documents') isActive = true;
       if (currentPage === 'sds-sheets' && itemId === 'drawer-documents') isActive = true;

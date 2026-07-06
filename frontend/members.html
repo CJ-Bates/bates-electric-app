@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#F4F6FA" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="ui-dialogs.css" />
+  <title>Bates Electric — Members</title>
+</head>
+<body class="hub-body dashboard-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <main class="dashboard-main">
+    <div class="dashboard-header">
+      <h1>Members</h1>
+      <div class="dashboard-header-actions">
+        <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
+      </div>
+    </div>
+
+    <p style="color:var(--ink-2);font-size:var(--fs-sm);margin:0 0 18px;max-width:680px;">
+      Everyone on the platform in one place. Field techs are managed here today;
+      office staff and customer management will move in as the roles &amp; permissions
+      work lands.
+    </p>
+
+    <!-- ===== Field techs (live management, moved from Generator Care) ===== -->
+    <section class="card" style="margin-bottom:16px;">
+      <h3 class="gc-card-h">Field Techs</h3>
+      <p class="gc-meta-label" style="margin-top:0;">
+        Create a tech account (they get a set-password email) and dispatch them to
+        visits from each Generator Care customer&rsquo;s Service Visits. Tech emails
+        must be a <strong>*.bateselectric@gmail.com</strong> address &mdash; that
+        domain is what assigns the tech role.
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:12px 0 16px;">
+        <label style="flex:1;min-width:140px;"><span class="gc-meta-label">Name</span>
+          <input type="text" id="new-tech-name" placeholder="Jordan Tech" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-family:inherit;background:var(--surface);color:var(--ink);" />
+        </label>
+        <label style="flex:1.4;min-width:180px;"><span class="gc-meta-label">Email</span>
+          <input type="email" id="new-tech-email" placeholder="jordan.bateselectric@gmail.com" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-family:inherit;background:var(--surface);color:var(--ink);" />
+        </label>
+        <button type="button" class="btn btn-primary btn-sm" id="add-tech-btn">Create + invite</button>
+      </div>
+      <div id="techs-list"><p class="gc-meta-label">Loading&hellip;</p></div>
+    </section>
+
+    <!-- ===== Coming soon: the rest of the member types ===== -->
+    <section class="card" style="margin-bottom:16px;">
+      <h3 class="gc-card-h">Office Staff <span class="chip chip-neutral" style="vertical-align:middle;margin-left:8px;">Coming soon</span></h3>
+      <p class="gc-meta-label" style="margin:0;">
+        Office accounts are created by signing up with a <strong>@bates-electric.com</strong>
+        address &mdash; the domain assigns the office role automatically. Invites,
+        deactivation, and per-person permissions will be managed here.
+      </p>
+    </section>
+
+    <section class="card">
+      <h3 class="gc-card-h">Customers <span class="chip chip-neutral" style="vertical-align:middle;margin-left:8px;">Coming soon</span></h3>
+      <p class="gc-meta-label" style="margin:0;">
+        Generator Care customers are managed from the Generator Care dashboard today.
+        A unified customer view (and future customer-portal access control) will
+        live here.
+      </p>
+    </section>
+
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <script src="shared-nav.js"></script>
+  <script src="ui-dialogs.js"></script>
+  <script src="members.js"></script>
+</body>
+</html>

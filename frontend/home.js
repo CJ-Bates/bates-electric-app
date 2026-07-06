@@ -29,8 +29,8 @@
   const OFFICE_FEATURED = {
     id: 'inspection-dashboard',
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>',
-    title: 'Inspection Dashboard',
-    desc: 'View all reports',
+    title: 'Inspections',
+    desc: 'Reports dashboard + new form',
     href: 'office.html',
   };
 
@@ -41,6 +41,15 @@
     title: 'Generator Care',
     desc: 'Customers + scheduled service visits',
     href: 'generator-care.html',
+  };
+
+  // Office-only: the Members area (techs today; office staff + customers later).
+  const MEMBERS_FEATURED = {
+    id: 'members',
+    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    title: 'Members',
+    desc: 'Techs, office staff & customers',
+    href: 'members.html',
   };
 
   // Tech-only: the field-tech's assigned generator service visits.
@@ -287,11 +296,7 @@
     if (role === 'office') {
       grid.appendChild(makeFeaturedCard(GENERATOR_FEATURED));
       grid.appendChild(makeFeaturedCard(OFFICE_FEATURED));
-      grid.appendChild(makeFeaturedCard({
-        ...TECH_FEATURED,
-        title: 'New Inspection',
-        desc: 'Create report',
-      }));
+      grid.appendChild(makeFeaturedCard(MEMBERS_FEATURED));
     } else {
       // Techs land on the hub; their generator visits are the primary card.
       grid.appendChild(makeFeaturedCard(MY_VISITS_FEATURED));

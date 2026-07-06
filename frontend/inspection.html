@@ -23,6 +23,23 @@
 
 
   <main class="insp-main">
+
+    <!-- Inspections view toggle — mirrors Site Visit's New/Dashboard tabs.
+         Dashboard is the office-only reports page (office.html); the pill is
+         revealed by the role check below (office.html enforces the role
+         regardless). display is toggled inline because .filter's
+         display:inline-flex would defeat the [hidden] attribute. -->
+    <div class="sv-tab-form">
+      <span class="filter active">New Inspection</span>
+      <a class="filter" id="insp-dash-tab" href="office.html" style="display:none;text-decoration:none;">Dashboard</a>
+    </div>
+    <script>
+      try {
+        var _p = JSON.parse(localStorage.getItem('bates.profile') || '{}');
+        if (_p.role === 'office') document.getElementById('insp-dash-tab').style.display = '';
+      } catch (e) {}
+    </script>
+
     <form id="inspection-form" class="insp-form" novalidate>
 
       <!-- ================= JOB INFORMATION ================= -->

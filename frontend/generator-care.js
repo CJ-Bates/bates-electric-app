@@ -1437,95 +1437,8 @@
     }
   }
 
-  // ---- Manage techs ----
-  async function openTechsModal() {
-    document.getElementById('techsModal').hidden = false;
-    document.getElementById('techs-list').innerHTML = '<p class="gc-meta-label">Loading…</p>';
-    await loadTechs();
-    renderTechsList();
-  }
-  function closeTechsModal() { document.getElementById('techsModal').hidden = true; }
-
-  function renderTechsList() {
-    const el = document.getElementById('techs-list');
-    if (!el) return;
-    if (!techList.length) { el.innerHTML = '<p class="gc-meta-label">No tech accounts yet.</p>'; return; }
-    el.innerHTML = techList.map((t) => {
-      const inactive = t.active === false;
-      return `<div class="gc-card-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;${inactive ? 'opacity:0.6;' : ''}">
-        <div>
-          <div class="gc-meta-value">${escapeHtml(t.full_name || '(no name)')}${inactive ? ' <span class="gc-meta-label">— inactive</span>' : ''}</div>
-          <div class="gc-meta-label">${escapeHtml(t.email)}</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button class="btn btn-secondary btn-sm" data-resend-tech="${escapeHtml(t.id)}">Resend link</button>
-          <button class="btn ${inactive ? 'btn-primary' : 'btn-secondary'} btn-sm" data-toggle-tech="${escapeHtml(t.id)}" data-active="${inactive ? '1' : '0'}">${inactive ? 'Reactivate' : 'Deactivate'}</button>
-        </div>
-      </div>`;
-    }).join('');
-    el.querySelectorAll('[data-toggle-tech]').forEach((b) => {
-      b.addEventListener('click', () => setTechActive(b.dataset.toggleTech, b.dataset.active === '1'));
-    });
-    el.querySelectorAll('[data-resend-tech]').forEach((b) => {
-      b.addEventListener('click', () => resendTechInvite(b.dataset.resendTech));
-    });
-  }
-
-  async function addTech() {
-    const name = (document.getElementById('new-tech-name').value || '').trim();
-    const email = (document.getElementById('new-tech-email').value || '').trim();
-    if (!name || !email) { showStatus('Enter a name and email.', 'error'); return; }
-    try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); return; }
-      showStatus(data.warning || `Invited ${name}. They'll get a set-password email.`, data.warning ? 'warning' : 'success');
-      document.getElementById('new-tech-name').value = '';
-      document.getElementById('new-tech-email').value = '';
-      await loadTechs();
-      renderTechsList();
-    } catch (e) {
-      console.error('add tech failed', e);
-      showStatus(`Failed: ${e.message}`, 'error');
-    }
-  }
-
-  async function setTechActive(id, active) {
-    try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs/${id}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); return; }
-      showStatus(active ? 'Tech reactivated.' : 'Tech deactivated.', 'success');
-      await loadTechs();
-      renderTechsList();
-    } catch (e) {
-      console.error('toggle tech failed', e);
-      showStatus(`Failed: ${e.message}`, 'error');
-    }
-  }
-
-  async function resendTechInvite(id) {
-    try {
-      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/techs/${id}/resend-invite`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); return; }
-      showStatus('Set-password link re-sent.', 'success');
-    } catch (e) {
-      console.error('resend invite failed', e);
-      showStatus(`Failed: ${e.message}`, 'error');
-    }
-  }
+  // (Field-tech MANAGEMENT moved to members.html/members.js; loadTechs +
+  // techName/techOptions above stay — the per-visit assign picker uses them.)
 
   function closeModal() {
     document.getElementById('detailsModal').hidden = true;
@@ -1559,13 +1472,6 @@
   document.getElementById('modal-close-btn2').addEventListener('click', closeModal);
   document.querySelector('#detailsModal .modal-overlay').addEventListener('click', closeModal);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
-
-  // Manage techs modal
-  document.getElementById('manage-techs-btn').addEventListener('click', openTechsModal);
-  document.getElementById('techs-close-btn').addEventListener('click', closeTechsModal);
-  document.getElementById('techs-close-btn2').addEventListener('click', closeTechsModal);
-  document.getElementById('techs-overlay').addEventListener('click', closeTechsModal);
-  document.getElementById('add-tech-btn').addEventListener('click', addTech);
 
   loadSubscriptions();
 

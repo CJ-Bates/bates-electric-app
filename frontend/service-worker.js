@@ -16,6 +16,8 @@ const ASSETS = [
   './generator-care.js',
   './accounting.html',
   './accounting.js',
+  './members.html',
+  './members.js',
   './metrics.html',
   './metrics.js',
   './settings.html',
