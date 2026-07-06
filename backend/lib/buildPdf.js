@@ -4,7 +4,6 @@ const { SECTIONS, UPSELL_ITEMS, JOB_FIELDS } = require('./inspectionFields');
 
 // ── Brand colours ──
 const NAVY      = '#0B2545';
-const NAVY_DARK = '#061A33';
 const GOLD      = '#F5B700';
 const GOLD_LIGHT = '#FFF4D6';
 const WHITE     = '#FFFFFF';
@@ -28,7 +27,6 @@ const LOGO_PATH = path.resolve(__dirname, '..', '..', 'frontend', 'logo-mark.png
 
 const MARGIN = 48;
 const PAGE_WIDTH = 612;
-const PAGE_HEIGHT = 792;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 const CONTENT_RIGHT = PAGE_WIDTH - MARGIN;
 const FOOTER_RESERVE = 40;
@@ -415,7 +413,6 @@ function drawUpsell(doc, d) {
     textY += 6;
     doc.font('Helvetica-Bold').fillColor(NAVY).text('Other:', textX, textY, { continued: true });
     doc.font('Helvetica').fillColor(TEXT_DARK).text(` ${d.up_other}`, { width: CONTENT_WIDTH - 36 });
-    textY = doc.y;
   }
 
   doc.y = boxTop + boxH + 10;
