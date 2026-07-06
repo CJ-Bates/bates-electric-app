@@ -313,10 +313,14 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
   // real Stripe invoice — reflects any promo discount), not a hardcoded price.
   const showPaid = (typeof paidAmountCents === 'number');
   const paidDateStr = paidDate ? fmtFriendlyDate(paidDate) : '';
+  // Class shown ONCE: gen_type already carries the signup form's class label
+  // ("Air Cooled (7 – 28 KW)"), so also rendering the name derived from
+  // gen_class stated the class twice ("Air cooled • Air Cooled (7 – 28 KW) •
+  // …"). The derived name is only the fallback for subs missing gen_type.
   const genClass = safeMeta.gen_class === 'air_cooled'
     ? 'Air cooled'
     : (safeMeta.gen_class && safeMeta.gen_class.startsWith('liquid') ? 'Liquid cooled' : '');
-  const genLine = [genClass, safeMeta.gen_type, safeMeta.gen_model, safeMeta.gen_serial && ('s/n ' + safeMeta.gen_serial)]
+  const genLine = [safeMeta.gen_type || genClass, safeMeta.gen_model, safeMeta.gen_serial && ('s/n ' + safeMeta.gen_serial)]
     .filter(Boolean).join(' • ');
   const addr = [safeMeta.install_address, safeMeta.install_city, safeMeta.install_state, safeMeta.install_zip]
     .filter(Boolean).join(', ');
