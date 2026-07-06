@@ -10,7 +10,7 @@
 //   BatesUI.escapeHtml(s)       // the one shared HTML escaper (quote-safe) —
 //                               // page scripts alias it instead of re-defining it
 //
-// Styling lives in ui-dialogs.css (dialog chrome + buttons) and styles.css (.status toast).
+// Styling lives in ui-dialogs.css (dialog chrome + buttons) and app.css (.status toast).
 (function () {
   function escapeHtml(s) {
     return String(s == null ? '' : s)
@@ -19,7 +19,7 @@
   }
 
   // Toast. Finds the page's #status element, or creates one (so pages without it
-  // — e.g. settings, site-visit — still get toasts). .status CSS is in styles.css.
+  // — e.g. settings, site-visit — still get toasts). .status CSS is in app.css.
   function showStatus(msg, kind = 'info') {
     let el = document.getElementById('status');
     if (!el) {

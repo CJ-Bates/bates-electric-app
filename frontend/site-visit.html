@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="theme-color" content="#F4F6FA" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Bates Electric" />
@@ -18,16 +18,6 @@
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric — Site Visit Form</title>
   <style>
-    /* UI-uplift slice 1: these controls now carry the Design System v3
-       component classes (components.css). Their legacy visual rules still
-       live in app.css (owned by another slice) and load after components.css,
-       so the few diverging declarations are neutralized here — delete this
-       block once app.css drops its .sv-tab-btn / .sv-dash-refresh-btn visuals. */
-    .filter.sv-tab-btn { flex: 0 1 auto; max-width: none; background: transparent; border-color: transparent; border-radius: var(--radius-pill); padding: 6px 14px; font-size: var(--fs-sm); box-shadow: none; }
-    .filter.sv-tab-btn:hover { background: var(--accent-soft); }
-    .filter.sv-tab-btn.active { background: var(--accent); color: var(--ink-inverse); box-shadow: none; }
-    .btn.sv-dash-refresh-btn { background: var(--surface); color: var(--ink); padding: 5px 10px; }
-    .btn.sv-dash-refresh-btn:hover { background: var(--surface); border-color: var(--ink-3); }
     /* Photo-prompt icons are stroke/currentColor per the v3 icon style. */
     .sv-prompt-icon { color: var(--accent); }
     .sv-prompt-icon.done { color: var(--ok); }
