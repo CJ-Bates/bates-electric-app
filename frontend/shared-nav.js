@@ -499,7 +499,7 @@
         `<span class="section-tab-label">${t.label}</span></a>`;
     }).join('');
     // Marks pages that have the switcher so content can reserve space for the
-    // mobile fixed bottom bar (see .has-bottom-nav in styles.css).
+    // mobile fixed bottom bar (see .has-bottom-nav in app.css).
     document.body.classList.add('has-bottom-nav');
   }
 
