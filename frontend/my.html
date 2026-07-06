@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <script>
+    // Apply the persisted dark theme before first paint. The customer portal
+    // uses its OWN theme key (bates.my.theme) — never the staff bates.theme.
+    try { if (localStorage.getItem('bates.my.theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#F4F6FA" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=7" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=7" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="ui-dialogs.css" />
+  <title>Generator Care — Bates Electric</title>
+  <style>
+    /* my.html page styles — everything shared (tokens, ambient, glass, card,
+       btn, badge, fields, dialogs) comes from tokens.css / components.css /
+       ui-dialogs.css. Below is only what's specific to the customer portal,
+       lifted from the CJ-approved mockup. */
+    [hidden]{display:none!important}
+
+    .topbar{position:sticky;top:0;z-index:10;border-left:none;border-right:none;border-top:none;border-radius:0}
+    .topbar-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+    .brand{font-weight:800;letter-spacing:.4px;font-size:14px;line-height:1.25}
+    .brand small{display:block;font-weight:600;color:var(--ink-3);letter-spacing:1.2px;font-size:9.5px}
+    .brand-logo{width:34px;height:34px;border-radius:8px;object-fit:cover}
+
+    .wrap{max-width:760px;margin:0 auto;padding:20px 16px 80px}
+    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+    .hello{font-size:26px;font-weight:800;margin:8px 0 2px}
+    .sub{color:var(--ink-2);font-size:13.5px;margin:0 0 18px}
+
+    .card{padding:18px;margin-bottom:14px}
+    .card h3{margin:0 0 2px;font-size:16px;display:flex;align-items:center;gap:8px}
+    .card h3 svg{color:var(--accent);flex-shrink:0}
+    .card .hint{color:var(--ink-2);font-size:13px;margin:0 0 12px}
+
+    .hero{background:linear-gradient(135deg,var(--navy-800),var(--navy-700));color:#fff;border:none;position:relative;overflow:hidden}
+    html.dark .hero{background:linear-gradient(135deg,#233158,#27408B)}
+    .hero .k{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:.75}
+    .hero .when{font-size:24px;font-weight:800;margin:2px 0}
+    .hero .who{font-size:13.5px;opacity:.85}
+    .hero .row{margin-top:14px}
+    .btn-onhero{background:rgba(255,255,255,.16);color:#fff;border-color:rgba(255,255,255,.35);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+
+    .kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+    .kv:last-child{border-bottom:none}
+    .kv .k{color:var(--ink-2)}
+    .kv .v{font-weight:700;text-align:right}
+
+    .visit{border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:10px;background:var(--surface-2)}
+    .visit:last-child{margin-bottom:0}
+    .visit .head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+    .visit .date{font-weight:800}
+    .visit .desc{font-size:13.5px;color:var(--ink-2)}
+    .visit .meta{font-size:13px;color:var(--ink-2)}
+    .visit .note{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px;margin-top:10px;font-size:13.5px;color:var(--ink-2);white-space:pre-line}
+    .visit .note b{color:var(--ink);display:block;font-size:12px;margin-bottom:2px;white-space:normal}
+    .photos{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+    .ph{width:64px;height:64px;border-radius:8px;background:linear-gradient(135deg,var(--navy-100),var(--navy-50));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-3)}
+    .photos a{display:block;width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+    .photos img{width:100%;height:100%;object-fit:cover;display:block}
+
+    .receipt{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+    .receipt:last-child{border-bottom:none}
+
+    .link{color:var(--accent);font-weight:600;text-decoration:none;font-size:13px;cursor:pointer;background:none;border:none;padding:0;font-family:var(--font)}
+    .link-danger{color:var(--danger);font-weight:600;text-decoration:none;cursor:pointer}
+
+    .plan-note{margin:10px 0 0}
+    .cancel-card{background:transparent;border-style:dashed;box-shadow:none}
+
+    .foot{color:var(--ink-3);font-size:12px;text-align:center;margin-top:24px;line-height:1.7}
+    .foot a{color:var(--accent);font-weight:600;text-decoration:none}
+
+    .signin{max-width:400px;margin:26px auto;text-align:center;padding:28px}
+    .signin .logo-img{width:56px;height:56px;border-radius:12px;margin-bottom:8px;object-fit:cover}
+    .signin .logo{font-weight:800;font-size:18px;margin-bottom:2px}
+    .signin p{color:var(--ink-2);font-size:13.5px}
+    .signin input{width:100%;font-family:var(--font);font-size:15px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:11px 12px;margin:10px 0;transition:border-color .15s}
+    .signin input:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 3px var(--focus-ring)}
+    .signin .btn{width:100%;padding:12px}
+    .signin .sent{background:var(--ok-bg);color:var(--ok);border-radius:var(--radius-sm);padding:10px;font-size:13px;font-weight:600;margin-top:10px;display:none;text-align:left}
+    .signin .sent.show{display:block}
+
+    .loading-msg{text-align:center;color:var(--ink-2);padding:60px 0 20px;font-size:14px}
+    .loading-actions{text-align:center;padding-bottom:40px}
+
+    .status{position:fixed;bottom:24px;right:24px;left:auto;max-width:min(420px,calc(100vw - 32px));z-index:2000;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:var(--radius-sm);background:var(--navy-900);color:#fff;font-size:13.5px;font-weight:600;box-shadow:var(--shadow-2)}
+    .status::before{content:"";width:8px;height:8px;border-radius:50%;flex-shrink:0}
+    .status.success::before{background:#7DE3A5}.status.error::before{background:#FF9E96}.status.warning::before{background:#F0C060}.status.info::before{background:#82AAFF}
+    .status[hidden]{display:none}
+
+    @media(max-width:600px){.hello{font-size:22px}}
+  </style>
+</head>
+<body>
+<div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<div class="glass topbar"><div class="topbar-inner">
+  <span class="row" style="gap:10px">
+    <img id="brand-logo" class="brand-logo" src="logo-icon.png?v=7" alt="Bates Electric" width="34" height="34" />
+    <span class="brand"><span id="brand-name">BATES ELECTRIC</span><small>GENERATOR CARE</small></span>
+  </span>
+  <span class="row" style="gap:8px">
+    <button id="theme-toggle" class="btn btn-secondary" style="padding:6px 10px" aria-label="Toggle dark theme"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button>
+    <button id="signout-btn" class="btn btn-secondary" style="padding:6px 12px;font-size:12.5px" hidden>Sign out</button>
+  </span>
+</div></div>
+
+<div class="wrap">
+
+  <!-- View 1 · Magic-link sign-in -->
+  <section id="view-signin" hidden>
+    <div class="card signin">
+      <img id="signin-logo" class="logo-img" src="logo-icon.png?v=7" alt="Bates Electric" width="56" height="56" />
+      <div class="logo">Welcome back</div>
+      <p>Enter the email on your Generator Care plan and we'll send you a secure sign-in link. No password needed.</p>
+      <form id="signin-form" novalidate>
+        <input id="signin-email" type="email" autocomplete="email" inputmode="email" spellcheck="false" autocapitalize="off" placeholder="you@example.com" aria-label="Email" />
+        <button type="submit" id="signin-btn" class="btn btn-primary">Email me a sign-in link</button>
+      </form>
+      <div id="signin-sent" class="sent">If that email is on a Generator Care plan, a sign-in link is on its way — check your inbox.</div>
+    </div>
+  </section>
+
+  <!-- Loading -->
+  <section id="view-loading" hidden>
+    <div class="loading-msg" id="loading-msg">Loading your dashboard…</div>
+    <div class="loading-actions"><button class="btn btn-secondary" id="retry-btn" data-action="retry" hidden>Try again</button></div>
+  </section>
+
+  <!-- View 2 · The dashboard -->
+  <section id="view-dash" hidden>
+    <div class="hello" id="hello"></div>
+    <p class="sub" id="sub"></p>
+
+    <div class="card hero" id="hero-card" hidden>
+      <div class="k" id="hero-k">Next service visit</div>
+      <div class="when" id="hero-when"></div>
+      <div class="who" id="hero-who"></div>
+      <div class="row">
+        <button class="btn btn-onhero" id="btn-reschedule">Request a different time</button>
+        <button class="btn btn-onhero" id="btn-calendar" hidden>Add to calendar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H13L13 2z"/></svg>Your generator</h3>
+      <p class="hint">What we have on file — we'll verify at your first visit.</p>
+      <div id="gen-kv"></div>
+    </div>
+
+    <div class="card">
+      <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9.5 18 20 6.5"/></svg>Visit history</h3>
+      <p class="hint">Every visit, with your technician's notes and photos.</p>
+      <div id="visits"></div>
+    </div>
+
+    <div class="card">
+      <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>Your plan</h3>
+      <div id="plan-kv"></div>
+      <div id="plan-pending" class="plan-note" hidden></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn btn-secondary" id="btn-switch" hidden></button>
+        <button class="btn btn-ghost" id="btn-billing">Manage card &amp; billing</button>
+      </div>
+      <p class="hint" style="margin:10px 0 0" id="plan-hint">Plan changes take effect at your renewal — no charge today. Card &amp; billing opens our secure Stripe portal.</p>
+    </div>
+
+    <div class="card">
+      <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add-on services</h3>
+      <p class="hint">Pre-authorized services are performed during your visit and billed only when done — never before.</p>
+      <div id="addons"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn btn-secondary" id="btn-add-addon">+ Add a service</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2V2z"/><path d="M9 7h6M9 11h6"/></svg>Receipts</h3>
+      <div id="receipts"></div>
+    </div>
+
+    <div class="card cancel-card">
+      <div class="row" style="justify-content:space-between" id="cancel-body"></div>
+    </div>
+  </section>
+
+  <p class="foot">Questions? Call <a href="tel:6364643939">(636) 464-3939</a> or email <a href="mailto:generators@bates-electric.com">generators@bates-electric.com</a><br><span id="foot-company">Bates Electric, Inc.</span> · Serving since 1992 · <a href="https://generator.bates-electric.com/terms.html" target="_blank" rel="noopener">Terms</a> · <a href="https://generator.bates-electric.com/privacy.html" target="_blank" rel="noopener">Privacy</a></p>
+</div>
+
+<div id="status" class="status" role="status" aria-live="polite" hidden></div>
+
+<script src="ui-dialogs.js"></script>
+<script src="my.js"></script>
+</body>
+</html>

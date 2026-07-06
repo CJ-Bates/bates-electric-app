@@ -62,6 +62,11 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
 
+  // Customer portal (my.html / my.js) is NOT part of the staff PWA shell:
+  // customers shouldn't get the staff app cached on their phones, and staff
+  // caches shouldn't serve stale portal code. Network-only — no caching.
+  if (/^\/my\.(html|js)$/i.test(url.pathname)) return;
+
   const isShell =
     request.mode === 'navigate' ||
     /\.(html|css|js)$/i.test(url.pathname);
