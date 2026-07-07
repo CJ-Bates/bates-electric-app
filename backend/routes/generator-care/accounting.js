@@ -4,6 +4,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
+const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { stripe } = require('../../lib/gcShared');
 
@@ -47,7 +48,7 @@ function parseYmdParam(s, timeSuffix) {
 // GET /accounting/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD
 // Pulls succeeded charges from Stripe in the date range, joins with our DB
 // for customer name + install address, and returns per-charge gross / Stripe fee / net.
-router.get('/accounting/transactions', async (req, res) => {
+router.get('/accounting/transactions', requirePermission('accounting'), async (req, res) => {
   try {
     const today = new Date();
     const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -293,7 +294,7 @@ router.get('/accounting/transactions', async (req, res) => {
 // transaction (amount/fee/net, already signed by Stripe), so a group's net ties
 // to its payout by construction. Customer/description/auth-code enrichment is
 // layered on top and can never move the totals.
-router.get('/accounting/payouts', async (req, res) => {
+router.get('/accounting/payouts', requirePermission('accounting'), async (req, res) => {
   // Each Stripe section is isolated so one failing call (or one bad payout)
   // degrades to empty instead of 500ing the whole view. Real errors are always
   // logged server-side; ?debug=1 also returns them to the (office) caller.

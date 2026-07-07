@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { supabaseAnon, supabaseAdmin, supabaseForUser } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
+const { getPermissionRow, effectivePermissions } = require('../middleware/permissions');
 
 const router = express.Router();
 
@@ -53,10 +54,16 @@ function resolveOrigin(req) {
 
 // Mirror of the Postgres rule so we can fail fast with a clear message
 // before even hitting Supabase. The DB trigger is still the source of truth.
+// Still used by forgot-password: EXISTING office/tech accounts always keep
+// their reset flow — only self-SIGNUP is restricted below.
 function allowedBatesEmail(email) {
   if (!email) return false;
   const e = email.toLowerCase().trim();
   return e.endsWith('@bates-electric.com') || /\.bateselectric@gmail\.com$/.test(e);
+}
+
+function isOfficeDomainEmail(email) {
+  return !!email && email.toLowerCase().trim().endsWith('@bates-electric.com');
 }
 
 // POST /auth/signup  { email, password, full_name?, phone? }
@@ -68,6 +75,16 @@ router.post('/signup', strictAuthLimiter, async (req, res) => {
   }
   if (password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  }
+  // Office accounts are invite-only: an admin creates them from the Members
+  // page (which pre-authorizes the email in office_invites and emails a
+  // set-password link), so the office domain never self-signs-up here. The
+  // signup trigger (sql/015) enforces the same rule at the DB layer.
+  if (isOfficeDomainEmail(email)) {
+    return res.status(403).json({
+      error:
+        'Office accounts are created by invitation. Ask an administrator to invite you from the Members page \u2014 you\u2019ll get a set-password email.',
+    });
   }
   if (!allowedBatesEmail(email)) {
     return res.status(403).json({
@@ -117,6 +134,13 @@ router.post('/login', strictAuthLimiter, async (req, res) => {
     .eq('id', data.user.id)
     .single();
 
+  // Deactivated accounts keep their credentials but can't sign in. requireAuth
+  // blocks every API call anyway; rejecting here gives a clear message at the
+  // door instead of a broken-looking dashboard.
+  if (profile && profile.active === false) {
+    return res.status(403).json({ error: 'This account has been deactivated. Contact the office.' });
+  }
+
   return res.json({
     token: data.session.access_token,
     refresh_token: data.session.refresh_token,
@@ -152,9 +176,22 @@ router.post('/logout', generalAuthLimiter, requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /me  — current user's profile
-router.get('/me', requireAuth, (req, res) => {
-  res.json({ profile: req.profile });
+// GET /me  — current user's profile, plus their effective permission flags
+// (admin = everything). The flags feed UI hiding only — every gated endpoint
+// re-checks via requirePermission, so a stale or missing flags object can't
+// grant anything.
+router.get('/me', requireAuth, async (req, res) => {
+  const profile = { ...req.profile };
+  try {
+    if (profile.role === 'office' || profile.role === 'tech') {
+      const row = await getPermissionRow(profile.id);
+      profile.permissions = effectivePermissions(profile, row);
+    }
+  } catch (err) {
+    // Permissions are a UI convenience here — never fail /me over them.
+    console.error('[auth] /me permissions lookup failed:', err && err.message);
+  }
+  res.json({ profile });
 });
 
 // PATCH /me  { full_name }  — update the caller's own profile.

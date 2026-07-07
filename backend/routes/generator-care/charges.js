@@ -4,6 +4,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
+const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const {
   stripe,
@@ -21,7 +22,7 @@ const router = express.Router();
 // Body: { description, amount_cents, billing_method: 'immediate' | 'renewal', service_visit_id?, date_performed? }
 // 'immediate': charges the saved card now via PaymentIntent (off-session).
 // 'renewal':   adds a Stripe invoice item that bills at next subscription renewal.
-router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
+router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { description, amount_cents, billing_method, service_visit_id, date_performed } = req.body || {};
@@ -192,7 +193,7 @@ router.post('/subscriptions/:id/adhoc-charge', async (req, res) => {
 // Soft-cancel an ad-hoc charge.
 // If it's already charged: refuses (need refund flow).
 // If it's a pending renewal charge: also deletes the Stripe invoice item.
-router.post('/adhoc-charges/:id/cancel', async (req, res) => {
+router.post('/adhoc-charges/:id/cancel', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: charge, error: chErr } = await supabaseAdmin
@@ -243,7 +244,7 @@ router.post('/adhoc-charges/:id/cancel', async (req, res) => {
 // POST /api/generator-care/adhoc-charges/:id/refund
 // Body: { amount_cents?, reason? }
 // amount_cents omitted = full refund.
-router.post('/adhoc-charges/:id/refund', async (req, res) => {
+router.post('/adhoc-charges/:id/refund', requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
     const { amount_cents, reason } = req.body || {};
@@ -300,7 +301,7 @@ router.post('/adhoc-charges/:id/refund', async (req, res) => {
 // amount_cents omitted = full refund of the remaining (un-refunded) balance.
 // NOTE: refunding an invoice does NOT cancel the subscription — they're
 // independent actions (the customer keeps their plan unless separately canceled).
-router.post('/invoices/:invoiceId/refund', async (req, res) => {
+router.post('/invoices/:invoiceId/refund', requirePermission('refunds'), async (req, res) => {
   try {
     const { invoiceId } = req.params;
     const { amount_cents, reason } = req.body || {};

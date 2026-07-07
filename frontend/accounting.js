@@ -110,6 +110,13 @@
       if (profile.role !== 'office') {
         showStatus('Access denied. Office role required.', 'error');
         setTimeout(() => window.location.replace('/home'), 1500);
+        return;
+      }
+      // Per-member flag (see /me permissions). The API 403s without it too —
+      // this just lands the member somewhere friendlier than a broken page.
+      if (profile.permissions && profile.permissions.accounting === false) {
+        showStatus('Access denied. You don\u2019t have Accounting access \u2014 ask an administrator.', 'error');
+        setTimeout(() => window.location.replace('/generator-care'), 1500);
       }
     } catch (err) {
       console.error('Role check failed:', err);

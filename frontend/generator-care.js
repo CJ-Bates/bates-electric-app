@@ -22,6 +22,9 @@
   let activeFilter = 'all';
   let searchQuery = '';
   let currentUserEmail = null;
+  // Effective permission flags from /me (null until loaded). UI hiding only —
+  // every gated endpoint re-checks server-side (requirePermission).
+  let userPerms = null;
   // Card on file for the open customer, set by loadStripeData. Used as the card
   // label in the refund dialog for ad-hoc/addon charges (which don't carry a
   // per-charge card client-side); invoices pass their exact card explicitly.
@@ -107,6 +110,7 @@
         return;
       }
       currentUserEmail = profile.email || null;
+      userPerms = profile.permissions || null;
       // Prefill the admin test-email "Send to" with the logged-in user's email
       const adminEmailInput = document.getElementById('gc-test-email');
       if (adminEmailInput && currentUserEmail && !adminEmailInput.value) {
@@ -860,6 +864,30 @@
     </div>`;
   }
 
+  // Remove the action buttons this member's flags don't cover (see /me
+  // permissions). Convenience only — the backend 403s regardless. Called on
+  // the detail body after each render pass (the invoices card arrives later,
+  // from loadStripeData, so it gets its own pass).
+  function stripDeniedActions(scope) {
+    if (!userPerms || !scope) return;
+    const drop = (sel) => scope.querySelectorAll(sel).forEach((el) => el.remove());
+    if (!userPerms.refunds) {
+      const cancelBtn = scope.querySelector('#gc-cancel-sub-btn');
+      if (cancelBtn) (cancelBtn.closest('.gc-danger-zone') || cancelBtn).remove();
+      drop('[data-refund-addon], [data-refund-charge], [data-refund-invoice]');
+    }
+    if (!userPerms.billing_actions) {
+      drop('#gc-change-plan-btn, #gc-change-tier-btn, #gc-add-addon-btn, #gc-charge-addons-btn, #gc-add-charge-btn, [data-mark-performed], [data-remove-addon], [data-unmark], [data-cancel-charge]');
+      scope.querySelectorAll('.gc-standing-cb').forEach((cb) => { cb.disabled = true; });
+    }
+    if (!userPerms.customer_edit) {
+      drop('#gc-contact-edit-btn, #gc-generator-edit-btn, #gc-save-note-btn, #gc-next-visit-save');
+    }
+    if (!userPerms.tech_manage) {
+      scope.querySelectorAll('[data-assign-visit]').forEach((sel) => { sel.disabled = true; });
+    }
+  }
+
   async function showDetail(id) {
     const modal = document.getElementById('detailsModal');
     const title = document.getElementById('modal-title');
@@ -899,6 +927,8 @@
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
         renderDangerZone(isCanceled, subscription);
+
+      stripDeniedActions(body);
 
       // ---- Wire up event handlers (existing logic, new button IDs/classes) ----
       body.querySelectorAll('[data-complete-visit]').forEach(btn => {
@@ -1698,6 +1728,7 @@
   function renderFleetAction(subscriptionId, customerId, hasFleet, pendingChange) {
     const wrap = document.getElementById('gc-fleet-action');
     if (!wrap) return;
+    if (userPerms && !userPerms.billing_actions) { wrap.innerHTML = ''; return; }
     if (pendingChange && (pendingChange.fleet_change || pendingChange.plan_changed)) { wrap.innerHTML = ''; return; }
     if (hasFleet) {
       wrap.innerHTML = `<button class="btn btn-secondary btn-sm" id="gc-remove-fleet-btn">Remove Fleet Monitoring</button>`;
@@ -2000,6 +2031,7 @@
               btn.dataset.cardLast4 || null
             ));
           });
+          stripDeniedActions(invEl);
         }
       }
 

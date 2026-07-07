@@ -4,6 +4,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
+const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const catalog = require('../../lib/generator-catalog');
 const {
@@ -21,7 +22,7 @@ const router = express.Router();
 // Mark a pending add-on PERFORMED (unbilled) — does NOT charge. Performed add-ons
 // are billed together per visit via /subscriptions/:id/charge-performed-addons.
 // Undo (/unmark-performed) reverts to pending. Office-gated; IDOR via customer_id.
-router.post('/addons/:id/mark-performed', async (req, res) => {
+router.post('/addons/:id/mark-performed', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
@@ -60,7 +61,7 @@ router.post('/addons/:id/mark-performed', async (req, res) => {
 // line item per add-on -> one payment -> one itemized state-branded receipt + one
 // Accounting entry). Any pending at-renewal invoice items are DELETED first so
 // nothing is billed twice. Office-gated; IDOR via optional customer_id.
-router.post('/subscriptions/:id/charge-performed-addons', async (req, res) => {
+router.post('/subscriptions/:id/charge-performed-addons', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const customerId = req.body && req.body.customer_id;
@@ -167,7 +168,7 @@ router.post('/subscriptions/:id/charge-performed-addons', async (req, res) => {
 
 // POST /api/generator-care/addons/:id/unmark-performed
 // Reverse: deletes the Stripe invoice item (if still removable) and resets addon to pending.
-router.post('/addons/:id/unmark-performed', async (req, res) => {
+router.post('/addons/:id/unmark-performed', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: addon, error: addonErr } = await supabaseAdmin
@@ -216,7 +217,7 @@ router.post('/addons/:id/unmark-performed', async (req, res) => {
 // Body: { amount_cents?, reason? }
 // amount_cents omitted = full refund. Stripe supports multiple partial refunds
 // up to the original total; we don't enforce that here -- Stripe will reject.
-router.post('/addons/:id/refund', async (req, res) => {
+router.post('/addons/:id/refund', requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
     const { amount_cents, reason } = req.body || {};
@@ -317,7 +318,7 @@ async function getOpenVisitId(subscriptionId) {
   return data ? data.id : null;
 }
 
-router.post('/subscriptions/:id/add-addon', async (req, res) => {
+router.post('/subscriptions/:id/add-addon', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { addon_type } = req.body || {};
@@ -390,7 +391,7 @@ router.get('/subscriptions/:id/standing-addons', async (req, res) => {
 // Body: { standing_addons: [addon_type, ...] }. Sets which recurring add-ons
 // auto-return each cycle. Only recurring types available for the gen class are
 // kept. Office-gated; optional customer_id IDOR guard.
-router.patch('/subscriptions/:id/standing-addons', async (req, res) => {
+router.patch('/subscriptions/:id/standing-addons', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
@@ -429,7 +430,7 @@ router.patch('/subscriptions/:id/standing-addons', async (req, res) => {
 // Soft-delete a pending add-on (sets status='canceled'). Only allowed for status='pending'.
 // Performed addons should use /unmark-performed first to revert to pending.
 // Charged addons can't be removed (need a refund flow).
-router.post('/addons/:id/remove', async (req, res) => {
+router.post('/addons/:id/remove', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: addon, error: addonErr } = await supabaseAdmin

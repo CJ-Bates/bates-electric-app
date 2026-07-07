@@ -9,6 +9,7 @@
 const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 const { completeServiceVisit } = require('../lib/completeVisit');
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail } = require('../lib/emails');
@@ -163,7 +164,7 @@ router.post('/my-visits/:id/complete', async (req, res) => {
 // "Booked by <tech>". Sends a plain INTERNAL email to the office mailbox;
 // deliberately NO customer email in this phase.
 // ============================================================================
-router.post('/my-visits/:id/schedule', async (req, res) => {
+router.post('/my-visits/:id/schedule', requirePermission('tech_reschedule'), async (req, res) => {
   try {
     const { appointment_at } = req.body || {};
     if (!appointment_at) return res.status(400).json({ error: 'appointment_at (date + time) is required' });

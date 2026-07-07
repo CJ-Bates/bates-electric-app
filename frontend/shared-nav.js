@@ -490,11 +490,19 @@
       'metrics': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>',
       'accounting': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
     };
+    // The Accounting tab is hidden for members whose accounting flag is off
+    // (cached profile from /me — see home.js). UI convenience only: the
+    // accounting API enforces the flag server-side.
+    let canSeeAccounting = true;
+    try {
+      const profile = JSON.parse(localStorage.getItem('bates.profile') || '{}');
+      if (profile.permissions && profile.permissions.accounting === false) canSeeAccounting = false;
+    } catch (e) { /* default to visible; the page + API still enforce */ }
     const tabs = [
       { label: 'Customers',  href: '/generator-care', match: 'generator-care' },
       { label: 'Metrics',    href: '/metrics',        match: 'metrics' },
       { label: 'Accounting', href: '/accounting',     match: 'accounting' },
-    ];
+    ].filter((t) => t.match !== 'accounting' || canSeeAccounting);
     const path = window.location.pathname;
     mount.innerHTML = tabs.map((t) => {
       const active = path.indexOf(t.match) !== -1;
