@@ -35,6 +35,14 @@
   // Active + inactive tech accounts, loaded once for the per-visit assign picker
   // and the manage-techs screen. id -> name lookups use this.
   let techList = [];
+  // Batched Stripe billing snapshot for the Needs Attention queue: renewal date
+  // + card-on-file expiry per stripe_subscription_id, from GET /billing-snapshot.
+  // null until the first load; {} with snapshotUnavailable=true when Stripe is
+  // unreachable (the queue then simply shows its DB-derived items).
+  let billingSnapshot = null;
+  let snapshotUnavailable = false;
+  // Guards renderAttention() so the skeleton stays up until real data lands.
+  let subsLoaded = false;
 
   const techName = (id) => {
     const t = techList.find((x) => x.id === id);
@@ -131,13 +139,35 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { subscriptions } = await r.json();
       allSubs = subscriptions || [];
+      subsLoaded = true;
       render();
+      renderAttention();
       showLoading(false);
     } catch (err) {
       console.error('Load failed:', err);
       showStatus(`Load failed: ${err.message}`, 'error');
       showLoading(false);
     }
+  }
+
+  // ---- Lazy Stripe enrichment for the attention queue ----
+  // Renewal-window + card-expiry cards ride this; everything else in the queue
+  // is DB-derived and renders without it. Failure degrades to "no extras".
+  async function loadBillingSnapshot() {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/billing-snapshot`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      billingSnapshot = data.billing || {};
+      snapshotUnavailable = !!data.unavailable;
+    } catch (e) {
+      console.error('billing snapshot failed:', e);
+      billingSnapshot = {};
+      snapshotUnavailable = true;
+    }
+    renderAttention();
   }
 
   // ---- Filtering / classification ----
@@ -149,15 +179,64 @@
     return Math.floor((target - today) / (1000 * 60 * 60 * 24));
   }
 
-  function bucket(sub) {
-    if (sub.status !== 'active') return 'inactive';
-    const d = daysUntil(sub.next_visit_due);
-    if (d === null) return 'unknown';
-    if (d < 0) return 'overdue';
-    if (d <= 14) return 'soon';
-    if (d <= 31) return 'month';
-    return 'future';
+  // ---- Lifecycle classification ("Where they're at") ----
+  // ONE state per customer, highest-priority-first, sharing thresholds and
+  // signals with the Needs Attention queue so the two views tell one story.
+  const DUE_SOON_DAYS = 21;      // CJ's ~3-week soft scheduling window
+  const RENEWAL_SOON_DAYS = 30;  // renewal reach-out prompt
+  const CARD_EXPIRING_DAYS = 60; // card-expiry heads-up
+
+  function att(sub) { return sub.attention || {}; }
+  function performedTotalCents(sub) {
+    return (att(sub).performed_addons || []).reduce((s, a) => s + (a.amount_cents || 0), 0);
   }
+  function hasFailedPayment(sub) {
+    return sub.status === 'past_due'
+      || (att(sub).failed_addons || []).length > 0
+      || (att(sub).failed_charges || []).length > 0;
+  }
+  // Appointment date was before today (a today-appointment isn't "passed" —
+  // the tech may still be on site) and the visit hasn't been completed.
+  function apptPassed(ov) {
+    if (!ov || !ov.appointment_at) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const appt = new Date(ov.appointment_at);
+    return !isNaN(appt.getTime()) && appt < today;
+  }
+
+  // Returns { key, tab, badge:[intent, label] }. `tab` = which filter pill the
+  // customer belongs to ('none' = shows under All only, e.g. canceled).
+  function lifecycleState(sub) {
+    const a = att(sub);
+    const d = daysUntil(sub.next_visit_due);
+    const ov = sub.open_visit;
+    const booked = !!(ov && ov.appointment_at);
+    if (hasFailedPayment(sub)) return { key: 'payment_failed', tab: 'action', badge: ['badge-danger', 'Payment failed'] };
+    if (sub.status === 'incomplete') return { key: 'incomplete', tab: 'action', badge: ['badge-danger', 'Signup incomplete'] };
+    if (sub.status === 'canceled') {
+      const st = sub.service_through;
+      if (st && daysUntil(st) >= 0) return { key: 'cancel_pending', tab: 'none', badge: ['badge-neutral', `Canceled \u2014 ends ${fmtDate(st)}`] };
+      return { key: 'canceled', tab: 'none', badge: ['badge-neutral', 'Canceled'] };
+    }
+    if (d !== null && d < 0 && !booked) return { key: 'overdue', tab: 'action', badge: ['badge-danger', 'Overdue'] };
+    if (performedTotalCents(sub) > 0) return { key: 'charge_pending', tab: 'action', badge: ['badge-money', 'Charge pending'] };
+    if (a.pending_prefs) return { key: 'awaiting_confirm', tab: 'action', badge: ['badge-info', 'Awaiting your confirm'] };
+    if (apptPassed(ov)) return { key: 'appt_passed', tab: 'action', badge: ['badge-info', 'Confirm completion'] };
+    if (!sub.work_order_created_at) return { key: 'needs_wo', tab: 'action', badge: ['badge-warn', 'New \u2014 needs WO'] };
+    if (booked) return { key: 'scheduled', tab: 'scheduled', badge: ['badge-ok', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`] };
+    if (d === null) return { key: 'no_due', tab: 'action', badge: ['badge-warn', 'No due date'] };
+    if (d <= DUE_SOON_DAYS) return { key: 'due_soon', tab: 'due-soon', badge: ['badge-warn', 'Due soon \u2014 schedule'] };
+    return { key: 'all_good', tab: 'all-good', badge: ['badge-neutral', 'All good \u2014 nothing due'] };
+  }
+
+  // List sort: action states float to the top, resting customers sink — the
+  // same "who needs me" ordering as the queue; due date breaks ties.
+  const STATE_ORDER = {
+    payment_failed: 0, incomplete: 1, overdue: 2, charge_pending: 3,
+    awaiting_confirm: 4, appt_passed: 5, needs_wo: 6, no_due: 7,
+    due_soon: 8, scheduled: 9, all_good: 10, cancel_pending: 11, canceled: 12,
+  };
 
   function matchesSearch(sub) {
     if (!searchQuery) return true;
@@ -177,32 +256,39 @@
   }
 
   function filteredSubs() {
-    return allSubs.filter(sub => {
-      if (!matchesSearch(sub)) return false;
-      const b = bucket(sub);
-      if (activeFilter === 'all') return b === 'overdue' || b === 'soon' || b === 'month' || b === 'future';
-      if (activeFilter === 'overdue') return b === 'overdue';
-      if (activeFilter === 'soon') return b === 'overdue' || b === 'soon';
-      if (activeFilter === 'month') return b === 'overdue' || b === 'soon' || b === 'month';
-      return true;
-    });
+    return allSubs
+      .filter(matchesSearch)
+      .filter((sub) => {
+        if (activeFilter === 'all') return true;
+        return lifecycleState(sub).tab === activeFilter;
+      })
+      .sort((a, b) => {
+        const ra = STATE_ORDER[lifecycleState(a).key] ?? 99;
+        const rb = STATE_ORDER[lifecycleState(b).key] ?? 99;
+        if (ra !== rb) return ra - rb;
+        return String(a.next_visit_due || '9999').localeCompare(String(b.next_visit_due || '9999'));
+      });
   }
 
   // ---- Render ----
   function render() {
-    // Update tab counts
-    let cOver = 0, cSoon = 0, cMonth = 0, cAll = 0;
+    // Update tab counts (every customer is in All; canceled live ONLY there).
+    let cAll = 0, cAction = 0, cDueSoon = 0, cScheduled = 0, cAllGood = 0;
     for (const s of allSubs.filter(matchesSearch)) {
-      const b = bucket(s);
-      if (b === 'overdue') { cOver++; cSoon++; cMonth++; cAll++; }
-      else if (b === 'soon') { cSoon++; cMonth++; cAll++; }
-      else if (b === 'month') { cMonth++; cAll++; }
-      else if (b === 'future') { cAll++; }
+      cAll++;
+      const t = lifecycleState(s).tab;
+      if (t === 'action') cAction++;
+      else if (t === 'due-soon') cDueSoon++;
+      else if (t === 'scheduled') cScheduled++;
+      else if (t === 'all-good') cAllGood++;
     }
     document.getElementById('count-all').textContent = cAll;
-    document.getElementById('count-overdue').textContent = cOver;
-    document.getElementById('count-soon').textContent = cSoon;
-    document.getElementById('count-month').textContent = cMonth;
+    document.getElementById('count-action').textContent = cAction;
+    document.getElementById('count-due-soon').textContent = cDueSoon;
+    document.getElementById('count-scheduled').textContent = cScheduled;
+    document.getElementById('count-all-good').textContent = cAllGood;
+    // "Action needed" reads as an alert whenever anything is in it.
+    document.getElementById('gc-tab-action').classList.toggle('alert', cAction > 0);
 
     const subs = filteredSubs();
     const empty = document.getElementById('empty');
@@ -319,16 +405,49 @@
     return fmtDate(sub.next_visit_due);
   }
 
+  // Inline flags under the customer name — every pending action stays visible
+  // in the full list even when a higher-priority state owns the badge column
+  // (and everything actionable is one click from here via the row -> modal).
+  const flagIcon = (paths) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const FLAG_ICONS = {
+    warn: flagIcon('<path d="M12 3 2.5 20h19L12 3z"/><path d="M12 9.5V14"/>'),
+    money: flagIcon('<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+    calendar: flagIcon('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
+    file: flagIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
+    check: flagIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 5-5.5"/>'),
+  };
+  function rowFlags(sub) {
+    const a = att(sub);
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    const out = [];
+    const flag = (cls, ico, label) => out.push(`<span class="gc-flag ${cls}">${FLAG_ICONS[ico]}${escapeHtml(label)}</span>`);
+    if (hasFailedPayment(sub)) flag('f-danger', 'warn', 'Payment failed');
+    const pt = performedTotalCents(sub);
+    if (pt > 0) flag('f-money', 'money', `${money(pt)} to charge`);
+    if (a.pending_prefs && sub.status !== 'canceled') {
+      const booked = !!(sub.open_visit && sub.open_visit.appointment_at);
+      flag('f-info', 'calendar', booked ? 'Reschedule requested' : 'Times proposed');
+    }
+    if (apptPassed(sub.open_visit) && sub.status !== 'canceled') flag('f-info', 'check', 'Appt passed');
+    if (!sub.work_order_created_at && (sub.status === 'active' || sub.status === 'past_due')) flag('f-warn', 'file', 'Work order not created');
+    return out.length ? `<div>${out.join('')}</div>` : '';
+  }
+
+  function stateBadge(st) {
+    return `<span class="badge ${st.badge[0]}">${escapeHtml(st.badge[1])}</span>`;
+  }
+
   function rowHTML(sub) {
-    const b = bucket(sub);
-    const rowClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const st = lifecycleState(sub);
+    const danger = st.key === 'payment_failed' || st.key === 'overdue' || st.key === 'incomplete';
     const cust = sub.customer || {};
     const fleet = sub.fleet_monitoring ? '<span class="chip" title="Fleet Monitoring enabled">FM</span>' : '';
     return `
-      <tr class="gc-row ${rowClass}" data-sub-id="${sub.id}">
+      <tr class="gc-row ${danger ? 'overdue' : ''}" data-sub-id="${sub.id}">
         <td>
           <div class="gc-customer-name">${escapeHtml(fmtNameCase(cust.name))}</div>
           <div class="gc-customer-meta">${escapeHtml(fmtNameCase(cust.install_city))}, ${escapeHtml(cust.install_state)} · ${escapeHtml(fmtPhoneDisplay(cust.phone))}</div>
+          ${rowFlags(sub)}
         </td>
         <td class="gc-gen-info">
           ${escapeHtml(genClassLabel(sub.gen_class))}<br>
@@ -336,50 +455,28 @@
         </td>
         <td>${escapeHtml(planLabel(sub.plan))} ${fleet}</td>
         <td>${dueLabel(sub)}</td>
-        <td>${listStatusBadge(sub)}</td>
+        <td>${stateBadge(st)}</td>
       </tr>
     `;
   }
 
   function cardHTML(sub) {
-    const b = bucket(sub);
-    const cardClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
-    const dueClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const st = lifecycleState(sub);
+    const danger = st.key === 'payment_failed' || st.key === 'overdue' || st.key === 'incomplete';
     const cust = sub.customer || {};
     return `
-      <div class="gc-card ${cardClass}" data-sub-id="${sub.id}">
+      <div class="gc-card ${danger ? 'overdue' : ''}" data-sub-id="${sub.id}">
         <div class="gc-card-header">
           <div>
             <div class="gc-card-name">${escapeHtml(fmtNameCase(cust.name))}</div>
             <div class="gc-card-meta">${escapeHtml(fmtNameCase(cust.install_city))} · ${escapeHtml(genClassLabel(sub.gen_class))} · ${escapeHtml(planLabel(sub.plan))}</div>
+            ${rowFlags(sub)}
           </div>
-          ${listStatusBadge(sub)}
+          ${stateBadge(st)}
         </div>
-        <div class="gc-card-due ${dueClass}">Due: ${dueLabel(sub)}</div>
+        <div class="gc-card-due ${danger ? 'overdue' : ''}">Due: ${dueLabel(sub)}</div>
       </div>
     `;
-  }
-
-  function badgeForBucket(b) {
-    if (b === 'overdue') return '<span class="badge badge-danger">Overdue</span>';
-    if (b === 'soon') return '<span class="badge badge-warn">Soon</span>';
-    return '<span class="badge badge-ok">Active</span>';
-  }
-
-  // List STATUS column: surface visit scheduling state at a glance. Booked
-  // appointment -> "Scheduled <date>" (ok); otherwise "Needs scheduling" —
-  // danger when overdue, warn otherwise (per the v3 status semantics).
-  // Inactive/canceled subs read neutral.
-  function listStatusBadge(sub) {
-    const pill = (intent, text) => `<span class="badge ${intent}">${escapeHtml(text)}</span>`;
-    if (sub.status !== 'active') return pill('badge-neutral', (sub.status || 'inactive').replace(/^\w/, c => c.toUpperCase()));
-    const ov = sub.open_visit;
-    if (ov && ov.appointment_at) {
-      return pill('badge-ok', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`);
-    }
-    const b = bucket(sub);
-    if (b === 'overdue') return pill('badge-danger', 'Needs scheduling');
-    return pill('badge-warn', 'Needs scheduling');
   }
 
   // ---- Detail modal ----

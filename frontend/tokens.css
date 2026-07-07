@@ -13,6 +13,7 @@
   --ok:#16803C; --ok-bg:#E4F5EA; --warn:#9A6A00; --warn-bg:#FBF1DA;
   --danger:#C22A21; --danger-bg:#FCE9E7; --info:#2458C5; --info-bg:#E7EEFC;
   --neutral:#5A6577; --neutral-bg:#EDF0F5;
+  --money:#0B6B5B; --money-bg:#DDF3EE;
   --radius:12px; --radius-sm:8px; --radius-pill:999px;
   --shadow-1:0 1px 2px rgba(19,31,63,.06); --shadow-2:0 4px 16px rgba(19,31,63,.10);
   --font:'Exo 2',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -39,6 +40,7 @@ html.dark{
   --ok:#5ED08A; --ok-bg:#12301E; --warn:#F0C060; --warn-bg:#33290F;
   --danger:#FF8A80; --danger-bg:#3A1512; --info:#82AAFF; --info-bg:#152449;
   --neutral:#A7B0C2; --neutral-bg:#222B42;
+  --money:#57D2B5; --money-bg:#0E2E27;
   --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 4px 16px rgba(0,0,0,.5);
   --glass-bg:rgba(22,29,48,.55);
   --glass-bg-strong:rgba(22,29,48,.75);

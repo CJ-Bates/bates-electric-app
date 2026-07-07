@@ -36,7 +36,12 @@ async function getSignupChargeCents(stripeCustomerId) {
 }
 
 // GET /api/generator-care/subscriptions
-// List of all subscriptions joined with customer info, sorted by next-visit-due ascending.
+// List of all subscriptions joined with customer info, sorted by next-visit-due
+// ascending. Also carries the attention signals the Needs Attention queue and
+// the "Where they're at" column derive from: performed-unbilled + failed
+// add-ons, failed ad-hoc charges, and pending customer visit preferences.
+// Those are THREE batched queries across the whole book — never per-customer —
+// so this endpoint stays one round-trip-bounded at hundreds of customers.
 router.get('/subscriptions', async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
@@ -46,23 +51,92 @@ router.get('/subscriptions', async (req, res) => {
         fleet_monitoring, status, annual_price_cents,
         signup_date, next_visit_due, last_visit_date,
         stripe_subscription_id, stripe_customer_id, notes, created_at,
+        work_order_created_at, work_order_number, canceled_at,
+        service_through:raw_metadata->>service_through,
         customer:generator_customers(id, name, email, phone, install_address, install_city, install_state, install_zip),
         visits:generator_service_visits(id, status, appointment_at, completed_date, scheduled_date, visit_type)
       `)
       .order('next_visit_due', { ascending: true, nullsFirst: false });
     if (error) throw error;
+
+    const subIds = (data || []).map((s) => s.id);
+
+    // Attention signals, batched. Each result is optional: if one query fails
+    // (e.g. a migration not applied), the list still renders without it.
+    let addonRows = [];
+    let adhocRows = [];
+    let prefRows = [];
+    if (subIds.length) {
+      const [addonR, adhocR, prefR] = await Promise.all([
+        supabaseAdmin
+          .from('generator_pending_addons')
+          .select('subscription_id, addon_type, amount_cents, status')
+          .in('status', ['performed', 'failed'])
+          .in('subscription_id', subIds),
+        supabaseAdmin
+          .from('generator_adhoc_charges')
+          .select('subscription_id, description, amount_cents, status')
+          .eq('status', 'failed')
+          .in('subscription_id', subIds),
+        supabaseAdmin
+          .from('generator_visit_preferences')
+          .select('visit_id, slots, note, created_at')
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false }),
+      ]);
+      if (!addonR.error && addonR.data) addonRows = addonR.data;
+      if (!adhocR.error && adhocR.data) adhocRows = adhocR.data;
+      if (!prefR.error && prefR.data) prefRows = prefR.data;
+    }
+
+    const addonsBySub = new Map();
+    for (const a of addonRows) {
+      if (!addonsBySub.has(a.subscription_id)) addonsBySub.set(a.subscription_id, []);
+      addonsBySub.get(a.subscription_id).push(a);
+    }
+    const adhocBySub = new Map();
+    for (const c of adhocRows) {
+      if (!adhocBySub.has(c.subscription_id)) adhocBySub.set(c.subscription_id, []);
+      adhocBySub.get(c.subscription_id).push(c);
+    }
+    const prefByVisit = new Map();
+    for (const p of prefRows) {
+      if (!prefByVisit.has(p.visit_id)) prefByVisit.set(p.visit_id, p); // rows sorted newest-first
+    }
+
     // Attach each sub's current OPEN (un-completed) visit so the list STATUS
     // column can show Needs scheduling vs Scheduled — without shipping every visit.
     const subscriptions = (data || []).map((s) => {
       const open = (s.visits || [])
         .filter((v) => v.status !== 'completed' && !v.completed_date)
         .sort((a, b) => String(a.appointment_at || a.scheduled_date || '').localeCompare(String(b.appointment_at || b.scheduled_date || '')))[0] || null;
+      // Newest pending customer preference across this sub's visits (booking
+      // marks prefs used, resubmits dismiss older ones, so this is ~the open visit's).
+      let pref = null;
+      for (const v of (s.visits || [])) {
+        const p = prefByVisit.get(v.id);
+        if (p && (!pref || String(p.created_at) > String(pref.created_at))) pref = p;
+      }
+      const addons = addonsBySub.get(s.id) || [];
       const { visits, ...rest } = s;
       return {
         ...rest,
         open_visit: open
           ? { id: open.id, status: open.status, appointment_at: open.appointment_at, scheduled_date: open.scheduled_date }
           : null,
+        attention: {
+          performed_addons: addons
+            .filter((a) => a.status === 'performed' && (a.amount_cents || 0) > 0)
+            .map((a) => ({ addon_type: a.addon_type, amount_cents: a.amount_cents })),
+          failed_addons: addons
+            .filter((a) => a.status === 'failed')
+            .map((a) => ({ addon_type: a.addon_type, amount_cents: a.amount_cents })),
+          failed_charges: (adhocBySub.get(s.id) || [])
+            .map((c) => ({ description: c.description, amount_cents: c.amount_cents })),
+          pending_prefs: pref
+            ? { visit_id: pref.visit_id, slots: pref.slots, note: pref.note, created_at: pref.created_at }
+            : null,
+        },
       };
     });
     res.json({ subscriptions });
@@ -302,6 +376,80 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
   } catch (err) {
     console.error('[generator-care] stripe-data error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/generator-care/billing-snapshot
+// Batched Stripe enrichment for the Needs Attention queue: renewal date,
+// cancel-at-period-end flag, and card-on-file expiry for EVERY subscription,
+// via paginated subscriptions.list calls (100 per call — a handful of round
+// trips at hundreds of customers, never one call per customer). The dashboard
+// loads this lazily in parallel with the Supabase list; when Stripe is
+// unreachable we return an empty map with `unavailable: true` so the queue
+// still renders its DB-derived items instead of failing the page.
+router.get('/billing-snapshot', async (req, res) => {
+  try {
+    const billing = {};
+    // The customer's card usually rides on the SUBSCRIPTION default payment
+    // method (Checkout attaches it there), but fall back to the customer's
+    // invoice-settings default — same order as resolveSavedPaymentMethod().
+    // The 4-level customer expand is at Stripe's depth limit; if it's ever
+    // rejected, retry with the shallow expand rather than losing the snapshot.
+    const expands = [
+      ['data.default_payment_method', 'data.customer.invoice_settings.default_payment_method'],
+      ['data.default_payment_method'],
+    ];
+    let subs = null;
+    let lastErr = null;
+    for (const expand of expands) {
+      try {
+        const collected = [];
+        for await (const s of stripe.subscriptions.list({ status: 'all', limit: 100, expand })) {
+          collected.push(s);
+          if (collected.length >= 1000) break; // runaway safety cap
+        }
+        subs = collected;
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        subs = null;
+      }
+    }
+    if (!subs) throw lastErr || new Error('subscriptions.list failed');
+
+    for (const s of subs) {
+      if (!s || s.status === 'canceled' || s.status === 'incomplete_expired') continue;
+      const items = (s.items && s.items.data) || [];
+      // current_period_end moved onto items in 2025-03-31.basil (see computePlanBilling).
+      const periodEnd = s.current_period_end || (items[0] && items[0].current_period_end) || null;
+      let pm = s.default_payment_method;
+      if (!pm || typeof pm !== 'object') {
+        const cust = s.customer;
+        const invPm = cust && typeof cust === 'object' && cust.invoice_settings
+          ? cust.invoice_settings.default_payment_method
+          : null;
+        pm = invPm && typeof invPm === 'object' ? invPm : null;
+      }
+      const card = pm && pm.card ? pm.card : null;
+      billing[s.id] = {
+        stripe_status: s.status,
+        cancel_at_period_end: !!s.cancel_at_period_end,
+        period_end: periodEnd ? new Date(periodEnd * 1000).toISOString().slice(0, 10) : null,
+        card: card
+          ? {
+              brand: card.brand || null,
+              last4: card.last4 || null,
+              exp_month: card.exp_month || null,
+              exp_year: card.exp_year || null,
+            }
+          : null,
+      };
+    }
+    res.json({ billing });
+  } catch (err) {
+    console.error('[generator-care] billing-snapshot error:', err && err.message);
+    res.json({ billing: {}, unavailable: true });
   }
 });
 
