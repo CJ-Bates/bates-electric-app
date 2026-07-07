@@ -58,7 +58,7 @@
       } catch (e) {}
       if (onLoginPage()) return false;
       try { sessionStorage.setItem('bates.auth.message', message || DEFAULT_EXPIRED_MSG); } catch (e) {}
-      window.location.replace('index.html');
+      window.location.replace('/');
       return true;
     }
 
@@ -119,7 +119,7 @@
   // data itself lives behind authenticated API endpoints. onLoginPage() is the
   // loop guard: never redirect the login page to itself.
   if (!window.BatesAuth.getToken() && !window.BatesAuth.onLoginPage()) {
-    window.location.replace('index.html');
+    window.location.replace('/');
     return;
   }
 
@@ -146,25 +146,25 @@
     {
       section: 'Main',
       items: [
-        { label: 'Home', icon: 'house', href: 'home.html', id: 'drawer-home' },
-        { label: 'My Visits', icon: 'zap', href: 'tech.html', id: 'drawer-tech', techOnly: true },
-        { label: 'Inspections', icon: 'clipboardCheck', href: 'inspection.html', id: 'drawer-inspection' },
-        { label: 'Site Visit', icon: 'mapPin', href: 'site-visit.html', id: 'drawer-site-visit' },
-        { label: 'Generator Care', icon: 'zap', href: 'generator-care.html', id: 'drawer-generator', officeOnly: true },
-        { label: 'Members', icon: 'users', href: 'members.html', id: 'drawer-members', officeOnly: true }
+        { label: 'Home', icon: 'house', href: '/home', id: 'drawer-home' },
+        { label: 'My Visits', icon: 'zap', href: '/tech', id: 'drawer-tech', techOnly: true },
+        { label: 'Inspections', icon: 'clipboardCheck', href: '/inspection', id: 'drawer-inspection' },
+        { label: 'Site Visit', icon: 'mapPin', href: '/site-visit', id: 'drawer-site-visit' },
+        { label: 'Generator Care', icon: 'zap', href: '/generator-care', id: 'drawer-generator', officeOnly: true },
+        { label: 'Members', icon: 'users', href: '/members', id: 'drawer-members', officeOnly: true }
       ]
     },
     {
       section: 'Resources',
       items: [
-        { label: 'Documents', icon: 'fileText', href: 'documents.html', id: 'drawer-documents' },
-        { label: 'Contacts', icon: 'users', href: 'contacts.html', id: 'drawer-contacts' }
+        { label: 'Documents', icon: 'fileText', href: '/documents', id: 'drawer-documents' },
+        { label: 'Contacts', icon: 'users', href: '/contacts', id: 'drawer-contacts' }
       ]
     },
     {
       section: 'Account',
       items: [
-        { label: 'Settings', icon: 'settings', href: 'settings.html', id: 'drawer-settings' },
+        { label: 'Settings', icon: 'settings', href: '/settings', id: 'drawer-settings' },
         { label: 'Sign Out', icon: 'logOut', href: '#', id: 'drawer-signout', isSignOut: true }
       ]
     }
@@ -351,7 +351,7 @@
     sessionStorage.removeItem('bates.auth.token');
     localStorage.removeItem('bates.auth.refresh');
     sessionStorage.removeItem('bates.auth.refresh');
-    window.location.href = 'index.html';
+    window.location.href = '/';
   }
 
   /**
@@ -483,16 +483,17 @@
   function injectSectionTabs() {
     const mount = document.querySelector('[data-section-tabs]');
     if (!mount) return;
-    // Icons are hidden on desktop (CSS) and only shown in the mobile bottom bar.
+    // Icons are currently hidden at all widths (the switcher stays a top
+    // segmented control everywhere; the bottom slot belongs to .app-tabbar).
     const ICONS = {
       'generator-care': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
       'metrics': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>',
       'accounting': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
     };
     const tabs = [
-      { label: 'Customers',  href: 'generator-care.html', match: 'generator-care' },
-      { label: 'Metrics',    href: 'metrics.html',        match: 'metrics' },
-      { label: 'Accounting', href: 'accounting.html',     match: 'accounting' },
+      { label: 'Customers',  href: '/generator-care', match: 'generator-care' },
+      { label: 'Metrics',    href: '/metrics',        match: 'metrics' },
+      { label: 'Accounting', href: '/accounting',     match: 'accounting' },
     ];
     const path = window.location.pathname;
     mount.innerHTML = tabs.map((t) => {
@@ -501,9 +502,83 @@
         `<span class="section-tab-icon" aria-hidden="true">${ICONS[t.match] || ''}</span>` +
         `<span class="section-tab-label">${t.label}</span></a>`;
     }).join('');
-    // Marks pages that have the switcher so content can reserve space for the
-    // mobile fixed bottom bar (see .has-bottom-nav in app.css).
-    document.body.classList.add('has-bottom-nav');
+  }
+
+  /**
+   * Inject the global mobile tab bar (v3: floating glass-strong bottom nav,
+   * Home · Gen Care/My Visits · Inspections · More). CSS shows it only at
+   * <=640px (.app-tabbar in app.css). Skipped on pages whose bottom slot
+   * belongs to a sticky form action bar (inspection / site-visit, v3 demo #2).
+   * Tab targets respect the same role gating as the drawer: Gen Care is
+   * office-only, My Visits (tech.html) is the techs' slot.
+   */
+  function injectTabBar() {
+    if (document.querySelector('.app-tabbar')) return;
+    if (document.querySelector('.insp-actions, .sv-footer-actions')) return;
+    const path = window.location.pathname;
+    const tabs = [
+      { label: 'Home', icon: 'house', href: '/home', match: ['home'] },
+      isOfficeRole()
+        ? { label: 'Gen Care', icon: 'zap', href: '/generator-care', match: ['generator-care', 'metrics', 'accounting'] }
+        : { label: 'My Visits', icon: 'zap', href: '/tech', match: ['tech'] },
+      { label: 'Inspections', icon: 'clipboardCheck', href: '/inspection', match: ['inspection', 'office'] },
+    ];
+    const isActive = (t) => t.match.some((m) => path.includes(m));
+    // Pages reachable only through the drawer (Contacts, Documents, Settings…)
+    // light up "More" so the bar always shows where you are.
+    const moreActive = !tabs.some(isActive);
+    const tabbarHTML = `
+      <nav class="app-tabbar" aria-label="Primary">
+        ${tabs.map((t) => {
+          const active = isActive(t);
+          return `<a href="${t.href}" class="app-tab${active ? ' active' : ''}"${active ? ' aria-current="page"' : ''}>` +
+            `<span class="app-tab-ico" aria-hidden="true">${svgIcons[t.icon]}</span>` +
+            `<span class="app-tab-label">${t.label}</span></a>`;
+        }).join('')}
+        <button type="button" class="app-tab${moreActive ? ' active' : ''}" id="tabbarMore" aria-label="More — open menu">
+          <span class="app-tab-ico" aria-hidden="true">${svgIcons.hamburger}</span>
+          <span class="app-tab-label">More</span>
+        </button>
+      </nav>
+    `;
+    document.body.insertAdjacentHTML('beforeend', tabbarHTML);
+    // Content reserves room for the floating bar (see .has-tabbar in app.css).
+    document.body.classList.add('has-tabbar');
+    const moreBtn = document.getElementById('tabbarMore');
+    moreBtn.querySelectorAll('svg').forEach((svg) => { svg.style.pointerEvents = 'none'; });
+    moreBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      openDrawer();
+    });
+    moreBtn.addEventListener('touchend', function (e) {
+      e.preventDefault();
+      openDrawer();
+    }, { passive: false });
+  }
+
+  /**
+   * Prefetch main-nav targets on hover (desktop) / touchstart (mobile) so the
+   * next page is warm before the tap lands. Nav links only — drawer, tab bar,
+   * GC section tabs — never arbitrary anchors (PDFs etc.). One <link
+   * rel="prefetch"> per URL per page load; requests flow through the service
+   * worker, which caches fresh copies as a side effect.
+   */
+  function setupPrefetch() {
+    const done = new Set();
+    function handler(e) {
+      const t = e.target;
+      const a = t && t.closest ? t.closest('a.shared-drawer-item, a.app-tab, a.section-tab') : null;
+      if (!a || !a.href || a.origin !== location.origin) return;
+      const href = a.href.split('#')[0];
+      if (done.has(href) || a.pathname === location.pathname) return;
+      done.add(href);
+      const link = document.createElement('link');
+      link.rel = 'prefetch';
+      link.href = href;
+      document.head.appendChild(link);
+    }
+    document.addEventListener('mouseover', handler, { passive: true });
+    document.addEventListener('touchstart', handler, { passive: true });
   }
 
   /**
@@ -520,10 +595,12 @@
   function initialize() {
     injectNavigation();
     injectSectionTabs();
+    injectTabBar();
     fixSvgPointerEvents();
     updateActiveState();
     setupHamburgerListener();
     setupDrawerListeners();
+    setupPrefetch();
   }
 
   // Start initialization

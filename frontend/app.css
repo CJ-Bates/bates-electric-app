@@ -458,7 +458,11 @@ input:focus-visible {
   max-width: 600px;
   margin: 0 auto;
   padding: 16px 16px 120px;
+  /* clip (not hidden): kills sideways scroll WITHOUT becoming a scroll
+     container, so the sticky mobile action bar inside (site-visit) works.
+     Browsers without clip keep hidden — the bar just stays in-flow there. */
   overflow-x: hidden;
+  overflow-x: clip;
   position: relative;
   z-index: 1;
 }
@@ -1637,7 +1641,17 @@ input:focus-visible {
   color: var(--accent-hover);
 }
 
-/* Action buttons at the bottom of the form */
+/* Action buttons at the bottom of the form. Reset is destructive, so it
+   lives alone on its own row (v3 §3 — never adjacent to Save/Submit). */
+.insp-reset-row {
+  display: flex;
+  margin-top: 8px;
+}
+.insp-reset-row #reset-btn {
+  /* colors come from .btn-danger-soft (components.css); keep sizing only */
+  min-height: 44px;
+  font-size: 13px;
+}
 .insp-actions {
   display: flex;
   gap: 12px;
@@ -1649,11 +1663,50 @@ input:focus-visible {
   flex: 1 1 240px;
   min-height: 56px;
 }
-.insp-actions #reset-btn {
-  /* colors come from .btn-danger-soft (components.css); keep sizing only */
-  flex: 0 1 auto;
-  min-height: 44px;
-  font-size: 13px;
+
+/* ============================================================
+   STICKY FORM ACTION BARS (mobile) — v3 §2 phone demo #2: the
+   primary actions float in a glass-strong bar pinned to the
+   viewport bottom, so Save/Submit is never a scroll away. sticky
+   (not fixed) keeps desktop layout untouched and needs no JS.
+   ============================================================ */
+@media (max-width: 640px) {
+  .insp-actions,
+  .sv-footer-actions {
+    position: sticky;
+    bottom: 12px;
+    z-index: 90; /* under the topbar (100), drawer (500), modals (1500) */
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-line);
+    box-shadow: var(--glass-shadow);
+    border-radius: 18px;
+    padding: 10px;
+    margin-top: 16px;
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .insp-actions,
+    .sv-footer-actions { background: var(--surface); border-color: var(--line); }
+  }
+  .insp-actions {
+    gap: 10px;
+    flex-wrap: nowrap; /* Save Draft + Submit share the one row */
+  }
+  .insp-actions .btn-primary,
+  .insp-actions .btn-secondary {
+    flex: 1 1 0;
+    min-height: 46px;
+    min-width: 0;
+  }
+  .sv-footer-actions {
+    padding: 10px;
+    margin-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+}
+@media print {
+  .insp-actions,
+  .sv-footer-actions { position: static; background: none; box-shadow: none; border: none; }
 }
 
 /* ============================================================
@@ -1781,45 +1834,75 @@ input:focus-visible {
 /* Tab icons are only used in the mobile bottom bar (hidden in the desktop top switcher). */
 .section-tab-icon { display: none; }
 
-/* Phones: turn the switcher into a thumb-reachable fixed bottom nav bar
-   (icon + label), repositioning the SAME element so there's only one switcher.
-   Desktop (>640px) keeps the top in-page switcher above, unchanged. */
+/* Phones keep the same top segmented switcher (the bottom slot belongs to the
+   global .app-tabbar below); the switcher just gets comfortable 44px targets. */
 @media (max-width: 640px) {
-  .section-tabs {
+  .section-tab { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+}
+
+/* ============================================================
+   GLOBAL MOBILE TAB BAR — v3 §2: floating glass-strong bottom nav
+   (Home · Gen Care/My Visits · Inspections · More), injected by
+   shared-nav.js on staff pages. Hidden on desktop; form pages
+   (inspection / site-visit) skip it — their sticky action bar owns
+   the bottom slot instead (v3 phone demo #2).
+   ============================================================ */
+.app-tabbar { display: none; }
+@media (max-width: 640px) {
+  .app-tabbar {
     position: fixed;
-    left: 0; right: 0; bottom: 0;
-    z-index: 1500;
-    margin: 0;
-    gap: 0;
-    border: none;
-    border-top: 1px solid var(--line);
-    border-radius: 0;
-    /* v3: mobile bottom bar is glass-strong chrome floating over content */
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 400; /* above content, below the drawer scrim (500) and modals (1500) */
+    display: flex;
+    justify-content: space-around;
+    padding: 8px 6px;
+    border-radius: 26px;
     background: var(--glass-bg-strong);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
-    padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+    border: 1px solid var(--glass-line);
     box-shadow: var(--glass-shadow);
   }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .section-tabs { background: var(--surface); }
+    .app-tabbar { background: var(--surface); border-color: var(--line); }
   }
-  .section-tab {
-    flex: 1 1 0;
+  .app-tab {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 6px 4px;
-    min-height: 50px;
-    font-size: 0.7rem;
+    gap: 2px;
+    min-width: 60px;
+    min-height: 44px;
+    padding: 6px 10px;
+    border-radius: 18px;
+    border: none;
+    background: none;
+    font-family: var(--font);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--ink-3);
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
   }
-  .section-tab-icon { display: block; line-height: 0; }
-  .section-tab-icon svg { width: 22px; height: 22px; }
-  .section-tab-label { font-size: 0.7rem; }
-  /* Reserve room so the fixed bar never covers the last row of content. */
-  .has-bottom-nav .dashboard-main { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .app-tab:active { transform: scale(.94); }
+  .app-tab.active { color: var(--accent); background: var(--accent-soft); }
+  .app-tab-ico { line-height: 0; pointer-events: none; }
+  .app-tab-ico svg { width: 20px; height: 20px; }
+  .app-tab-label { pointer-events: none; }
+  /* Reserve room so the floating bar never covers the last row of content
+     (bar zone ≈ 80px; max() so pages with roomier padding keep theirs). */
+  body.has-tabbar main { padding-bottom: max(120px, calc(96px + env(safe-area-inset-bottom))); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-tab:active { transform: none; }
+}
+@media print {
+  .app-tabbar { display: none !important; }
 }
 
 /* ============================================================

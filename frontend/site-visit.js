@@ -45,7 +45,7 @@ function handleSignOut() {
     localStorage.removeItem('auth_token');
     sessionStorage.removeItem('auth_token');
   } catch (e) {}
-  window.location.href = 'index.html';
+  window.location.href = '/';
 }
 
 function svInit() {

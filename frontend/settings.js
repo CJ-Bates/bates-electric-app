@@ -16,7 +16,7 @@
   };
 
   const redirectToLogin = () => {
-    window.location.replace('index.html');
+    window.location.replace('/');
   };
 
   // --- Toast ---
