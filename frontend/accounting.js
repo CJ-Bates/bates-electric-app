@@ -47,6 +47,16 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
 
+  // Prefer the server's error message ("Invalid date range") over a bare
+  // "HTTP 400" in the failure toast.
+  async function errorMessageOf(r) {
+    try {
+      const body = await r.json();
+      if (body && body.error) return body.error;
+    } catch (_) { /* non-JSON body */ }
+    return 'HTTP ' + r.status;
+  }
+
   function showStatus(msg, kind) {
     const el = $('status');
     el.textContent = msg;
@@ -121,7 +131,7 @@
       const r = await BatesAuth.authFetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.ok) throw new Error(await errorMessageOf(r));
       const data = await r.json();
       currentData = data;
       render();
@@ -202,7 +212,7 @@
     try {
       const url = `${API_BASE}/api/generator-care/accounting/payouts?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
       const r = await BatesAuth.authFetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.ok) throw new Error(await errorMessageOf(r));
       const data = await r.json();
       currentPayoutData = data;
       renderPayouts(data);
@@ -247,6 +257,7 @@
         <div>
           <div class="payout-date">${niceDate(g.arrival_date)}<span class="badge ${badgeClass} payout-status">${escapeHtml(niceStatus)}</span></div>
           <div class="payout-id">${escapeHtml(g.id)}</div>
+          <button type="button" class="btn btn-secondary btn-sm print-payout-btn" data-payout-id="${escapeHtml(g.id)}">Print breakdown</button>
         </div>
         <div class="payout-bank ${dirClass}">
           <span class="lbl">${dirLabel}</span>
@@ -261,8 +272,11 @@
         <div class="payout-note">${escapeHtml(g.note || 'No itemized transactions reference this payout in the selected range.')}</div>
       </div>`;
     }
+    // A note can coexist with rows (e.g. an incomplete itemization) — show
+    // both; never hide rows we do have.
     return `<div class="payout-card">
       ${head}
+      ${g.note ? `<div class="payout-note">${escapeHtml(g.note)}</div>` : ''}
       ${txnTableHtml(g.transactions)}
       ${txnCardsHtml(g.transactions)}
       <div class="payout-recon ${tied ? 'tied' : 'untied'}">
@@ -307,6 +321,7 @@
     $('view-payout').setAttribute('aria-selected', String(isPayout));
     $('date-view').hidden = isPayout;
     $('payout-view').hidden = !isPayout;
+    $('print-all-btn').hidden = !isPayout;
     $('scope-hint').innerHTML = isPayout
       ? 'Filtering by <strong>payout date</strong> &mdash; when money actually settled to/from the bank. Each group ties to one bank line.'
       : 'Filtering by <strong>transaction date</strong> &mdash; when each charge, refund, or fee occurred.';
@@ -403,6 +418,69 @@
     URL.revokeObjectURL(url);
   }
 
+  // ---- Print breakdown (Brenda's paper/PDF copy) ----
+  // Builds letterhead-lite blocks into #print-root, marks the body as printing
+  // (print CSS then shows ONLY the print root), and opens the browser's print
+  // dialog — Brenda can print or save as PDF from there. One payout per page;
+  // "Print all groups" emits every payout with a page break between. Cleanup
+  // happens on afterprint so a plain Ctrl+P later prints the normal page.
+  const printRow = (t) => `<tr>
+      <td>${t.date}</td>
+      <td>${escapeHtml(t.customer_name)}</td>
+      <td>${escapeHtml(t.description)}</td>
+      <td class="num">${fmtMoney(t.gross_cents)}</td>
+      <td class="num">${fmtMoney(t.fee_cents)}</td>
+      <td class="num">${fmtMoney(t.net_cents)}</td>
+      <td class="mono">${escapeHtml(t.auth_code || '—')}</td>
+    </tr>`;
+
+  function printBlockHtml(g) {
+    const dirLabel = g.direction === 'debit' ? 'Debit from bank' : 'Deposit to bank';
+    const rows = g.transactions || [];
+    const generated = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    const tieLine = !rows.length ? '' : (g.ties
+      ? `Itemized net ${fmtMoney(g.transactions_net_cents)} = ${dirLabel.toLowerCase()} ${fmtMoney(Math.abs(g.bank_amount_cents))} — ties to the penny.`
+      : `Itemized net ${fmtMoney(g.transactions_net_cents)} vs ${dirLabel.toLowerCase()} ${fmtMoney(Math.abs(g.bank_amount_cents))} — difference of ${fmtMoney(g.bank_amount_cents - g.transactions_net_cents)}; see note above.`);
+    return `<section class="print-payout">
+      <div class="print-head">
+        <div>
+          <div class="print-co">Bates Electric, Inc.</div>
+          <div class="print-sub">Generator Care &middot; Payout reconciliation</div>
+        </div>
+        <div class="print-gen">Generated ${generated}</div>
+      </div>
+      <div class="print-facts">
+        <div><span class="lbl">Payout date</span><span class="val">${niceDate(g.arrival_date)}</span></div>
+        <div><span class="lbl">${dirLabel}</span><span class="val">${fmtMoney(Math.abs(g.bank_amount_cents))}</span></div>
+        <div><span class="lbl">Stripe payout ID</span><span class="val mono">${escapeHtml(g.id)}</span></div>
+        <div><span class="lbl">Status</span><span class="val">${escapeHtml(String(g.status || '').replace(/_/g, ' '))}</span></div>
+      </div>
+      ${g.note ? `<div class="print-note">${escapeHtml(g.note)}</div>` : ''}
+      ${rows.length ? `<table class="print-table">
+        <thead><tr><th>Date</th><th>Customer</th><th>Description</th><th class="num">Gross</th><th class="num">Fee</th><th class="num">Net</th><th>Auth code</th></tr></thead>
+        <tbody>${rows.map(printRow).join('')}</tbody>
+        <tfoot><tr>
+          <td colspan="3">Totals (${rows.length} transaction${rows.length === 1 ? '' : 's'})</td>
+          <td class="num">${fmtMoney(g.gross_cents)}</td>
+          <td class="num">${fmtMoney(g.fee_cents)}</td>
+          <td class="num">${fmtMoney(g.transactions_net_cents)}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+      <div class="print-tie">${tieLine}</div>` : ''}
+    </section>`;
+  }
+
+  function printPayoutGroups(groups) {
+    if (!groups.length) {
+      showStatus('Nothing to print.', 'info');
+      return;
+    }
+    $('print-root').innerHTML = groups.map(printBlockHtml).join('');
+    document.body.classList.add('printing');
+    window.print();
+  }
+
   // ---- Init ----
   window.addEventListener('DOMContentLoaded', () => {
     // Default range: first of the current month through today. Formatted in
@@ -417,6 +495,22 @@
     $('export-csv-btn').addEventListener('click', downloadCsv);
     $('view-date').addEventListener('click', () => setView('date'));
     $('view-payout').addEventListener('click', () => setView('payout'));
+
+    // Print: per-payout buttons are rendered per card (delegated), the
+    // header button prints every group in the range.
+    $('payout-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('.print-payout-btn');
+      if (!btn || !currentPayoutData) return;
+      const g = (currentPayoutData.payouts || []).find((x) => x.id === btn.dataset.payoutId);
+      if (g) printPayoutGroups([g]);
+    });
+    $('print-all-btn').addEventListener('click', () => {
+      printPayoutGroups((currentPayoutData && currentPayoutData.payouts) || []);
+    });
+    window.addEventListener('afterprint', () => {
+      document.body.classList.remove('printing');
+      $('print-root').innerHTML = '';
+    });
     $('hide-test-toggle').addEventListener('change', (e) => {
       hideTestActivity = e.target.checked;
       if (currentData) render(); // client-side filter — no refetch needed

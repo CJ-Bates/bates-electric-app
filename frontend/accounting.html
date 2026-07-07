@@ -102,6 +102,38 @@
       .acc-viewtabs { display: flex; width: 100%; }
       .acc-viewtab { flex: 1 1 0; justify-content: center; }
     }
+
+    /* ---- Payout print breakdown (Brenda's paper/PDF copy) ----
+       #print-root is filled on demand by accounting.js and never shows on
+       screen. When the body carries .printing, print media hides the app and
+       shows only the print root: black-on-white letterhead-lite, letter
+       portrait, one payout per page. A plain Ctrl+P (no .printing) still
+       prints the normal page. */
+    #print-root { display: none; }
+    .print-payout-btn { margin-top: 8px; }
+    @page { margin: 0.6in; }
+    @media print {
+      body.printing > *:not(#print-root) { display: none !important; }
+      body.printing { background: #fff !important; }
+      body.printing #print-root { display: block !important; }
+      .print-payout { color: #000; font-family: Arial, Helvetica, sans-serif; font-size: 11px; }
+      .print-payout + .print-payout { break-before: page; page-break-before: always; }
+      .print-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 14px; }
+      .print-co { font-size: 18px; font-weight: 700; }
+      .print-sub { font-size: 12px; margin-top: 2px; }
+      .print-gen { font-size: 10px; color: #333; }
+      .print-facts { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 14px; }
+      .print-facts .lbl { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: #444; }
+      .print-facts .val { font-size: 13px; font-weight: 700; }
+      .print-payout .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; font-weight: 400; }
+      .print-note { border: 1px solid #999; padding: 8px 10px; margin-bottom: 12px; font-size: 10.5px; }
+      .print-table { width: 100%; border-collapse: collapse; }
+      .print-table th, .print-table td { border: 1px solid #bbb; padding: 5px 7px; text-align: left; font-size: 10.5px; color: #000; }
+      .print-table th { text-transform: uppercase; font-size: 9px; letter-spacing: 0.04em; }
+      .print-table .num, .print-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .print-table tfoot td { font-weight: 700; }
+      .print-tie { margin-top: 10px; font-size: 11px; font-weight: 700; }
+    }
   </style>
 </head>
 <body class="hub-body dashboard-body">
@@ -110,6 +142,7 @@
     <div class="dashboard-header gc-page-header">
       <a href="home.html" class="btn btn-secondary btn-sm" style="margin-right:12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Accounting</h1>
       <div class="dashboard-header-actions">
+        <button type="button" id="print-all-btn" class="btn btn-secondary btn-sm" hidden>Print all groups</button>
         <button type="button" id="export-csv-btn" class="btn btn-secondary btn-sm">Download CSV</button>
         <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
       </div>
@@ -222,6 +255,10 @@
 
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
   </main>
+
+  <!-- Populated on demand by accounting.js for the payout print breakdown;
+       never visible on screen. -->
+  <div id="print-root" aria-hidden="true"></div>
 
   <script src="shared-nav.js"></script>
   <script src="icons.js"></script>

@@ -30,6 +30,17 @@ function chargeDescription(ch) {
   if (ch.metadata && ch.metadata.adhoc_charge_id) return 'Ad-hoc charge';
   return 'Card charge';
 }
+// Strict YYYY-MM-DD parser for the from/to query params. Returns null for
+// anything unparseable — bad format, impossible month/day, a 5-digit year from
+// a mistyped date input ("12026") — so callers can answer 400 instead of
+// letting a NaN timestamp reach Stripe and bounce back as a 500. The
+// round-trip check rejects dates JS would silently roll over (Feb 29 -> Mar 1).
+function parseYmdParam(s, timeSuffix) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s))) return null;
+  const d = new Date(s + timeSuffix);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return null;
+  return d;
+}
 
 // === ACCOUNTING ENDPOINTS ===
 
@@ -40,8 +51,9 @@ router.get('/accounting/transactions', async (req, res) => {
   try {
     const today = new Date();
     const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const fromDate = req.query.from ? new Date(req.query.from + 'T00:00:00Z') : defaultFrom;
-    const toDate = req.query.to ? new Date(req.query.to + 'T23:59:59Z') : today;
+    const fromDate = req.query.from ? parseYmdParam(req.query.from, 'T00:00:00Z') : defaultFrom;
+    const toDate = req.query.to ? parseYmdParam(req.query.to, 'T23:59:59Z') : today;
+    if (!fromDate || !toDate) return res.status(400).json({ error: 'Invalid date range' });
     const fromTs = Math.floor(fromDate.getTime() / 1000);
     const toTs = Math.floor(toDate.getTime() / 1000);
 
@@ -294,47 +306,101 @@ router.get('/accounting/payouts', async (req, res) => {
   try {
     const today = new Date();
     const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const fromDate = req.query.from ? new Date(req.query.from + 'T00:00:00Z') : defaultFrom;
-    const toDate = req.query.to ? new Date(req.query.to + 'T23:59:59Z') : today;
+    const fromDate = req.query.from ? parseYmdParam(req.query.from, 'T00:00:00Z') : defaultFrom;
+    const toDate = req.query.to ? parseYmdParam(req.query.to, 'T23:59:59Z') : today;
+    if (!fromDate || !toDate) return res.status(400).json({ error: 'Invalid date range' });
     const fromTs = Math.floor(fromDate.getTime() / 1000);
     const toTs = Math.floor(toDate.getTime() / 1000);
 
-    // 1) Payouts whose arrival_date falls in the range (paged). Stripe wants
-    //    epoch seconds for the gt/lt filters, which fromTs/toTs already are.
-    let payouts = [];
+    // 1) Payouts. Display groups are the ones whose arrival_date falls in the
+    //    range, but the fetch is WIDER — everything arriving on/after the
+    //    lookback bound — because any payout, in range or not, may have settled
+    //    balance transactions created inside the window, and the Pending bucket
+    //    must exclude those (step 3). A payout always arrives after its
+    //    constituents were created, so payouts arriving before the lookback
+    //    bound can't claim window transactions and don't need fetching. Stripe
+    //    wants epoch seconds for the gt/lt filters, which fromTs/toTs are.
+    const btFromTs = fromTs - 14 * 24 * 60 * 60; // window lookback (pending + fallback pool)
+    let allPayouts = [];
     try {
       let after; let guard = 0;
       do {
         const page = await stripe.payouts.list({
-          arrival_date: { gte: fromTs, lte: toTs },
+          arrival_date: { gte: btFromTs },
           limit: 100,
           starting_after: after,
         });
-        payouts = payouts.concat(page.data);
+        allPayouts = allPayouts.concat(page.data);
         after = page.has_more ? page.data[page.data.length - 1].id : undefined;
         guard++;
         if (guard > 20) break;
       } while (after);
     } catch (e) { note('payouts.list', e); }
 
-    const payoutById = {};
-    payouts.forEach((p) => { payoutById[p.id] = p; });
+    const payouts = allPayouts.filter((p) =>
+      typeof p.arrival_date === 'number' && p.arrival_date >= fromTs && p.arrival_date <= toTs);
     const inRange = new Set(payouts.map((p) => p.id));
 
-    // 2) Group by the balance transaction's `payout` FIELD, not the per-payout
-    //    reconciliation report (balanceTransactions.list({payout})) — that report
-    //    is unsupported for auto-debit payouts and throws. Listing balance
-    //    transactions over the window and reading bt.payout works for normal
-    //    deposits AND auto-debits. The lower bound is widened so a payout
-    //    arriving early in the range still captures its slightly-earlier
-    //    constituents. The settlement entry (type 'payout') is the balancing
-    //    line, not a constituent.
-    const payoutBts = {};
+    // 2) Constituents per payout via Stripe's documented payout-reconciliation
+    //    listing: balanceTransactions.list({ payout }) returns exactly the
+    //    transactions that payout settled, plus the payout's own settlement
+    //    line (type 'payout' — the balancing entry, not a constituent). This is
+    //    the reliable path for standard automatic payouts, daily or weekly; the
+    //    bt.payout FIELD, by contrast, stopped being populated on charge/fee
+    //    balance transactions when the schedule switched to daily (2026-06-29),
+    //    which is why grouping by that field collapsed to zero itemization.
+    //    The listing DOES throw for auto-debit (negative-balance recovery)
+    //    payouts — only those; they fall back to window attribution in step 5.
+    //    Out-of-range payouts are listed too, solely to mark their constituents
+    //    as settled so Pending never shows them. In-range payouts go first so
+    //    the cap can never starve the display groups.
+    const payoutBts = {};            // in-range payout id -> constituent bts (source expanded)
     payouts.forEach((p) => { payoutBts[p.id] = []; });
-    let pendingBts = [];
+    const claimedBtIds = new Set();  // bt ids settled by ANY fetched payout
+    const listingFailed = new Set(); // payouts whose reconciliation listing threw
     const btById = {};
+    const LISTING_CAP = 200;
+    const listingOrder = [...payouts, ...allPayouts.filter((p) => !inRange.has(p.id))];
+    if (listingOrder.length > LISTING_CAP) {
+      console.warn(`[payouts] reconciliation listings capped at ${LISTING_CAP} of ${listingOrder.length} payouts; Pending may overstate for very wide ranges`);
+    }
+    await Promise.all(listingOrder.slice(0, LISTING_CAP).map(async (p) => {
+      try {
+        let after; let guard = 0;
+        do {
+          const page = await stripe.balanceTransactions.list({
+            payout: p.id,
+            limit: 100,
+            starting_after: after,
+            expand: ['data.source'],
+          });
+          page.data.forEach((bt) => {
+            btById[bt.id] = bt;
+            if (bt.type === 'payout') return;                 // settlement line
+            claimedBtIds.add(bt.id);
+            if (payoutBts[p.id]) payoutBts[p.id].push(bt);    // display only when in range
+          });
+          after = page.has_more ? page.data[page.data.length - 1].id : undefined;
+          guard++;
+          if (guard > 20) break;
+        } while (after);
+      } catch (e) {
+        // Expected for auto-debit payouts (step 5 falls back); logged as a
+        // warning — not into errors[] — so _debug.errors stays a signal for
+        // genuinely unexpected failures.
+        listingFailed.add(p.id);
+        console.warn('[payouts] reconciliation listing fell back for', p.id, '—', e && e.message);
+      }
+    }));
+
+    // 3) Balance-transaction window for the Pending bucket and the auto-debit
+    //    fallback pool. Pending = genuinely unsettled only: anything that
+    //    appears in some payout's reconciliation listing (claimedBtIds), or
+    //    that carries a bt.payout reference, is settled and must NEVER show
+    //    here. What remains is status 'pending' (funds not yet available) or
+    //    'available' but not yet swept by any payout.
+    let pendingBts = [];
     try {
-      const btFromTs = fromTs - 14 * 24 * 60 * 60;
       let after; let guard = 0;
       do {
         const page = await stripe.balanceTransactions.list({
@@ -343,11 +409,10 @@ router.get('/accounting/payouts', async (req, res) => {
           starting_after: after,
         });
         page.data.forEach((bt) => {
-          btById[bt.id] = bt;
-          if (bt.type === 'payout') return;                         // settlement line
-          if (bt.payout && inRange.has(bt.payout)) payoutBts[bt.payout].push(bt);
-          else if (!bt.payout) pendingBts.push(bt);                 // not yet settled
-          // else: settled by a payout outside this range — neither here nor pending
+          if (!btById[bt.id]) btById[bt.id] = bt;             // keep expanded copies
+          if (bt.type === 'payout') return;                   // settlement line
+          if (bt.payout || claimedBtIds.has(bt.id)) return;   // settled by some payout
+          pendingBts.push(bt);
         });
         after = page.has_more ? page.data[page.data.length - 1].id : undefined;
         guard++;
@@ -355,47 +420,72 @@ router.get('/accounting/payouts', async (req, res) => {
       } while (after);
     } catch (e) { note('balanceTransactions.list window', e); }
 
-    // 3) Authoritative signed bank movement per payout, from the payout's own
+    // 4) Authoritative signed bank movement per payout, from the payout's own
     //    settlement balance transaction. A bt's `amount` is the change to the
     //    Stripe balance; the bank sees the opposite, so bank = -pbt.amount:
     //    a normal payout lowers the Stripe balance (pbt.amount < 0) => money to
     //    bank (+); an auto-debit raises it (pbt.amount > 0) => money from bank (−).
     //    Retrieving a single bt is supported even for auto-debits (only the list
-    //    report isn't). Reuse btById where the settlement bt is already in window.
+    //    report isn't). Reuse btById where the settlement bt is already known.
+    //    Out-of-range payouts whose listing failed need this too — their bank
+    //    amount anchors the exact-sum guard when the fallback pass (step 6)
+    //    pulls their recovered transactions out of Pending.
     const payoutBankCents = {};
     {
-      const needPbt = payouts.filter((p) => p.balance_transaction && !btById[p.balance_transaction]);
+      const bankScope = [...payouts, ...allPayouts.filter((p) => !inRange.has(p.id) && listingFailed.has(p.id))];
+      const needPbt = bankScope.filter((p) => p.balance_transaction && !btById[p.balance_transaction]);
       await Promise.all(needPbt.slice(0, 100).map(async (p) => {
         try { btById[p.balance_transaction] = await stripe.balanceTransactions.retrieve(p.balance_transaction); }
         catch (e) { note('balanceTransactions.retrieve ' + p.balance_transaction, e); }
       }));
-      payouts.forEach((p) => {
+      bankScope.forEach((p) => {
         const pbt = p.balance_transaction ? btById[p.balance_transaction] : null;
         if (pbt && typeof pbt.amount === 'number') payoutBankCents[p.id] = -pbt.amount;
       });
     }
 
-    // 4) Enrichment via bounded retrieves (no expand). Each balance transaction's
-    //    `source` is just an id string here: charge/payment -> the charge id;
-    //    refund -> the refund id (retrieved to find its originating charge). Then
-    //    each charge is retrieved once for its auth code, customer, and a
-    //    description. Amounts never depend on any of this, so failures here only
+    // 5) Enrichment. Reconciliation-listed bts arrive with `source` expanded
+    //    (the charge or refund object); window bts carry only the id string.
+    //    Seed what the expanded objects give us (customer, description,
+    //    sometimes the auth code), then retrieve — bounded — only what's still
+    //    missing. Auth codes are only definitive on a retrieved charge
+    //    (list-returned charge objects often omit payment_method_details.card
+    //    .authorization_code), so any charge without a seeded code is
+    //    retrieved. Amounts never depend on any of this, so failures here only
     //    leave a row less-labeled, never wrong.
     const allBts = [...Object.values(payoutBts).reduce((a, b) => a.concat(b), []), ...pendingBts];
     const srcIdOf = (bt) => (typeof bt.source === 'string' ? bt.source : (bt.source && bt.source.id)) || null;
     const refundIds = new Set();
     const chargeIds = new Set();
+    const authByChargeId = {};
+    const chargeCustomerId = {};
+    const chargeDescById = {};
+    const refundToCharge = {};    // refund id -> originating charge id
     allBts.forEach((bt) => {
       const sid = srcIdOf(bt);
       if (!sid) return;
-      if (bt.type === 'charge' || bt.type === 'payment') chargeIds.add(sid);
-      else if (bt.type === 'refund' || bt.type === 'payment_refund') refundIds.add(sid);
+      const src = (bt.source && typeof bt.source === 'object') ? bt.source : null;
+      if (bt.type === 'charge' || bt.type === 'payment') {
+        chargeIds.add(sid);
+        if (src && src.object === 'charge') {
+          const code = authCodeOf(src);
+          if (code) authByChargeId[sid] = code;
+          const custId = typeof src.customer === 'string' ? src.customer : (src.customer && src.customer.id);
+          if (custId) chargeCustomerId[sid] = custId;
+          chargeDescById[sid] = chargeDescription(src);
+        }
+      } else if (bt.type === 'refund' || bt.type === 'payment_refund') {
+        refundIds.add(sid);
+        if (src && src.object === 'refund') {
+          const cid = typeof src.charge === 'string' ? src.charge : (src.charge && src.charge.id);
+          if (cid) { refundToCharge[sid] = cid; chargeIds.add(cid); }
+        }
+      }
     });
 
     const RETRIEVE_CAP = 300;
-    // refund id -> originating charge id
-    const refundToCharge = {};
-    await Promise.all([...refundIds].slice(0, RETRIEVE_CAP).map(async (rid) => {
+    // Refunds not already resolved via expansion -> originating charge id
+    await Promise.all([...refundIds].filter((rid) => !refundToCharge[rid]).slice(0, RETRIEVE_CAP).map(async (rid) => {
       try {
         const rf = await stripe.refunds.retrieve(rid);
         const cid = typeof rf.charge === 'string' ? rf.charge : (rf.charge && rf.charge.id);
@@ -403,11 +493,9 @@ router.get('/accounting/payouts', async (req, res) => {
       } catch (e) { note('refunds.retrieve ' + rid, e); }
     }));
 
-    // charge id -> auth code / customer id / description
-    const authByChargeId = {};
-    const chargeCustomerId = {};
-    const chargeDescById = {};
-    await Promise.all([...chargeIds].slice(0, RETRIEVE_CAP).map(async (cid) => {
+    // Charges without a definitive auth code yet -> retrieve fills code,
+    // customer, and description in one call.
+    await Promise.all([...chargeIds].filter((cid) => !(cid in authByChargeId)).slice(0, RETRIEVE_CAP).map(async (cid) => {
       try {
         const ch = await stripe.charges.retrieve(cid);
         const code = authCodeOf(ch);
@@ -466,19 +554,49 @@ router.get('/accounting/payouts', async (req, res) => {
       };
     }
 
-    // 5) Assemble payout groups. Normal deposits itemize via bt.payout. Auto-debits
-    //    are special: Stripe does NOT set bt.payout on the balance transactions an
-    //    auto-debit recovers, so they come back with 0 constituents. For an
-    //    unconstituted DEBIT, attribute the not-yet-paid-out transactions whose
-    //    available_on is on/before the payout's arrival — but ONLY if they sum
-    //    EXACTLY to the payout's bank amount. If they don't, keep the honest note
-    //    and leave them in Pending (never force a wrong/partial attribution).
+    // 6) Fallback window attribution, then group assembly. Normal payouts
+    //    (daily or weekly deposits) itemize straight from their reconciliation
+    //    listing. Auto-debits are special: the listing throws for them and
+    //    Stripe does NOT set bt.payout on the transactions an auto-debit
+    //    recovers. For a payout whose listing failed (or any unconstituted
+    //    debit), attribute the not-yet-paid-out transactions whose available_on
+    //    is on/before the payout's arrival — but ONLY if they sum EXACTLY to
+    //    the payout's bank amount. If they don't, keep the honest note and
+    //    leave them in Pending (never force a wrong/partial attribution).
+    //    The attribution pass runs over out-of-range fallback payouts too —
+    //    not to display them, but so an auto-debit just outside the range still
+    //    pulls its recovered transactions OUT of Pending. Oldest claims first.
     const nowTs = Math.floor(today.getTime() / 1000);
     let pendingPool = pendingBts.slice();
-    const procOrder = payouts.slice().sort((a, b) => (a.arrival_date || 0) - (b.arrival_date || 0)); // oldest claims first
+    const attributedById = {};    // payout id -> bts claimed by window attribution
+    const fallbackOrder = allPayouts
+      .filter((p) => listingFailed.has(p.id) || (inRange.has(p.id) && (payoutBts[p.id] || []).length === 0))
+      .sort((a, b) => (a.arrival_date || 0) - (b.arrival_date || 0));
+    for (const p of fallbackOrder) {
+      const bankAmount = typeof payoutBankCents[p.id] === 'number'
+        ? payoutBankCents[p.id]
+        : Math.abs(typeof p.amount === 'number' ? p.amount : 0); // same derivation assembly uses for zero rows
+      const direction = bankAmount < 0 ? 'debit' : 'deposit';
+      if (direction !== 'debit' && !listingFailed.has(p.id)) continue;
+      const arrivalTs = typeof p.arrival_date === 'number' ? p.arrival_date : nowTs;
+      const candidates = pendingPool
+        .filter((bt) => typeof bt.available_on === 'number' && bt.available_on <= arrivalTs)
+        .sort((a, b) => (a.created - b.created) || (a.available_on - b.available_on));
+      const candNet = candidates.reduce((s, bt) => s + (typeof bt.net === 'number' ? bt.net : 0), 0);
+      if (candidates.length && candNet === bankAmount) {
+        // Exact reconciliation: attribute to the payout and pull from Pending.
+        const claimed = new Set(candidates.map((b) => b.id));
+        pendingPool = pendingPool.filter((b) => !claimed.has(b.id));
+        attributedById[p.id] = candidates;
+      }
+    }
+
+    const procOrder = payouts.slice().sort((a, b) => (a.arrival_date || 0) - (b.arrival_date || 0));
     const groupById = {};
+    const viaById = {};   // 'listing' | 'window-attribution' | 'none' (debug)
     for (const p of procOrder) {
       let rows = (payoutBts[p.id] || []).map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+      let via = rows.length ? 'listing' : 'none';
       // Signed bank amount from the payout's own settlement bt (authoritative for
       // deposits AND auto-debits); fall back to |amount| signed by net.
       let bankAmount = payoutBankCents[p.id];
@@ -491,26 +609,25 @@ router.get('/accounting/payouts', async (req, res) => {
       let unconstituted = rows.length === 0;
       let groupNote = null;
 
-      if (unconstituted && direction === 'debit') {
-        const arrivalTs = typeof p.arrival_date === 'number' ? p.arrival_date : nowTs;
-        const candidates = pendingPool
-          .filter((bt) => typeof bt.available_on === 'number' && bt.available_on <= arrivalTs)
-          .sort((a, b) => (a.created - b.created) || (a.available_on - b.available_on));
-        const candNet = candidates.reduce((s, bt) => s + (typeof bt.net === 'number' ? bt.net : 0), 0);
-        if (candidates.length && candNet === bankAmount) {
-          // Exact reconciliation: itemize under the payout and pull from Pending.
-          const claimed = new Set(candidates.map((b) => b.id));
-          pendingPool = pendingPool.filter((b) => !claimed.has(b.id));
-          rows = candidates.map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
-          unconstituted = false;
-        } else {
-          groupNote = 'Auto-debit recovering a prior negative balance. Its itemized transactions settled in an earlier period and aren’t listed here.';
-        }
+      if (unconstituted && attributedById[p.id]) {
+        rows = attributedById[p.id].map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
+        unconstituted = false;
+        via = 'window-attribution';
+      } else if (unconstituted && direction === 'debit') {
+        groupNote = 'Auto-debit recovering a prior negative balance. Its itemized transactions settled in an earlier period and aren’t listed here.';
+      } else if (unconstituted && listingFailed.has(p.id)) {
+        groupNote = 'Stripe did not return an itemized list for this payout. Its total is still exact; review the payout in the Stripe dashboard for detail.';
       } else if (unconstituted) {
         groupNote = 'No itemized transactions reference this payout in the selected range.';
       }
 
       const transactionsNet = rows.reduce((s, r) => s + r.net_cents, 0);
+      const ties = rows.length > 0 && transactionsNet === bankAmount;
+      if (rows.length > 0 && !ties && !groupNote) {
+        // Show what we have honestly rather than hiding rows that don't sum.
+        groupNote = 'Itemized transactions don’t fully account for the bank amount — Stripe returned an incomplete list for this payout. The rows shown are individually correct.';
+      }
+      viaById[p.id] = via;
       groupById[p.id] = {
         id: p.id,
         arrival_date: p.arrival_date ? new Date(p.arrival_date * 1000).toISOString().slice(0, 10) : '',
@@ -518,7 +635,7 @@ router.get('/accounting/payouts', async (req, res) => {
         direction,
         bank_amount_cents: bankAmount,            // signed: + deposit, − debit
         transactions_net_cents: transactionsNet,  // signed sum of the rows
-        ties: rows.length > 0 ? transactionsNet === bankAmount : false,
+        ties,
         unconstituted,
         note: groupNote,
         gross_cents: rows.reduce((s, r) => s + r.gross_cents, 0),
@@ -529,7 +646,7 @@ router.get('/accounting/payouts', async (req, res) => {
     }
     const payoutGroups = payouts.map((p) => groupById[p.id]).sort((a, b) => b.arrival_date.localeCompare(a.arrival_date));
 
-    // 6) Pending group (after window attribution removed any settled items).
+    // 7) Pending group (after window attribution removed any settled items).
     const pendingRows = pendingPool.map(rowFromBt).sort((a, b) => a.date.localeCompare(b.date));
     const pendingNet = pendingRows.reduce((s, r) => s + r.net_cents, 0);
 
@@ -553,13 +670,16 @@ router.get('/accounting/payouts', async (req, res) => {
       // can confirm grouping/direction without Render log access.
       ...(debug ? { _debug: {
         errors,
-        payouts_fetched: payouts.length,
+        payouts_in_range: payouts.length,
+        payouts_fetched_total: allPayouts.length,   // includes out-of-range claim-marking payouts
+        claimed_bt_count: claimedBtIds.size,
+        listing_fallbacks: [...listingFailed],      // payouts whose reconciliation listing threw (expected: auto-debits)
         pending_fetched: pendingBts.length,
         pending_after_attribution: pendingRows.length,
         payouts_seen: payoutGroups.map((g) => ({
           id: g.id, date: g.arrival_date, dir: g.direction, amount: g.bank_amount_cents,
           txns: g.count, net: g.transactions_net_cents, ties: g.ties, unconstituted: g.unconstituted,
-          bt_payout_grouped: (payoutBts[g.id] || []).length, // raw bt.payout matches before window attribution
+          via: viaById[g.id],                       // 'listing' | 'window-attribution' | 'none'
         })),
       } } : {}),
     });
