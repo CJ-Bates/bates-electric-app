@@ -43,6 +43,16 @@ const BRAND = {
   seLogoUrl: process.env.GENERATOR_SE_LOGO_URL || 'https://app.bates-electric.com/se-bates-electric-logo.jpg',
 };
 
+// Customer self-serve dashboard — the canonical URL used by every customer
+// touchpoint (welcome, receipt, visit-complete, shared footer). No password:
+// customers sign in with their email. my.bates-electric.com fronts the same
+// page as https://app.bates-electric.com/my.html — if the my. domain ever
+// lapses, app URLs stay valid. (my.bates-electric.com verified resolving
+// 2026-07-07.)
+const DASHBOARD_URL = 'https://my.bates-electric.com';
+// Bare-host display form for quiet inline mentions in body copy and the footer.
+const DASHBOARD_DISPLAY = 'my.bates-electric.com';
+
 // Resolve the per-customer brand from an install-address state. Florida =>
 // "S.E. Bates Electric" + its logo (if configured); everywhere else the default.
 function brandFor(state) {
@@ -215,6 +225,7 @@ function renderFooter(brand) {
     `<tr><td align="center" style="background:${BRAND.bgFooter};padding:22px 28px;border-top:1px solid ${BRAND.borderLight};">` +
       `<div style="font-family:${FONT_STACK};font-size:13px;color:${BRAND.textBody};font-weight:600;">${escHtml(company)}, Inc.</div>` +
       `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Questions? Call <a href="tel:${BRAND.phone.replace(/[^0-9+]/g, '')}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.phone)}</a> or email <a href="mailto:${BRAND.email}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.email)}</a></div>` +
+      `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Manage your plan: <a href="${DASHBOARD_URL}" style="color:${BRAND.textMuted};text-decoration:underline;">${DASHBOARD_DISPLAY}</a></div>` +
     `</td></tr>`
   );
 }
@@ -348,6 +359,10 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
 
     (showPaid ? `<p style="${P}margin-top:18px;"><strong style="color:${BRAND.navy};">Payment received:</strong> ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + escHtml(paidDateStr) : ''}. A receipt has been emailed to you for your records.</p>` : '') +
 
+    `<h3 style="${H3}">Your online dashboard</h3>` +
+    `<p style="${P}">See your visits, technician notes, plan, and receipts anytime &mdash; no password, just your email.</p>` +
+    ctaButton('Open my dashboard', DASHBOARD_URL) +
+
     `<p style="${P}margin-top:28px;">Have questions, need to reschedule, or want to update your card? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
   const html = renderBrandedEmail({
@@ -371,6 +386,9 @@ function buildWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annualPri
     `  Annual billing: ${fmtMoney(annualPriceCents)}/year\n` +
     (fleetMonitoring ? `  Add-on: Fleet Monitoring (Mobile Link)\n` : '') +
     (showPaid ? `\nPayment received: ${fmtMoney(paidAmountCents)}${paidDateStr ? ' on ' + paidDateStr : ''}. A receipt has been emailed to you for your records.\n` : '') +
+    `\nYOUR ONLINE DASHBOARD\n` +
+    `  See your visits, technician notes, plan, and receipts anytime -- no password, just your email.\n` +
+    `  ${DASHBOARD_URL}\n` +
     `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- ${company}`;
 
@@ -500,9 +518,17 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     ? `<p style="${P}margin-top:20px;">Your next ${escHtml(planText)}service is tentatively scheduled for <strong>${escHtml(fmtFriendlyDate(nextVisitDate))}</strong>. We&rsquo;ll confirm the exact date with you closer to the time.</p>`
     : '';
 
+  // The dashboard hook — a completed visit is the moment the dashboard has
+  // something new to show (this visit's notes and photos), so the pitch +
+  // button go right after the notes.
+  const dashboardSection =
+    `<p style="${P}margin-top:20px;">See your full visit history and photos on your online dashboard &mdash; no password, just your email.</p>` +
+    ctaButton('Open my dashboard', DASHBOARD_URL);
+
   const body =
     `<p style="${P}">Your generator service visit on <strong>${escHtml(completedStr)}</strong> is complete. Thanks for being a ${escHtml(company)} Generator Care customer.</p>` +
     notesSection +
+    dashboardSection +
     nextVisitSection +
     `<p style="${P_LAST}margin-top:20px;">Questions about the work, or noticed something we missed? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
@@ -524,6 +550,7 @@ function buildVisitCompletedEmail({ customer, completedDate, nextVisitDate, plan
     `Hi ${name},\n\n` +
     `Your generator service visit on ${completedStr} is complete. Thanks for being a ${company} Generator Care customer.\n` +
     notesText +
+    `\nSee your full visit history and photos: ${DASHBOARD_URL} (no password -- just your email)\n` +
     nextVisitText +
     `\nQuestions? Call us at ${BRAND.phone} or email ${BRAND.email}.\n\n` +
     `-- ${company}`;
@@ -679,7 +706,8 @@ function buildReceiptEmail({ customer, companyState, amountCents, paidDate, card
   const body =
     `<p style="${P}">Thanks for your payment &mdash; this is your receipt from ${escHtml(company)} for your Generator Care account.</p>` +
     `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;margin-top:8px;">${rowsHtml}</table>` +
-    `<p style="${P_LAST}margin-top:24px;">Keep this for your records. Questions about a charge? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
+    `<p style="${P}margin-top:24px;">Keep this for your records. Questions about a charge? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>` +
+    `<p style="margin:16px 0 0;font-family:${FONT_STACK};font-size:13px;line-height:1.6;color:${BRAND.textMuted};">View your account anytime: <a href="${DASHBOARD_URL}" style="color:${BRAND.textMuted};text-decoration:underline;">${DASHBOARD_DISPLAY}</a> &mdash; no password, just your email.</p>`;
 
   const html = renderBrandedEmail({
     heading: 'Your payment receipt',
@@ -707,6 +735,7 @@ function buildReceiptEmail({ customer, companyState, amountCents, paidDate, card
     `RECEIPT\n` +
     textRows.map(([k, v]) => `  ${k}: ${v}`).join('\n') + '\n\n' +
     `Keep this for your records. Questions about a charge? Call ${BRAND.phone} or email ${BRAND.email}.\n\n` +
+    `View your account anytime: ${DASHBOARD_URL} -- no password, just your email.\n\n` +
     `-- ${company}`;
 
   return { subject: `Your payment receipt from ${company}`, html, text };
@@ -779,6 +808,7 @@ function buildRefundReceiptEmail({ customer, companyState, amountCents, refundDa
 module.exports = {
   // Brand constants (single source of truth)
   BRAND,
+  DASHBOARD_URL,
 
   // Back-compat exports (derived from BRAND)
   COMPANY_PHONE,
