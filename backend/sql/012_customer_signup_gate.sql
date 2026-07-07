@@ -15,12 +15,12 @@
 -- email on file for an ACTIVE (non-canceled) Generator Care customer passes;
 -- everything else raises the same rejection as before.
 --
--- NOTE: this file was reconstructed from the repo's own gate functions
--- (bates_role_for_email in 001, handle_new_user in 011) because the live
--- session record wasn't available when it was committed. To confirm it matches
--- what's live, run in the SQL Editor:
---   select pg_get_functiondef('public.enforce_signup_domain'::regprocedure);
--- and replace this definition if it differs.
+-- NOTE: this file was originally reconstructed from the repo's own gate
+-- functions because the live session record wasn't available. On 2026-07-07
+-- the live definition was dumped (pg_get_functiondef, during the 014 rollout)
+-- and DIFFERED from the reconstruction (single lower() into email_lower +
+-- `like`, and a different rejection message); the body below is the verified
+-- live text. Superseded by 015, which makes the office branch invite-only.
 --
 -- Related config change the same day (no SQL): Supabase Auth SMTP was switched
 -- from the dead SendGrid credentials to Brevo, so auth emails (magic links)
@@ -30,28 +30,27 @@ create or replace function public.enforce_signup_domain()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
-as $$
+set search_path to 'public'
+as $function$
+declare
+  email_lower text := lower(new.email);
 begin
-  -- Staff patterns pass unchanged (same two patterns as bates_role_for_email).
-  if new.email ilike '%@bates-electric.com'
-     or new.email ilike '%.bateselectric@gmail.com' then
+  if email_lower like '%@bates-electric.com'
+     or email_lower like '%.bateselectric@gmail.com' then
     return new;
   end if;
 
-  -- Generator Care customers: an email the office has on file with at least
-  -- one non-canceled subscription (same match as handle_new_user's customer
-  -- branch in 011).
+  -- Customer portal (011): active Generator Care customers may sign in.
   if exists (
     select 1
     from public.generator_customers c
     join public.generator_subscriptions s on s.customer_id = c.id
-    where lower(c.email) = lower(new.email)
+    where lower(c.email) = email_lower
       and s.status <> 'canceled'
   ) then
     return new;
   end if;
 
-  raise exception 'Email % is not a recognized Bates Electric address', new.email;
+  raise exception 'Sign-ups are restricted to @bates-electric.com or *.bateselectric@gmail.com email addresses. Contact your administrator for access.';
 end;
-$$;
+$function$;

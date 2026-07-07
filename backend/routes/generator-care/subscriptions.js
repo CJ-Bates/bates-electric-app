@@ -5,6 +5,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
+const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const catalog = require('../../lib/generator-catalog');
 const { sendReceiptEmail } = require('../../lib/receipts');
@@ -358,7 +359,7 @@ function computePlanBilling(subscription) {
 // current price through the period end, then starts the new price/interval. If
 // Fleet Monitoring is attached, its price is swapped to the matching cadence too
 // (Stripe can't mix billing intervals in one subscription).
-router.post('/subscriptions/:id/change-plan', async (req, res) => {
+router.post('/subscriptions/:id/change-plan', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { new_plan } = req.body || {};
@@ -437,7 +438,7 @@ router.post('/subscriptions/:id/change-plan', async (req, res) => {
 // POST /api/generator-care/subscriptions/:id/revert-plan-change
 // Cancels a pending (not-yet-effective) plan change by releasing the schedule,
 // returning the subscription to its current plan/price. Office-gated.
-router.post('/subscriptions/:id/revert-plan-change', async (req, res) => {
+router.post('/subscriptions/:id/revert-plan-change', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: sub, error: subErr } = await supabaseAdmin
@@ -591,7 +592,7 @@ router.get('/subscriptions/:id/fleet-preview', async (req, res) => {
 // invoicing the proration NOW (charges the card on file) and aligning Fleet to the
 // existing renewal date. Body: { customer_id?, proration_date? } — proration_date
 // is echoed from fleet-preview so the charge equals the previewed amount exactly.
-router.post('/subscriptions/:id/add-fleet', async (req, res) => {
+router.post('/subscriptions/:id/add-fleet', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { customer_id, proration_date } = req.body || {};
@@ -656,7 +657,7 @@ router.post('/subscriptions/:id/add-fleet', async (req, res) => {
 // no refund — fleet stays active through the paid period, then drops off). Mirrors
 // the change-plan "at renewal" pattern; undo via revert-plan-change (release).
 // Body: { customer_id? } (IDOR guard).
-router.post('/subscriptions/:id/remove-fleet', async (req, res) => {
+router.post('/subscriptions/:id/remove-fleet', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { customer_id } = req.body || {};
@@ -817,7 +818,7 @@ router.post('/subscriptions/:id/tier-change-preview', async (req, res) => {
 // with proration_behavior:'none' (no time-proration line). Cadence + Fleet are
 // unchanged. Persists gen_class. The charged amount equals the catalog delta the
 // preview showed.
-router.post('/subscriptions/:id/tier-change', async (req, res) => {
+router.post('/subscriptions/:id/tier-change', requirePermission('billing_actions'), async (req, res) => {
   try {
     const loaded = await loadForTierChange(req, res);
     if (!loaded) return;
@@ -954,7 +955,7 @@ router.post('/subscriptions/:id/resend-receipt', async (req, res) => {
 // IDOR: pass customer_id to require the sub to belong to that customer.
 // Deliberately whitelisted — gen_class, plan, price, and fleet are NOT editable
 // here (they determine billing), so passing them has no effect.
-router.patch('/subscriptions/:id', async (req, res) => {
+router.patch('/subscriptions/:id', requirePermission('customer_edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const { next_visit_due, status, notes, gen_model, gen_serial, customer_id } = req.body || {};
@@ -1002,7 +1003,7 @@ router.patch('/subscriptions/:id', async (req, res) => {
 // resubscribes. Editing install_state to FL switches the customer to the
 // "S.E. Bates Electric" DBA branding on future emails/receipts (companyName()).
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-router.patch('/customers/:id', async (req, res) => {
+router.patch('/customers/:id', requirePermission('customer_edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
@@ -1080,7 +1081,7 @@ router.patch('/customers/:id', async (req, res) => {
 // Cancel subscription at the end of the current billing period.
 // Customer keeps service through paid-through date; Stripe stops auto-renewal.
 // DB marks 'canceled' with optional reason in notes.
-router.post('/subscriptions/:id/cancel', async (req, res) => {
+router.post('/subscriptions/:id/cancel', requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body || {};

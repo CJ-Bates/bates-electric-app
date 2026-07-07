@@ -3,6 +3,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
+const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin, supabaseAnon } = require('../../lib/supabase');
 
 const router = express.Router();
@@ -27,7 +28,7 @@ function resolveLinkOrigin(req) {
 
 // GET /api/generator-care/techs — list tech accounts (for the assign picker +
 // the manage-techs screen). Office-gated.
-router.get('/techs', async (req, res) => {
+router.get('/techs', requirePermission('tech_manage'), async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('profiles')
@@ -46,7 +47,7 @@ router.get('/techs', async (req, res) => {
 // Creates the tech's auth account (role assigned by the DB trigger from the
 // email domain) and emails them a set-password link. The office never sets the
 // password. Office-gated.
-router.post('/techs', async (req, res) => {
+router.post('/techs', requirePermission('tech_manage'), async (req, res) => {
   try {
     const name = (req.body && req.body.name || '').trim();
     const email = (req.body && req.body.email || '').trim().toLowerCase();
@@ -93,7 +94,7 @@ router.post('/techs', async (req, res) => {
 });
 
 // POST /api/generator-care/techs/:id/resend-invite — resend the set-password link.
-router.post('/techs/:id/resend-invite', async (req, res) => {
+router.post('/techs/:id/resend-invite', requirePermission('tech_manage'), async (req, res) => {
   try {
     const { data: tech, error } = await supabaseAdmin
       .from('profiles')
@@ -113,7 +114,7 @@ router.post('/techs/:id/resend-invite', async (req, res) => {
 });
 
 // PATCH /api/generator-care/techs/:id  { active }  — deactivate / reactivate.
-router.patch('/techs/:id', async (req, res) => {
+router.patch('/techs/:id', requirePermission('tech_manage'), async (req, res) => {
   try {
     const active = req.body && req.body.active;
     if (typeof active !== 'boolean') return res.status(400).json({ error: 'active (boolean) required' });

@@ -4,6 +4,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
+const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { completeServiceVisit } = require('../../lib/completeVisit');
 const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
@@ -94,7 +95,7 @@ router.post('/visits/:id/schedule', async (req, res) => {
 
 // POST /api/generator-care/visits/:id/assign  { assigned_tech_id | null }
 // Dispatch a tech to a visit (or clear the assignment). Office-gated; logs who/when.
-router.post('/visits/:id/assign', async (req, res) => {
+router.post('/visits/:id/assign', requirePermission('tech_manage'), async (req, res) => {
   try {
     const visitId = req.params.id;
     const techId = (req.body && req.body.assigned_tech_id) || null;
