@@ -103,11 +103,31 @@ router.get('/subscriptions/:id', async (req, res) => {
     if (visitsR.error) throw visitsR.error;
     if (addonsR.error) throw addonsR.error;
     if (adhocR.error) throw adhocR.error;
+
+    // Pending customer appointment preferences for these visits (customer
+    // dashboard v2). Graceful no-op when the 016 migration isn't applied yet.
+    let visitPreferences = [];
+    try {
+      const visitIds = (visitsR.data || []).map((v) => v.id);
+      if (visitIds.length) {
+        const { data: prefRows, error: prefErr } = await supabaseAdmin
+          .from('generator_visit_preferences')
+          .select('id, visit_id, slots, note, created_at')
+          .in('visit_id', visitIds)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false });
+        if (!prefErr && prefRows) visitPreferences = prefRows;
+      }
+    } catch (e) {
+      console.log('[generator-care] visit preferences unavailable (migration pending?):', e && e.message);
+    }
+
     res.json({
       subscription: subR.data,
       visits: visitsR.data || [],
       pending_addons: addonsR.data || [],
       adhoc_charges: adhocR.data || [],
+      visit_preferences: visitPreferences,
     });
   } catch (err) {
     console.error('[generator-care] subscription detail error:', err);

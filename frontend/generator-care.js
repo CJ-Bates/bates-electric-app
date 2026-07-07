@@ -614,10 +614,38 @@
       </div>`;
   }
 
+  // Customer-proposed appointment windows (dashboard v2). AM/PM map to the
+  // booking defaults Amy would key in anyway; she can nudge the minutes before
+  // booking. Booking marks the pending preferences used (server-side).
+  const PREF_WINDOW_LABELS = { AM: 'Morning (8–12)', PM: 'Afternoon (12–4)' };
+  const PREF_WINDOW_TIMES = { AM: '09:00', PM: '13:00' };
+
+  function renderVisitPrefsBox(pref) {
+    if (!pref || !Array.isArray(pref.slots) || !pref.slots.length) return '';
+    const slotRows = pref.slots.map((s, i) => {
+      const label = `${fmtDate(s.date)} · ${PREF_WINDOW_LABELS[s.window] || s.window || ''}`;
+      return `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+        <span style="font-size:0.85rem;">${i + 1}) ${escapeHtml(label)}</span>
+        <button class="btn btn-secondary btn-sm" data-use-slot data-date="${escapeHtml(s.date)}" data-window="${escapeHtml(s.window || 'AM')}" style="padding:2px 10px;font-size:0.75rem;">Use this slot</button>
+      </div>`;
+    }).join('');
+    return `<div style="margin-top:8px;background:var(--info-bg);border:1px solid color-mix(in srgb, var(--info) 35%, transparent);border-radius:6px;padding:8px 10px;">
+      <div class="gc-meta-label" style="color:var(--info);">Customer prefers${pref.created_at ? ` (sent ${fmtDate(String(pref.created_at).slice(0, 10))})` : ''}:</div>
+      ${slotRows}
+      ${pref.note ? `<div class="gc-meta-label" style="margin-top:6px;">Note: ${escapeHtml(pref.note)}</div>` : ''}
+      <div class="gc-meta-label" style="margin-top:6px;opacity:0.8;">"Use this slot" fills the booking input below — booking sends the customer their confirmation email and clears this.</div>
+    </div>`;
+  }
+
   // Three clear states per visit: Needs scheduling (due, not booked) / Scheduled
   // (booked appointment date+time) / Completed. The plan-driven DUE date stays
   // separate and is shown as context.
-  function renderVisitsCard(visits, subscription) {
+  function renderVisitsCard(visits, subscription, visitPreferences) {
+    const prefByVisit = {};
+    (visitPreferences || []).forEach((p) => {
+      // Rows arrive newest-first; keep the newest pending row per visit.
+      if (!prefByVisit[p.visit_id]) prefByVisit[p.visit_id] = p;
+    });
     const dueCtx = (v) => {
       const d = (subscription && subscription.next_visit_due) || v.scheduled_date || null;
       return d ? fmtDate(d) : null;
@@ -654,6 +682,7 @@
               <select class="gc-assign-select" data-assign-visit="${v.id}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;">${techOptions(v.assigned_tech_id)}</select>
             </label>
           </div>
+          ${renderVisitPrefsBox(prefByVisit[v.id])}
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
             <input type="datetime-local" class="gc-appt-input" data-visit="${v.id}" value="${localVal}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;" />
             <button class="btn btn-secondary btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
@@ -904,7 +933,7 @@
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { subscription, visits, pending_addons, adhoc_charges = [] } = await r.json();
+      const { subscription, visits, pending_addons, adhoc_charges = [], visit_preferences = [] } = await r.json();
       const c = subscription.customer || {};
       title.textContent = fmtNameCase(c.name) || 'Customer';
       const isCanceled = subscription.status === 'canceled';
@@ -922,7 +951,7 @@
         renderContactCard(c) +
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons) +
-        renderVisitsCard(visits, subscription) +
+        renderVisitsCard(visits, subscription, visit_preferences) +
         renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) +
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
@@ -936,6 +965,17 @@
       });
       body.querySelectorAll('[data-schedule-visit]').forEach(btn => {
         btn.addEventListener('click', () => scheduleAppointment(btn.dataset.scheduleVisit, id));
+      });
+      // One-tap "use this slot": fill the visit's booking input from a
+      // customer-proposed window (AM -> 09:00, PM -> 13:00), then Amy books
+      // with the existing button.
+      body.querySelectorAll('[data-use-slot]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const input = btn.closest('.gc-card-row') && btn.closest('.gc-card-row').querySelector('.gc-appt-input');
+          if (!input) return;
+          input.value = `${btn.dataset.date}T${PREF_WINDOW_TIMES[btn.dataset.window] || '09:00'}`;
+          input.focus();
+        });
       });
       body.querySelectorAll('[data-assign-visit]').forEach(sel => {
         sel.addEventListener('change', () => assignVisit(sel.dataset.assignVisit, sel.value || null, id));
@@ -1050,18 +1090,15 @@
           holder.innerHTML =
             `<div class="gc-meta-label" style="margin-bottom:4px;">Photos (${photos.length})</div>` +
             `<div style="display:flex;flex-wrap:wrap;gap:6px;">` +
-            photos.map((p) => `<img src="${escapeHtml(p.url)}" alt="Visit photo" data-photo-full="${escapeHtml(p.url)}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:pointer;" />`).join('') +
+            photos.map((p, i) => `<img src="${escapeHtml(p.url)}" alt="Visit photo" data-photo-idx="${i}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:pointer;" />`).join('') +
             `</div>`;
-          holder.querySelectorAll('[data-photo-full]').forEach((img) => {
+          // Shared viewer (photo-lightbox.js) — same close/arrows/swipe/counter
+          // behavior the customer dashboard has, with arrows across THIS
+          // visit's photos.
+          const photoUrls = photos.map((p) => p.url);
+          holder.querySelectorAll('[data-photo-idx]').forEach((img) => {
             img.addEventListener('click', () => {
-              const overlay = document.createElement('div');
-              overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;background:rgba(19,31,63,0.55);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
-              overlay.innerHTML = `<img src="${escapeHtml(img.getAttribute('data-photo-full'))}" alt="Visit photo" style="max-width:90vw;max-height:85vh;border-radius:8px;" />`;
-              const closeLightbox = () => { document.removeEventListener('keydown', onLightboxKey); overlay.remove(); };
-              const onLightboxKey = (e) => { if (e.key === 'Escape') closeLightbox(); };
-              document.addEventListener('keydown', onLightboxKey);
-              overlay.addEventListener('click', closeLightbox); // click anywhere closes
-              document.body.appendChild(overlay);
+              window.BatesLightbox.open(photoUrls, parseInt(img.getAttribute('data-photo-idx'), 10) || 0);
             });
           });
         } catch (e) {

@@ -17,7 +17,7 @@ const {
   effectivePermissions,
   ALL_FLAGS,
 } = require('../middleware/permissions');
-const { sendEmail } = require('../lib/emails');
+const { sendEmail, DASHBOARD_URL } = require('../lib/emails');
 
 const router = express.Router();
 
@@ -381,12 +381,15 @@ router.post('/customers/:id/resend-signin', async (req, res) => {
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
     const firstName = (displayName || '').split(' ')[0] || 'there';
-    const portalUrl = 'https://my.bates-electric.com';
+    // Canonical dashboard URL lives in lib/emails.js (currently app./my until
+    // the my. TLS cert is verified live — see the constant's comment).
+    const portalUrl = DASHBOARD_URL;
+    const portalDisplay = portalUrl.replace(/^https?:\/\//, '');
     const html = `
       <p>Hi ${esc(firstName)},</p>
       <p>Here&rsquo;s how to sign in to your Generator Care customer portal:</p>
       <ol>
-        <li>Go to <a href="${portalUrl}">my.bates-electric.com</a></li>
+        <li>Go to <a href="${portalUrl}">${esc(portalDisplay)}</a></li>
         <li>Enter this email address: <strong>${esc(customer.email)}</strong></li>
         <li>We&rsquo;ll email you a secure sign-in link &mdash; click it and you&rsquo;re in. No password needed.</li>
       </ol>
