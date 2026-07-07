@@ -158,7 +158,7 @@
         if (data.refresh_token) store.setItem('bates.auth.refresh', data.refresh_token);
       }
       showStatus('status', 'Signed in. Loading your hub\u2026', 'success');
-      window.location.replace('home.html');
+      window.location.replace('/home');
     } catch (err) {
       showStatus('status', err.message || 'Unable to sign in right now. Try again.', 'error');
     } finally {

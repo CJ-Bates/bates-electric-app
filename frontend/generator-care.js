@@ -13,7 +13,7 @@
 
   const token = getToken();
   if (!token) {
-    window.location.replace('index.html');
+    window.location.replace('/');
     return;
   }
 
@@ -103,7 +103,7 @@
       const { profile } = await r.json();
       if (profile.role !== 'office') {
         showStatus('Access denied. Office role required.', 'error');
-        setTimeout(() => window.location.replace('home.html'), 1500);
+        setTimeout(() => window.location.replace('/home'), 1500);
         return;
       }
       currentUserEmail = profile.email || null;

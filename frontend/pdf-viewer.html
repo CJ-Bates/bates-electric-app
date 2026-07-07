@@ -9,7 +9,7 @@
     // what this page renders, and it's useless without a session anyway.
     try {
       if (!localStorage.getItem('bates.auth.token') && !sessionStorage.getItem('bates.auth.token')) {
-        location.replace('index.html');
+        location.replace('/');
       }
     } catch (e) {}
   </script>
@@ -149,7 +149,7 @@
       } else if (history.length > 1) {
         history.back();
       } else {
-        location.href = 'documents.html';
+        location.href = '/documents';
       }
     }
     backBtn.addEventListener('click', goBack);

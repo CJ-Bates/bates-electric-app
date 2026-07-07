@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v104';
+const CACHE = 'bates-shell-v105';
 const ASSETS = [
   './',
   './ui-dialogs.js',
@@ -56,6 +56,16 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+// Clean URLs: Netlify rewrites extensionless paths (/contacts) to their .html
+// files (frontend/_redirects), so the SW normalizes every page path to its
+// .html canonical form for cache keys. /contacts and /contacts.html hit the
+// SAME cache entry; ASSETS stays .html-canonical and the offline shell keeps
+// working no matter which URL form was navigated to.
+function canonicalPath(pathname) {
+  const p = pathname.replace(/\/+$/, '') || '/';
+  return p !== '/' && /^\/[a-z0-9-]+$/i.test(p) ? p + '.html' : p;
+}
+
 // Network-first for the app shell (HTML/CSS/JS) so updates propagate immediately.
 // Cache-first for everything else (images, fonts) for speed and offline support.
 self.addEventListener('fetch', (e) => {
@@ -64,14 +74,21 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
 
-  // Customer portal (my.html / my.js) is NOT part of the staff PWA shell:
-  // customers shouldn't get the staff app cached on their phones, and staff
-  // caches shouldn't serve stale portal code. Network-only — no caching.
-  if (/^\/my\.(html|js)$/i.test(url.pathname)) return;
+  const path = canonicalPath(url.pathname);
+
+  // Customer portal (my.html / my.js, incl. the /my pretty URL) is NOT part
+  // of the staff PWA shell: customers shouldn't get the staff app cached on
+  // their phones, and staff caches shouldn't serve stale portal code.
+  // Network-only — no caching.
+  if (/^\/my\.(html|js)$/i.test(path)) return;
+
+  // Cache key = the .html canonical URL; network fetch keeps the original
+  // request so Netlify's rewrite handles the pretty form.
+  const cacheKey = path === url.pathname ? request : url.origin + path;
 
   const isShell =
     request.mode === 'navigate' ||
-    /\.(html|css|js)$/i.test(url.pathname);
+    /\.(html|css|js)$/i.test(path);
 
   if (isShell) {
     // Network-first: always try fresh, fall back to cache when offline.
@@ -79,10 +96,10 @@ self.addEventListener('fetch', (e) => {
       fetch(request)
         .then((res) => {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
+          caches.open(CACHE).then((c) => c.put(cacheKey, copy)).catch(() => {});
           return res;
         })
-        .catch(() => caches.match(request))
+        .catch(() => caches.match(cacheKey))
     );
     return;
   }

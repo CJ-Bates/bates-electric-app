@@ -2,7 +2,7 @@
   "name": "Bates Electric Field",
   "short_name": "Bates Field",
   "description": "Bates Electric field technician app",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",

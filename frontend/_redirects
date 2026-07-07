@@ -1,0 +1,29 @@
+# Netlify redirects/rewrites for the Bates Electric PWA.
+# All page rules are 200 rewrites (NOT 301s): the pretty URL serves the .html
+# content and the original .html URLs keep working — bookmarks, the installed
+# PWA, and the service worker's .html-canonical cache keys all depend on that.
+
+# my.bates-electric.com (same-site Netlify domain alias): the root serves the
+# customer dashboard. Forced (200!) because "/" would otherwise be shadowed by
+# index.html. Deeper paths (my.js, css, images) fall through to normal files.
+https://my.bates-electric.com/ /my.html 200!
+
+# Clean URLs — extensionless path -> page. Keep in sync with the pages list
+# in service-worker.js ASSETS.
+/home            /home.html            200
+/tech            /tech.html            200
+/inspection      /inspection.html      200
+/office          /office.html          200
+/site-visit      /site-visit.html      200
+/generator-care  /generator-care.html  200
+/metrics         /metrics.html         200
+/accounting      /accounting.html      200
+/members         /members.html         200
+/contacts        /contacts.html        200
+/documents       /documents.html       200
+/safety-manual   /safety-manual.html   200
+/sds-sheets      /sds-sheets.html      200
+/settings        /settings.html        200
+/pdf-viewer      /pdf-viewer.html      200
+/reset-password  /reset-password.html  200
+/my              /my.html              200

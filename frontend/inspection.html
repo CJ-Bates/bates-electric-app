@@ -31,7 +31,7 @@
          display:inline-flex would defeat the [hidden] attribute. -->
     <div class="sv-tab-form">
       <span class="filter active">New Inspection</span>
-      <a class="filter" id="insp-dash-tab" href="office.html" style="display:none;text-decoration:none;">Dashboard</a>
+      <a class="filter" id="insp-dash-tab" href="/office" style="display:none;text-decoration:none;">Dashboard</a>
     </div>
     <script>
       try {
@@ -253,8 +253,12 @@
       </section>
 
       <!-- ================= ACTIONS ================= -->
-      <div class="insp-actions">
+      <!-- Reset is destructive: its own row, never next to Save (v3 §3).
+           .insp-actions becomes a sticky glass bar on phones (app.css). -->
+      <div class="insp-reset-row">
         <button type="button" class="btn btn-secondary btn-danger-soft" id="reset-btn">Reset Form</button>
+      </div>
+      <div class="insp-actions">
         <button type="button" class="btn btn-secondary" id="save-draft-btn">Save Draft <span id="autosave-badge" class="autosave-badge">Saved</span></button>
         <button type="submit" class="btn btn-primary" id="submit-btn">Submit &amp; Email Report</button>
       </div>

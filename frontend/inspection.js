@@ -9,7 +9,7 @@
     localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
 
   if (!getToken()) {
-    window.location.replace('index.html');
+    window.location.replace('/');
     return;
   }
 
@@ -685,7 +685,7 @@
       // Fallback: if the modal isn't in the DOM for some reason, fall back to
       // the inline status + redirect so the user still gets some confirmation.
       showStatus(message, 'success');
-      setTimeout(() => window.location.replace('home.html'), 3000);
+      setTimeout(() => window.location.replace('/home'), 3000);
       return;
     }
     if (msgEl) msgEl.textContent = message;
@@ -694,7 +694,7 @@
     if (statusEl) statusEl.hidden = true;
     modal.hidden = false;
     document.body.style.overflow = 'hidden';
-    const goHome = () => { window.location.replace('home.html'); };
+    const goHome = () => { window.location.replace('/home'); };
     okBtn.addEventListener('click', goHome, { once: true });
     // Tap outside the modal also dismisses.
     const overlay = modal.querySelector('.modal-overlay');

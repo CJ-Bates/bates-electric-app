@@ -102,7 +102,7 @@
         }
         showStatus('Password updated. Redirecting to sign in…', 'success');
         setTimeout(() => {
-          window.location.replace('index.html');
+          window.location.replace('/');
         }, 1200);
       } catch (err) {
         showStatus('Network error. Please try again.', 'error');

@@ -13,7 +13,7 @@
   const TOKEN_KEY = 'bates.auth.token';
   const getToken = () => localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
   const token = getToken();
-  if (!token) { window.location.replace('index.html'); return; }
+  if (!token) { window.location.replace('/'); return; }
 
   const TECH_BASE = `${API_BASE}/api/generator-care/tech`;
   let currentVisit = null;
@@ -148,7 +148,7 @@
       const { profile } = await r.json();
       if (profile.role !== 'tech') {
         // Office (or anyone else) belongs on the office hub, not the field view.
-        window.location.replace('home.html');
+        window.location.replace('/home');
         return false;
       }
       const sub = document.getElementById('tv-sub');

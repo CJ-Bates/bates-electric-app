@@ -14,7 +14,7 @@
   };
 
   const redirectToLogin = () => {
-    window.location.replace('index.html');
+    window.location.replace('/');
   };
 
   // Featured action cards
@@ -23,7 +23,7 @@
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>',
     title: 'Start Inspection',
     desc: 'Electrical safety form',
-    href: 'inspection.html',
+    href: '/inspection',
   };
 
   const OFFICE_FEATURED = {
@@ -31,7 +31,7 @@
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>',
     title: 'Inspections',
     desc: 'Reports dashboard + new form',
-    href: 'office.html',
+    href: '/office',
   };
 
 
@@ -40,7 +40,7 @@
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
     title: 'Generator Care',
     desc: 'Customers + scheduled service visits',
-    href: 'generator-care.html',
+    href: '/generator-care',
   };
 
   // Office-only: the Members area (techs today; office staff + customers later).
@@ -49,7 +49,7 @@
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     title: 'Members',
     desc: 'Techs, office staff & customers',
-    href: 'members.html',
+    href: '/members',
   };
 
   // Tech-only: the field-tech's assigned generator service visits.
@@ -58,13 +58,13 @@
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
     title: 'My Visits',
     desc: 'Your assigned generator service visits',
-    href: 'tech.html',
+    href: '/tech',
   };
   // Quick links for all users
   const QUICK_LINKS = [
-    { id: 'site-visit',    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>', title: 'Site Visit',       desc: 'Estimate form',        href: 'site-visit.html' },
-    { id: 'documents',     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M12 13V7"/><path d="m9 10 3-3 3 3"/></svg>', title: 'Documents',        desc: 'Safety manual & SDS',  href: 'documents.html' },
-    { id: 'contacts',      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', title: 'Contacts',         desc: 'Team directory',       href: 'contacts.html' },
+    { id: 'site-visit',    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>', title: 'Site Visit',       desc: 'Estimate form',        href: '/site-visit' },
+    { id: 'documents',     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M12 13V7"/><path d="m9 10 3-3 3 3"/></svg>', title: 'Documents',        desc: 'Safety manual & SDS',  href: '/documents' },
+    { id: 'contacts',      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', title: 'Contacts',         desc: 'Team directory',       href: '/contacts' },
   ];
 
   // WMO weather code -> { label, svg }

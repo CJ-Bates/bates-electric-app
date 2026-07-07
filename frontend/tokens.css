@@ -101,3 +101,18 @@ a[role="button"]:active,[role="button"]:active,
   *,*::before,*::after{transition:none!important;animation:none!important}
   button:active,.btn:active,.filter:active{transform:none}
 }
+
+/* ============ PAGE TRANSITIONS ============
+   Cross-document View Transitions: page-to-page navigation cross-fades
+   (~150ms) instead of white-flashing. Progressive enhancement only —
+   browsers without support just navigate normally. This rule must exist on
+   BOTH the outgoing and incoming page, which is why it lives here in
+   tokens.css (linked by every page). */
+@view-transition{ navigation: auto }
+::view-transition-old(root),
+::view-transition-new(root){ animation-duration: 150ms }
+/* The * reset above can't reach ::view-transition pseudos — disable explicitly. */
+@media (prefers-reduced-motion:reduce){
+  ::view-transition-old(root),
+  ::view-transition-new(root){ animation: none !important }
+}
