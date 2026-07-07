@@ -39,6 +39,7 @@
 .badge-danger{background:var(--danger-bg);color:var(--danger)}
 .badge-info{background:var(--info-bg);color:var(--info)}
 .badge-neutral{background:var(--neutral-bg);color:var(--neutral)}
+.badge-money{background:var(--money-bg);color:var(--money)}
 
 /* ============ CHIP (FM, TEST, small square-ish tags) ============ */
 .chip{display:inline-flex;align-items:center;font-size:var(--fs-xs);font-weight:700;background:var(--info-bg);color:var(--info);border-radius:6px;padding:2px 7px}
@@ -54,6 +55,12 @@
 .filter .count{background:var(--neutral-bg);color:var(--ink-2);border-radius:var(--radius-pill);font-size:var(--fs-xs);padding:1px 8px;font-weight:700}
 .filter.active .count{background:rgba(255,255,255,.22);color:var(--ink-inverse)}
 html.dark .filter.active .count{background:rgba(15,20,32,.25)}
+/* Alert variant — a filter whose bucket demands action (e.g. "Action needed"
+   with a non-zero count). Reads as a red outline until selected. */
+.filter.alert{border-color:color-mix(in srgb, var(--danger) 45%, transparent);color:var(--danger)}
+.filter.alert .count{background:var(--danger);color:#fff}
+.filter.alert.active{background:var(--danger);border-color:var(--danger);color:#fff}
+.filter.alert.active .count{background:rgba(255,255,255,.25);color:#fff}
 
 /* Sticky filter bar reads as a floating glass pill when detached on scroll. */
 .glass-filterbar{position:sticky;top:56px;z-index:9;border-radius:var(--radius-pill);padding:8px 10px;display:inline-flex;gap:8px;margin:6px 0}

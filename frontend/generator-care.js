@@ -35,6 +35,14 @@
   // Active + inactive tech accounts, loaded once for the per-visit assign picker
   // and the manage-techs screen. id -> name lookups use this.
   let techList = [];
+  // Batched Stripe billing snapshot for the Needs Attention queue: renewal date
+  // + card-on-file expiry per stripe_subscription_id, from GET /billing-snapshot.
+  // null until the first load; {} with snapshotUnavailable=true when Stripe is
+  // unreachable (the queue then simply shows its DB-derived items).
+  let billingSnapshot = null;
+  let snapshotUnavailable = false;
+  // Guards renderAttention() so the skeleton stays up until real data lands.
+  let subsLoaded = false;
 
   const techName = (id) => {
     const t = techList.find((x) => x.id === id);
@@ -131,13 +139,35 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { subscriptions } = await r.json();
       allSubs = subscriptions || [];
+      subsLoaded = true;
       render();
+      renderAttention();
       showLoading(false);
     } catch (err) {
       console.error('Load failed:', err);
       showStatus(`Load failed: ${err.message}`, 'error');
       showLoading(false);
     }
+  }
+
+  // ---- Lazy Stripe enrichment for the attention queue ----
+  // Renewal-window + card-expiry cards ride this; everything else in the queue
+  // is DB-derived and renders without it. Failure degrades to "no extras".
+  async function loadBillingSnapshot() {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/billing-snapshot`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      billingSnapshot = data.billing || {};
+      snapshotUnavailable = !!data.unavailable;
+    } catch (e) {
+      console.error('billing snapshot failed:', e);
+      billingSnapshot = {};
+      snapshotUnavailable = true;
+    }
+    renderAttention();
   }
 
   // ---- Filtering / classification ----
@@ -149,15 +179,64 @@
     return Math.floor((target - today) / (1000 * 60 * 60 * 24));
   }
 
-  function bucket(sub) {
-    if (sub.status !== 'active') return 'inactive';
-    const d = daysUntil(sub.next_visit_due);
-    if (d === null) return 'unknown';
-    if (d < 0) return 'overdue';
-    if (d <= 14) return 'soon';
-    if (d <= 31) return 'month';
-    return 'future';
+  // ---- Lifecycle classification ("Where they're at") ----
+  // ONE state per customer, highest-priority-first, sharing thresholds and
+  // signals with the Needs Attention queue so the two views tell one story.
+  const DUE_SOON_DAYS = 21;      // CJ's ~3-week soft scheduling window
+  const RENEWAL_SOON_DAYS = 30;  // renewal reach-out prompt
+  const CARD_EXPIRING_DAYS = 60; // card-expiry heads-up
+
+  function att(sub) { return sub.attention || {}; }
+  function performedTotalCents(sub) {
+    return (att(sub).performed_addons || []).reduce((s, a) => s + (a.amount_cents || 0), 0);
   }
+  function hasFailedPayment(sub) {
+    return sub.status === 'past_due'
+      || (att(sub).failed_addons || []).length > 0
+      || (att(sub).failed_charges || []).length > 0;
+  }
+  // Appointment date was before today (a today-appointment isn't "passed" —
+  // the tech may still be on site) and the visit hasn't been completed.
+  function apptPassed(ov) {
+    if (!ov || !ov.appointment_at) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const appt = new Date(ov.appointment_at);
+    return !isNaN(appt.getTime()) && appt < today;
+  }
+
+  // Returns { key, tab, badge:[intent, label] }. `tab` = which filter pill the
+  // customer belongs to ('none' = shows under All only, e.g. canceled).
+  function lifecycleState(sub) {
+    const a = att(sub);
+    const d = daysUntil(sub.next_visit_due);
+    const ov = sub.open_visit;
+    const booked = !!(ov && ov.appointment_at);
+    if (hasFailedPayment(sub)) return { key: 'payment_failed', tab: 'action', badge: ['badge-danger', 'Payment failed'] };
+    if (sub.status === 'incomplete') return { key: 'incomplete', tab: 'action', badge: ['badge-danger', 'Signup incomplete'] };
+    if (sub.status === 'canceled') {
+      const st = sub.service_through;
+      if (st && daysUntil(st) >= 0) return { key: 'cancel_pending', tab: 'none', badge: ['badge-neutral', `Canceled \u2014 ends ${fmtDate(st)}`] };
+      return { key: 'canceled', tab: 'none', badge: ['badge-neutral', 'Canceled'] };
+    }
+    if (d !== null && d < 0 && !booked) return { key: 'overdue', tab: 'action', badge: ['badge-danger', 'Overdue'] };
+    if (performedTotalCents(sub) > 0) return { key: 'charge_pending', tab: 'action', badge: ['badge-money', 'Charge pending'] };
+    if (a.pending_prefs) return { key: 'awaiting_confirm', tab: 'action', badge: ['badge-info', 'Awaiting your confirm'] };
+    if (apptPassed(ov)) return { key: 'appt_passed', tab: 'action', badge: ['badge-info', 'Confirm completion'] };
+    if (!sub.work_order_created_at) return { key: 'needs_wo', tab: 'action', badge: ['badge-warn', 'New \u2014 needs WO'] };
+    if (booked) return { key: 'scheduled', tab: 'scheduled', badge: ['badge-ok', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`] };
+    if (d === null) return { key: 'no_due', tab: 'action', badge: ['badge-warn', 'No due date'] };
+    if (d <= DUE_SOON_DAYS) return { key: 'due_soon', tab: 'due-soon', badge: ['badge-warn', 'Due soon \u2014 schedule'] };
+    return { key: 'all_good', tab: 'all-good', badge: ['badge-neutral', 'All good \u2014 nothing due'] };
+  }
+
+  // List sort: action states float to the top, resting customers sink — the
+  // same "who needs me" ordering as the queue; due date breaks ties.
+  const STATE_ORDER = {
+    payment_failed: 0, incomplete: 1, overdue: 2, charge_pending: 3,
+    awaiting_confirm: 4, appt_passed: 5, needs_wo: 6, no_due: 7,
+    due_soon: 8, scheduled: 9, all_good: 10, cancel_pending: 11, canceled: 12,
+  };
 
   function matchesSearch(sub) {
     if (!searchQuery) return true;
@@ -177,32 +256,39 @@
   }
 
   function filteredSubs() {
-    return allSubs.filter(sub => {
-      if (!matchesSearch(sub)) return false;
-      const b = bucket(sub);
-      if (activeFilter === 'all') return b === 'overdue' || b === 'soon' || b === 'month' || b === 'future';
-      if (activeFilter === 'overdue') return b === 'overdue';
-      if (activeFilter === 'soon') return b === 'overdue' || b === 'soon';
-      if (activeFilter === 'month') return b === 'overdue' || b === 'soon' || b === 'month';
-      return true;
-    });
+    return allSubs
+      .filter(matchesSearch)
+      .filter((sub) => {
+        if (activeFilter === 'all') return true;
+        return lifecycleState(sub).tab === activeFilter;
+      })
+      .sort((a, b) => {
+        const ra = STATE_ORDER[lifecycleState(a).key] ?? 99;
+        const rb = STATE_ORDER[lifecycleState(b).key] ?? 99;
+        if (ra !== rb) return ra - rb;
+        return String(a.next_visit_due || '9999').localeCompare(String(b.next_visit_due || '9999'));
+      });
   }
 
   // ---- Render ----
   function render() {
-    // Update tab counts
-    let cOver = 0, cSoon = 0, cMonth = 0, cAll = 0;
+    // Update tab counts (every customer is in All; canceled live ONLY there).
+    let cAll = 0, cAction = 0, cDueSoon = 0, cScheduled = 0, cAllGood = 0;
     for (const s of allSubs.filter(matchesSearch)) {
-      const b = bucket(s);
-      if (b === 'overdue') { cOver++; cSoon++; cMonth++; cAll++; }
-      else if (b === 'soon') { cSoon++; cMonth++; cAll++; }
-      else if (b === 'month') { cMonth++; cAll++; }
-      else if (b === 'future') { cAll++; }
+      cAll++;
+      const t = lifecycleState(s).tab;
+      if (t === 'action') cAction++;
+      else if (t === 'due-soon') cDueSoon++;
+      else if (t === 'scheduled') cScheduled++;
+      else if (t === 'all-good') cAllGood++;
     }
     document.getElementById('count-all').textContent = cAll;
-    document.getElementById('count-overdue').textContent = cOver;
-    document.getElementById('count-soon').textContent = cSoon;
-    document.getElementById('count-month').textContent = cMonth;
+    document.getElementById('count-action').textContent = cAction;
+    document.getElementById('count-due-soon').textContent = cDueSoon;
+    document.getElementById('count-scheduled').textContent = cScheduled;
+    document.getElementById('count-all-good').textContent = cAllGood;
+    // "Action needed" reads as an alert whenever anything is in it.
+    document.getElementById('gc-tab-action').classList.toggle('alert', cAction > 0);
 
     const subs = filteredSubs();
     const empty = document.getElementById('empty');
@@ -319,16 +405,49 @@
     return fmtDate(sub.next_visit_due);
   }
 
+  // Inline flags under the customer name — every pending action stays visible
+  // in the full list even when a higher-priority state owns the badge column
+  // (and everything actionable is one click from here via the row -> modal).
+  const flagIcon = (paths) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const FLAG_ICONS = {
+    warn: flagIcon('<path d="M12 3 2.5 20h19L12 3z"/><path d="M12 9.5V14"/>'),
+    money: flagIcon('<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+    calendar: flagIcon('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
+    file: flagIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
+    check: flagIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 5-5.5"/>'),
+  };
+  function rowFlags(sub) {
+    const a = att(sub);
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    const out = [];
+    const flag = (cls, ico, label) => out.push(`<span class="gc-flag ${cls}">${FLAG_ICONS[ico]}${escapeHtml(label)}</span>`);
+    if (hasFailedPayment(sub)) flag('f-danger', 'warn', 'Payment failed');
+    const pt = performedTotalCents(sub);
+    if (pt > 0) flag('f-money', 'money', `${money(pt)} to charge`);
+    if (a.pending_prefs && sub.status !== 'canceled') {
+      const booked = !!(sub.open_visit && sub.open_visit.appointment_at);
+      flag('f-info', 'calendar', booked ? 'Reschedule requested' : 'Times proposed');
+    }
+    if (apptPassed(sub.open_visit) && sub.status !== 'canceled') flag('f-info', 'check', 'Appt passed');
+    if (!sub.work_order_created_at && (sub.status === 'active' || sub.status === 'past_due')) flag('f-warn', 'file', 'Work order not created');
+    return out.length ? `<div>${out.join('')}</div>` : '';
+  }
+
+  function stateBadge(st) {
+    return `<span class="badge ${st.badge[0]}">${escapeHtml(st.badge[1])}</span>`;
+  }
+
   function rowHTML(sub) {
-    const b = bucket(sub);
-    const rowClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const st = lifecycleState(sub);
+    const danger = st.key === 'payment_failed' || st.key === 'overdue' || st.key === 'incomplete';
     const cust = sub.customer || {};
     const fleet = sub.fleet_monitoring ? '<span class="chip" title="Fleet Monitoring enabled">FM</span>' : '';
     return `
-      <tr class="gc-row ${rowClass}" data-sub-id="${sub.id}">
+      <tr class="gc-row ${danger ? 'overdue' : ''}" data-sub-id="${sub.id}">
         <td>
           <div class="gc-customer-name">${escapeHtml(fmtNameCase(cust.name))}</div>
           <div class="gc-customer-meta">${escapeHtml(fmtNameCase(cust.install_city))}, ${escapeHtml(cust.install_state)} · ${escapeHtml(fmtPhoneDisplay(cust.phone))}</div>
+          ${rowFlags(sub)}
         </td>
         <td class="gc-gen-info">
           ${escapeHtml(genClassLabel(sub.gen_class))}<br>
@@ -336,50 +455,330 @@
         </td>
         <td>${escapeHtml(planLabel(sub.plan))} ${fleet}</td>
         <td>${dueLabel(sub)}</td>
-        <td>${listStatusBadge(sub)}</td>
+        <td>${stateBadge(st)}</td>
       </tr>
     `;
   }
 
   function cardHTML(sub) {
-    const b = bucket(sub);
-    const cardClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
-    const dueClass = b === 'overdue' ? 'overdue' : (b === 'soon' ? 'soon' : '');
+    const st = lifecycleState(sub);
+    const danger = st.key === 'payment_failed' || st.key === 'overdue' || st.key === 'incomplete';
     const cust = sub.customer || {};
     return `
-      <div class="gc-card ${cardClass}" data-sub-id="${sub.id}">
+      <div class="gc-card ${danger ? 'overdue' : ''}" data-sub-id="${sub.id}">
         <div class="gc-card-header">
           <div>
             <div class="gc-card-name">${escapeHtml(fmtNameCase(cust.name))}</div>
             <div class="gc-card-meta">${escapeHtml(fmtNameCase(cust.install_city))} · ${escapeHtml(genClassLabel(sub.gen_class))} · ${escapeHtml(planLabel(sub.plan))}</div>
+            ${rowFlags(sub)}
           </div>
-          ${listStatusBadge(sub)}
+          ${stateBadge(st)}
         </div>
-        <div class="gc-card-due ${dueClass}">Due: ${dueLabel(sub)}</div>
+        <div class="gc-card-due ${danger ? 'overdue' : ''}">Due: ${dueLabel(sub)}</div>
       </div>
     `;
   }
 
-  function badgeForBucket(b) {
-    if (b === 'overdue') return '<span class="badge badge-danger">Overdue</span>';
-    if (b === 'soon') return '<span class="badge badge-warn">Soon</span>';
-    return '<span class="badge badge-ok">Active</span>';
+  // ----------------------------------------------------------------
+  // NEEDS ATTENTION queue — the default landing view. One card per thing
+  // Amy must do, severity-tiered, each with the ONE button that does it.
+  // Buttons route through the EXISTING flows/endpoints (chargePerformedAddons,
+  // sendPortalLink, the detail modal) — no parallel action paths, so every
+  // money action keeps its existing confirm step. Computed in one pass over
+  // the same list payload the Customers view uses; the Stripe billing
+  // snapshot only ADDS renewal/card cards when it loads.
+  // ----------------------------------------------------------------
+
+  const attIcon = (paths) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const ATT_ICONS = {
+    alert: attIcon('<path d="M12 3 2.5 20h19L12 3z"/><path d="M12 9.5V14"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/>'),
+    dollar: attIcon('<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+    calendar: attIcon('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
+    clock: attIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    file: attIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>'),
+    card: attIcon('<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>'),
+    refresh: attIcon('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>'),
+    checksquare: attIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 5-5.5"/>'),
+    userminus: attIcon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M17 11h6"/>'),
+  };
+  const TIER_ORDER = ['critical', 'money', 'action', 'upcoming'];
+  const TIER_META = {
+    critical: { label: 'Urgent' },
+    money: { label: 'Money to collect' },
+    action: { label: 'Waiting on you' },
+    upcoming: { label: 'Coming up' },
+  };
+
+  // Cards are valid through the last day of their expiry month.
+  function daysUntilCardExpiry(card) {
+    if (!card || !card.exp_month || !card.exp_year) return null;
+    const lastDay = new Date(card.exp_year, card.exp_month, 0);
+    lastDay.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.floor((lastDay - today) / 86400000);
+  }
+  function cardBrandLabel(card) {
+    const b = (card && card.brand) || '';
+    return b ? b.charAt(0).toUpperCase() + b.slice(1) : 'Card';
+  }
+  function customerLink(sub) {
+    return `<span class="gc-acust" data-att-open="${sub.id}">${escapeHtml(fmtNameCase((sub.customer || {}).name) || 'Customer')}</span>`;
   }
 
-  // List STATUS column: surface visit scheduling state at a glance. Booked
-  // appointment -> "Scheduled <date>" (ok); otherwise "Needs scheduling" —
-  // danger when overdue, warn otherwise (per the v3 status semantics).
-  // Inactive/canceled subs read neutral.
-  function listStatusBadge(sub) {
-    const pill = (intent, text) => `<span class="badge ${intent}">${escapeHtml(text)}</span>`;
-    if (sub.status !== 'active') return pill('badge-neutral', (sub.status || 'inactive').replace(/^\w/, c => c.toUpperCase()));
-    const ov = sub.open_visit;
-    if (ov && ov.appointment_at) {
-      return pill('badge-ok', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`);
+  // One pass over allSubs -> the prioritized card list. Titles and action
+  // labels are static strings (entities OK, inserted raw); every dynamic
+  // value inside desc goes through escapeHtml.
+  function computeAttentionItems() {
+    const items = [];
+    const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+    for (const sub of allSubs) {
+      const a = att(sub);
+      const d = daysUntil(sub.next_visit_due);
+      const ov = sub.open_visit;
+      const booked = !!(ov && ov.appointment_at);
+      const bs = (billingSnapshot && sub.stripe_subscription_id) ? billingSnapshot[sub.stripe_subscription_id] : null;
+      const card = bs && bs.card;
+      const cardExpDays = daysUntilCardExpiry(card);
+
+      // CRITICAL — a payment already failed (renewal past-due / declined items)
+      if (hasFailedPayment(sub)) {
+        const failedBits = []
+          .concat((a.failed_addons || []).map((x) => `${addonLabel(x.addon_type)} (${money(x.amount_cents)})`))
+          .concat((a.failed_charges || []).map((x) => `${x.description || 'charge'} (${money(x.amount_cents)})`));
+        const what = [];
+        if (sub.status === 'past_due') what.push('their renewal charge was declined');
+        if (failedBits.length) what.push(`declined: ${failedBits.join(', ')}`);
+        const cardBit = (card && cardExpDays !== null && cardExpDays < 0)
+          ? ` Card on file expired ${card.exp_month}/${card.exp_year}.`
+          : ' The card may need updating.';
+        items.push({
+          tier: 'critical', cls: 'c-danger', icon: 'alert', sub, sort: -1000,
+          title: 'Payment failed',
+          desc: `${customerLink(sub)} &mdash; ${escapeHtml(what.join('; ') || 'a charge was declined')}.${cardBit}`,
+          action: { kind: 'cardlink', label: 'Send card-update link' },
+        });
+      } else if (sub.status === 'active' && card && cardExpDays !== null && cardExpDays < 0) {
+        // CRITICAL — card already expired; the next charge WILL fail
+        items.push({
+          tier: 'critical', cls: 'c-danger', icon: 'card', sub, sort: -999,
+          title: 'Card on file expired',
+          desc: `${customerLink(sub)} &mdash; ${escapeHtml(cardBrandLabel(card))} &bull;&bull;${escapeHtml(card.last4 || '')} expired ${card.exp_month}/${card.exp_year}. The next charge will fail.`,
+          action: { kind: 'cardlink', label: 'Send card-update link' },
+        });
+      }
+
+      // CRITICAL — visit overdue and nothing booked (most overdue first)
+      if (sub.status === 'active' && d !== null && d < 0 && !booked) {
+        items.push({
+          tier: 'critical', cls: 'c-danger', icon: 'clock', sub, sort: d,
+          title: 'Visit overdue',
+          desc: `${customerLink(sub)} &mdash; visit was due ${escapeHtml(fmtDate(sub.next_visit_due))} (${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} ago). Nothing is booked.`,
+          action: { kind: 'visits', label: 'Schedule visit' },
+        });
+      }
+
+      // MONEY — performed add-ons not yet charged (largest total first)
+      const pt = performedTotalCents(sub);
+      if (pt > 0) {
+        const list = (a.performed_addons || [])
+          .map((x) => `${addonLabel(x.addon_type)} (${money(x.amount_cents)})`).join(', ');
+        const canCharge = !userPerms || userPerms.billing_actions !== false;
+        items.push({
+          tier: 'money', cls: 'c-money', icon: 'dollar', sub, sort: -pt,
+          title: 'Add-ons performed &mdash; not yet charged',
+          desc: `${customerLink(sub)} &mdash; ${escapeHtml(list)}. <b>${money(pt)}</b> ready to charge.`,
+          action: canCharge
+            ? { kind: 'charge', label: `Charge ${money(pt)}` }
+            : { kind: 'addons', label: 'View add-ons' },
+        });
+      }
+
+      // ACTION — customer proposed visit times (oldest request first)
+      if (a.pending_prefs && sub.status !== 'canceled') {
+        const p = a.pending_prefs;
+        const slots = (Array.isArray(p.slots) ? p.slots : [])
+          .map((s) => `${fmtDate(s.date)} ${escapeHtml(s.window || '')}`.trim()).join(' &middot; ');
+        items.push({
+          tier: 'action', cls: 'c-info', icon: 'calendar', sub, sort: Date.parse(p.created_at || '') || 0,
+          title: booked ? 'Reschedule requested' : 'Visit times proposed',
+          desc: `${customerLink(sub)} proposed ${slots ? `<i>${slots}</i>` : 'times'}${p.note ? ` &mdash; &ldquo;${escapeHtml(p.note)}&rdquo;` : ''}. Confirm one.`,
+          action: { kind: 'visits', label: 'Review &amp; book' },
+        });
+      }
+
+      // ACTION — appointment date passed but the visit was never marked complete
+      if (sub.status !== 'canceled' && apptPassed(ov)) {
+        items.push({
+          tier: 'action', cls: 'c-info', icon: 'checksquare', sub, sort: Date.parse(ov.appointment_at) || 0,
+          title: 'Appointment passed &mdash; confirm completion',
+          desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtDateTime(ov.appointment_at))}. If the visit happened, mark it complete so the next cycle starts.`,
+          action: { kind: 'visits', label: 'Mark complete' },
+        });
+      }
+
+      // ACTION — new signup, Jonas work order not created yet
+      if ((sub.status === 'active' || sub.status === 'past_due') && !sub.work_order_created_at) {
+        items.push({
+          tier: 'action', cls: 'c-warn', icon: 'file', sub, sort: Date.parse(sub.created_at || '') || 0,
+          title: 'New signup &mdash; create Jonas work order',
+          desc: `${customerLink(sub)} signed up ${escapeHtml(fmtDate(sub.signup_date))}. WO not created yet.`,
+          action: { kind: 'handoff', label: 'Open work order' },
+        });
+      }
+
+      // ACTION — signup payment never completed
+      if (sub.status === 'incomplete') {
+        items.push({
+          tier: 'action', cls: 'c-danger', icon: 'alert', sub, sort: -1,
+          title: 'Signup incomplete',
+          desc: `${customerLink(sub)} &mdash; signup payment didn&rsquo;t finish. Check Stripe or reach out to the customer.`,
+          action: { kind: 'open', label: 'Open customer' },
+        });
+      }
+
+      // ACTION — cancellation scheduled; a call might save them
+      if (sub.status === 'canceled' && sub.service_through && daysUntil(sub.service_through) >= 0) {
+        items.push({
+          tier: 'action', cls: 'c-info', icon: 'userminus', sub, sort: daysUntil(sub.service_through),
+          title: 'Cancellation scheduled',
+          desc: `${customerLink(sub)} &mdash; service runs through ${escapeHtml(fmtDate(sub.service_through))}, then ends. A quick call might save them.`,
+          action: { kind: 'open', label: 'Open customer' },
+        });
+      }
+
+      // ACTION — data gap: active but no due-date target
+      if (sub.status === 'active' && d === null) {
+        items.push({
+          tier: 'action', cls: 'c-warn', icon: 'alert', sub, sort: 1e12,
+          title: 'No next-due date set',
+          desc: `${customerLink(sub)} has no &ldquo;next due&rdquo; target, so due-soon tracking can&rsquo;t work. Set one in Plan &amp; Billing.`,
+          action: { kind: 'plan', label: 'Set due date' },
+        });
+      }
+
+      // UPCOMING — visit due inside the soft window, nothing booked
+      if (sub.status === 'active' && d !== null && d >= 0 && d <= DUE_SOON_DAYS && !booked) {
+        items.push({
+          tier: 'upcoming', cls: 'c-warn', icon: 'calendar', sub, sort: d,
+          title: `Visit due ${d === 0 ? 'today' : `in ${d} day${d === 1 ? '' : 's'}`}`,
+          desc: `${customerLink(sub)} &mdash; due ${escapeHtml(fmtDate(sub.next_visit_due))}. Nothing booked yet.`,
+          action: { kind: 'visits', label: 'Schedule visit' },
+        });
+      }
+
+      // UPCOMING — renewal inside 30 days (reach-out prompt; needs the snapshot)
+      if (sub.status === 'active' && bs && bs.period_end && !bs.cancel_at_period_end) {
+        const rd = daysUntil(bs.period_end);
+        if (rd !== null && rd >= 0 && rd <= RENEWAL_SOON_DAYS) {
+          const amtCents = sub.annual_price_cents
+            ? (sub.plan === 'semi_annual' ? Math.round(sub.annual_price_cents / 2) : sub.annual_price_cents)
+            : null;
+          items.push({
+            tier: 'upcoming', cls: 'c-warn', icon: 'refresh', sub, sort: 100 + rd,
+            title: `Renews ${fmtDate(bs.period_end)}`,
+            desc: `${customerLink(sub)}${amtCents ? ` &mdash; ${money(amtCents)} auto-charges` : ' &mdash; renews'} ${rd === 0 ? 'today' : `in ${rd} day${rd === 1 ? '' : 's'}`}. Good moment for a check-in.`,
+            action: { kind: 'open', label: 'Open customer' },
+          });
+        }
+      }
+
+      // UPCOMING — card expiring soon (not yet expired, nothing failed yet)
+      if (sub.status === 'active' && !hasFailedPayment(sub)
+          && card && cardExpDays !== null && cardExpDays >= 0 && cardExpDays <= CARD_EXPIRING_DAYS) {
+        items.push({
+          tier: 'upcoming', cls: 'c-warn', icon: 'card', sub, sort: 200 + cardExpDays,
+          title: 'Card expiring soon',
+          desc: `${customerLink(sub)} &mdash; ${escapeHtml(cardBrandLabel(card))} &bull;&bull;${escapeHtml(card.last4 || '')} expires ${card.exp_month}/${card.exp_year}.`,
+          action: { kind: 'cardlink', label: 'Send card-update link' },
+        });
+      }
     }
-    const b = bucket(sub);
-    if (b === 'overdue') return pill('badge-danger', 'Needs scheduling');
-    return pill('badge-warn', 'Needs scheduling');
+    items.sort((x, y) => (TIER_ORDER.indexOf(x.tier) - TIER_ORDER.indexOf(y.tier)) || (x.sort - y.sort));
+    items.forEach((it, i) => { it.idx = i; });
+    return items;
+  }
+
+  let attentionItems = [];
+
+  function attCardHTML(item) {
+    return `<div class="gc-action ${item.cls}">
+      <div class="gc-ai">${ATT_ICONS[item.icon] || ATT_ICONS.alert}</div>
+      <div class="gc-abody">
+        <div class="gc-at">${item.title}</div>
+        <div class="gc-ad">${item.desc}</div>
+      </div>
+      <button type="button" class="btn btn-sm gc-btn-solid" data-att-idx="${item.idx}">${item.action.label}</button>
+    </div>`;
+  }
+
+  function runAttentionAction(item) {
+    if (!item) return;
+    const sub = item.sub;
+    const kind = item.action.kind;
+    if (kind === 'charge') return chargePerformedAddons(sub.id, (sub.customer || {}).id, att(sub).performed_addons || []);
+    if (kind === 'cardlink') return sendPortalLink(sub.id);
+    if (kind === 'visits') return showDetail(sub.id, 'visits');
+    if (kind === 'handoff') return showDetail(sub.id, 'handoff');
+    if (kind === 'addons') return showDetail(sub.id, 'addons');
+    if (kind === 'plan') return showDetail(sub.id, 'plan');
+    return showDetail(sub.id);
+  }
+
+  function renderAttention() {
+    const listEl = document.getElementById('gc-att-list');
+    const emptyEl = document.getElementById('gc-att-empty');
+    const summaryEl = document.getElementById('gc-att-summary');
+    const noteEl = document.getElementById('gc-att-note');
+    if (!listEl || !subsLoaded) return; // keep the skeleton until real data lands
+
+    attentionItems = computeAttentionItems();
+    const activeCount = allSubs.filter((s) => s.status === 'active' || s.status === 'past_due').length;
+    const nowCount = attentionItems.filter((i) => i.tier !== 'upcoming').length;
+    const upCount = attentionItems.length - nowCount;
+
+    const parts = [];
+    parts.push(nowCount
+      ? `<b>${nowCount} item${nowCount === 1 ? '' : 's'} need${nowCount === 1 ? 's' : ''} you</b>`
+      : 'Nothing needs you right now');
+    if (upCount) parts.push(`${upCount} coming up`);
+    parts.push(`${activeCount} active customer${activeCount === 1 ? '' : 's'}`);
+    if (summaryEl) summaryEl.innerHTML = parts.join(' &middot; ');
+
+    // Renewal + card checks ride the Stripe snapshot; say so when it's down
+    // instead of silently showing less.
+    if (noteEl) {
+      noteEl.hidden = !snapshotUnavailable;
+      if (snapshotUnavailable) noteEl.textContent = 'Renewal and card checks are unavailable right now (Stripe unreachable) \u2014 showing everything else.';
+    }
+
+    if (!attentionItems.length) {
+      listEl.innerHTML = '';
+      if (emptyEl) {
+        emptyEl.hidden = false;
+        const sb = document.getElementById('gc-att-empty-sub');
+        if (sb) sb.textContent = `${activeCount} active customer${activeCount === 1 ? '' : 's'} \u2014 all resting quietly.`;
+      }
+      return;
+    }
+    if (emptyEl) emptyEl.hidden = true;
+
+    let html = '';
+    for (const tier of TIER_ORDER) {
+      const group = attentionItems.filter((i) => i.tier === tier);
+      if (!group.length) continue;
+      html += `<div class="gc-att-group-h ${tier === 'critical' ? 'g-critical' : ''}">${TIER_META[tier].label} <span class="count">${group.length}</span></div>`;
+      html += group.map(attCardHTML).join('');
+    }
+    listEl.innerHTML = html;
+
+    // Customer names open the modal; each card's button runs its one action.
+    listEl.querySelectorAll('[data-att-open]').forEach((el) => {
+      el.addEventListener('click', () => showDetail(el.dataset.attOpen));
+    });
+    listEl.querySelectorAll('[data-att-idx]').forEach((btn) => {
+      btn.addEventListener('click', () => runAttentionAction(attentionItems[parseInt(btn.dataset.attIdx, 10)]));
+    });
   }
 
   // ---- Detail modal ----
@@ -511,7 +910,7 @@
         <button class="btn btn-secondary btn-sm" id="gc-portal-btn">Send Card-Update Link</button>
       </div>`;
     return `
-      <div class="gc-card">
+      <div class="gc-card" id="gc-card-plan">
         <h3 class="gc-card-h">Plan &amp; Billing</h3>
         <div class="gc-card-row"><span class="gc-meta-label">Plan</span><span class="gc-meta-value">${escapeHtml(planLabel(subscription.plan))}</span></div>
         <div id="gc-plan-pending" style="display:none;"></div>
@@ -600,7 +999,7 @@
         <div id="gc-wo-validation" style="display:none;color:var(--danger);font-size:0.75rem;margin-top:4px;text-align:right;">Enter the Jonas work-order number first.</div>`;
 
     return `
-      <div class="gc-card">
+      <div class="gc-card" id="gc-card-handoff">
         <h3 class="gc-card-h">Jonas Work Order <span class="gc-card-h-count">internal record</span></h3>
         ${stepRow('1', 'Signed up', true, `<span style="font-weight:400;color:var(--ink-2);">${fmtDate(subscription.signup_date)}</span>`)}
         ${stepRow('2', 'Work order created', !!woAt, woValue)}
@@ -711,7 +1110,7 @@
       </div>`;
     }).join('');
     const body = rows || `<div class="gc-meta-label" style="padding:6px 0;">No visits on record.</div>`;
-    return `<div class="gc-card"><h3 class="gc-card-h">Service Visits<span class="gc-card-h-count">(${(visits || []).length})</span></h3>${body}</div>`;
+    return `<div class="gc-card" id="gc-card-visits"><h3 class="gc-card-h">Service Visits<span class="gc-card-h-count">(${(visits || []).length})</span></h3>${body}</div>`;
   }
 
   // Recurring add-on types available for a gen class (mirrors the catalog flags;
@@ -814,7 +1213,7 @@
         </details>`
       : '';
 
-    return `<div class="gc-card">${header}${currentRows}${batchBtn}${standingHtml}${historyHtml}</div>`;
+    return `<div class="gc-card" id="gc-card-addons">${header}${currentRows}${batchBtn}${standingHtml}${historyHtml}</div>`;
   }
 
   function renderChargesCard(adhoc_charges, isCanceled) {
@@ -917,7 +1316,10 @@
     }
   }
 
-  async function showDetail(id) {
+  // `focus` (optional): 'visits' | 'addons' | 'handoff' | 'plan' — scrolls the
+  // matching card into view with a brief pulse. Used by Needs Attention cards
+  // so each queue action lands exactly where the work happens.
+  async function showDetail(id, focus) {
     const modal = document.getElementById('detailsModal');
     const title = document.getElementById('modal-title');
     const body = document.getElementById('modal-body');
@@ -1106,6 +1508,18 @@
         }
       });
       // ---- end TECH-DASHBOARD PHASE 2 (additive) ----
+
+      // Deep-link from a Needs Attention card: scroll its section into view.
+      if (focus) {
+        const target = body.querySelector(`#gc-card-${focus}`);
+        if (target) {
+          setTimeout(() => {
+            target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            target.classList.add('gc-focus-pulse');
+            setTimeout(() => target.classList.remove('gc-focus-pulse'), 1800);
+          }, 60);
+        }
+      }
 
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
       // and the work-order packet's actual signup charge)
@@ -1515,11 +1929,37 @@
   function showLoading(b) {
     document.getElementById('loading').hidden = !b;
   }
-  // ---- Init ----
-  checkRole();
-  loadTechs();
+  // ---- View switching (Needs Attention <-> Customers, hash-routed) ----
+  // No hash / #attention = the action queue (default landing view);
+  // #customers = the full list. The shared section switcher renders both as
+  // top-level tabs (shared-nav.js); hash changes swap views without a reload.
+  function currentHashView() {
+    return location.hash === '#customers' ? 'customers' : 'attention';
+  }
+  function showView(view) {
+    document.getElementById('attention-view').hidden = view !== 'attention';
+    document.getElementById('customers-view').hidden = view !== 'customers';
+    const want = view === 'customers' ? 'gc-customers' : 'gc-attention';
+    document.querySelectorAll('.section-tab[data-match]').forEach((a) => {
+      const on = a.dataset.match === want;
+      a.classList.toggle('active', on);
+      if (on) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+  }
+  window.addEventListener('hashchange', () => showView(currentHashView()));
 
-  document.getElementById('refresh-btn').addEventListener('click', loadSubscriptions);
+  // ---- Init ----
+  // Permission flags shape the queue's buttons (e.g. Charge vs View add-ons),
+  // so re-render it once /me lands.
+  checkRole().then(() => renderAttention());
+  loadTechs();
+  showView(currentHashView());
+
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    loadSubscriptions();
+    loadBillingSnapshot();
+  });
 
   document.querySelectorAll('.gc-tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1541,6 +1981,7 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
   loadSubscriptions();
+  loadBillingSnapshot();
 
   // ---- Resend Welcome Email ----
   async function resendWelcomeEmail(subscriptionId, btn) {

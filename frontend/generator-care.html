@@ -125,6 +125,51 @@
       .gc-danger-zone { flex-direction: column; align-items: stretch; text-align: center; }
       .gc-danger-zone .btn { width: 100%; justify-content: center; }
     }
+
+    /* ---- Needs Attention queue (default landing view) ---- */
+    .gc-att-summary { color: var(--ink-2); font-size: 0.9rem; margin: 2px 0 6px; }
+    .gc-att-summary b { color: var(--danger); }
+    .gc-att-note { color: var(--ink-3); font-size: 0.78rem; margin: 0 0 6px; }
+    .gc-att-group-h { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); margin: 18px 0 8px; }
+    .gc-att-group-h .count { border-radius: var(--radius-pill); font-size: 0.72rem; padding: 1px 8px; background: var(--neutral-bg); color: var(--ink-2); }
+    .gc-att-group-h.g-critical .count { background: var(--danger); color: #fff; }
+    /* One action card. --c/--cbg come from the severity class (c-danger etc.). */
+    .gc-action { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: var(--radius); box-shadow: var(--shadow-1); padding: 13px 16px; margin-bottom: 9px; }
+    .gc-action .gc-ai { width: 38px; height: 38px; border-radius: 10px; background: var(--cbg); color: var(--c); display: flex; align-items: center; justify-content: center; flex: none; }
+    .gc-action .gc-abody { flex: 1; min-width: 0; }
+    .gc-action .gc-at { font-weight: 700; font-size: 0.95rem; }
+    .gc-action .gc-ad { color: var(--ink-2); font-size: 0.85rem; margin-top: 1px; }
+    .gc-acust { color: var(--accent); font-weight: 700; cursor: pointer; }
+    .gc-acust:hover { text-decoration: underline; }
+    .gc-action .btn { white-space: nowrap; flex: none; }
+    .gc-btn-solid { background: var(--c); color: var(--ink-inverse); border-color: transparent; }
+    .gc-btn-solid:hover { filter: brightness(0.94); }
+    .c-danger { --c: var(--danger); --cbg: var(--danger-bg); }
+    .c-money { --c: var(--money); --cbg: var(--money-bg); }
+    .c-info { --c: var(--info); --cbg: var(--info-bg); }
+    .c-warn { --c: var(--warn); --cbg: var(--warn-bg); }
+    .gc-att-empty { border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 44px 20px; text-align: center; color: var(--ink-2); }
+    .gc-att-empty .gc-att-empty-ico { display: inline-flex; width: 44px; height: 44px; border-radius: 50%; background: var(--ok-bg); color: var(--ok); align-items: center; justify-content: center; margin-bottom: 10px; }
+    .gc-att-empty .big { font-size: 1.05rem; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+    @media (max-width: 640px) {
+      /* Stacked, thumb-friendly action cards: icon+text row, full-width button. */
+      .gc-action { flex-wrap: wrap; padding: 13px 14px; }
+      .gc-action .gc-abody { flex: 1 1 calc(100% - 52px); }
+      .gc-action .btn { flex: 1 1 100%; justify-content: center; min-height: 44px; }
+    }
+
+    /* Row-level attention flags under the customer name (list + mobile cards). */
+    .gc-flag { display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 700; margin-top: 3px; margin-right: 10px; }
+    .gc-flag svg { flex-shrink: 0; }
+    .f-danger { color: var(--danger); } .f-money { color: var(--money); }
+    .f-info { color: var(--info); } .f-warn { color: var(--warn); }
+
+    /* Deep-link pulse when an action card opens the modal at a section. */
+    .gc-focus-pulse { animation: gc-focus-pulse 1.6s ease-out 1; }
+    @keyframes gc-focus-pulse {
+      0%, 60% { box-shadow: 0 0 0 3px var(--focus-ring); }
+      100% { box-shadow: 0 0 0 3px transparent; }
+    }
   </style>
 </head>
 <body class="hub-body dashboard-body">
@@ -141,46 +186,76 @@
 
     <nav class="section-tabs" data-section-tabs aria-label="Generator Care sections"></nav>
 
-    <div class="gc-tabs" id="gc-tabs">
-      <button class="filter gc-tab active" data-filter="all">All Active <span class="count" id="count-all">0</span></button>
-      <button class="filter gc-tab" data-filter="overdue">Overdue <span class="count" id="count-overdue">0</span></button>
-      <button class="filter gc-tab" data-filter="soon">Due in 14 days <span class="count" id="count-soon">0</span></button>
-      <button class="filter gc-tab" data-filter="month">Due this month <span class="count" id="count-month">0</span></button>
+    <!-- ============ NEEDS ATTENTION (default landing view) ============
+         A prioritized queue of action cards: only the customers that need
+         something done, each with the one button that does it. Everyone else
+         rests in the Customers view. Hash-routed: no hash / #attention = this
+         view, #customers = the full list. -->
+    <section id="attention-view" hidden>
+      <div class="gc-att-summary" id="gc-att-summary"></div>
+      <div class="gc-att-note" id="gc-att-note" hidden></div>
+      <div id="gc-att-list">
+        <!-- Skeleton until the first load lands; renderAttention() replaces this. -->
+        <div class="gc-action" style="--c: var(--line); --cbg: var(--neutral-bg);">
+          <div class="gc-ai"><span class="gc-skeleton" style="width:20px;height:20px;border-radius:6px;"></span></div>
+          <div class="gc-abody"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span></div>
+        </div>
+        <div class="gc-action" style="--c: var(--line); --cbg: var(--neutral-bg);">
+          <div class="gc-ai"><span class="gc-skeleton" style="width:20px;height:20px;border-radius:6px;"></span></div>
+          <div class="gc-abody"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span></div>
+        </div>
+      </div>
+      <div id="gc-att-empty" class="gc-att-empty" hidden>
+        <div class="gc-att-empty-ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></div>
+        <div class="big">You&rsquo;re all caught up</div>
+        <div id="gc-att-empty-sub">Nothing needs you right now.</div>
+      </div>
+    </section>
+
+    <!-- ============ CUSTOMERS (full list view) ============ -->
+    <div id="customers-view" hidden>
+      <div class="gc-tabs" id="gc-tabs">
+        <button class="filter gc-tab active" data-filter="all">All <span class="count" id="count-all">0</span></button>
+        <button class="filter gc-tab" data-filter="action" id="gc-tab-action">Action needed <span class="count" id="count-action">0</span></button>
+        <button class="filter gc-tab" data-filter="due-soon">Due soon <span class="count" id="count-due-soon">0</span></button>
+        <button class="filter gc-tab" data-filter="scheduled">Scheduled <span class="count" id="count-scheduled">0</span></button>
+        <button class="filter gc-tab" data-filter="all-good">All good <span class="count" id="count-all-good">0</span></button>
+      </div>
+
+      <section class="dashboard-filters">
+        <div class="filter-group">
+          <label for="filter-name">Search</label>
+          <input type="text" id="filter-name" placeholder="Customer name, address, model..." />
+        </div>
+      </section>
+
+      <section class="dashboard-content">
+        <div id="loading" class="loading-state" hidden><p>Loading subscriptions...</p></div>
+        <div id="empty" class="gc-empty" hidden>
+          <p style="font-size: 1.1rem;">No matching customers.</p>
+          <p style="font-size: 0.85rem; margin-top: 8px;">Try a different filter or check back after a customer signs up at <a href="https://generator.bates-electric.com" target="_blank" style="color: var(--accent);">generator.bates-electric.com</a>.</p>
+        </div>
+
+        <!-- Desktop table -->
+        <div class="gc-table-wrap" id="gc-table-wrap" hidden>
+          <table class="gc-table">
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Generator</th>
+                <th>Plan</th>
+                <th>Next Visit</th>
+                <th>Where they&rsquo;re at</th>
+              </tr>
+            </thead>
+            <tbody id="gc-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Mobile cards -->
+        <div class="gc-mobile-card" id="gc-cards"></div>
+      </section>
     </div>
-
-    <section class="dashboard-filters">
-      <div class="filter-group">
-        <label for="filter-name">Search</label>
-        <input type="text" id="filter-name" placeholder="Customer name, address, model..." />
-      </div>
-    </section>
-
-    <section class="dashboard-content">
-      <div id="loading" class="loading-state" hidden><p>Loading subscriptions...</p></div>
-      <div id="empty" class="gc-empty" hidden>
-        <p style="font-size: 1.1rem;">No matching customers.</p>
-        <p style="font-size: 0.85rem; margin-top: 8px;">Try a different filter or check back after a customer signs up at <a href="https://generator.bates-electric.com" target="_blank" style="color: var(--accent);">generator.bates-electric.com</a>.</p>
-      </div>
-
-      <!-- Desktop table -->
-      <div class="gc-table-wrap" id="gc-table-wrap" hidden>
-        <table class="gc-table">
-          <thead>
-            <tr>
-              <th>Customer</th>
-              <th>Generator</th>
-              <th>Plan</th>
-              <th>Next Visit</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="gc-tbody"></tbody>
-        </table>
-      </div>
-
-      <!-- Mobile cards -->
-      <div class="gc-mobile-card" id="gc-cards"></div>
-    </section>
 
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
