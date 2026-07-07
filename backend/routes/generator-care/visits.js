@@ -66,6 +66,21 @@ router.post('/visits/:id/schedule', async (req, res) => {
     });
     if (!updated) return res.status(404).json({ error: 'visit not found or already completed' });
 
+    // Booking settles any pending customer appointment preferences for this
+    // visit (customer dashboard v2) — they flip to 'used' so the office modal
+    // and the customer's hero stop showing them. Best-effort: booking must
+    // never fail because the 016 migration isn't applied yet.
+    try {
+      const { error: prefErr } = await supabaseAdmin
+        .from('generator_visit_preferences')
+        .update({ status: 'used' })
+        .eq('visit_id', id)
+        .eq('status', 'pending');
+      if (prefErr) console.log('[generator-care] preference mark-used skipped:', prefErr.message);
+    } catch (e) {
+      console.log('[generator-care] preference mark-used skipped:', e && e.message);
+    }
+
     // Notify the customer their appointment is booked (existing template). Future
     // SMS confirmation hangs off THIS point. Pass the date part — template-safe.
     const sub = updated.subscription;

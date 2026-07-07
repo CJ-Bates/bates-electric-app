@@ -21,6 +21,11 @@
 
   // Latest overview payload — the single source every render reads from.
   let overview = null;
+  // Live-Stripe billing (renewal, pending change, receipts) loads SEPARATELY
+  // from the fast overview so it never blocks first paint.
+  let billingState = 'loading'; // 'loading' | 'done' | 'failed'
+  // Whether the hero's appointment-preferences form is expanded.
+  let prefsFormOpen = false;
 
   // ---------------------------------------------------------------------------
   // Magic-link landing: Supabase redirects back with tokens in the hash
@@ -98,10 +103,21 @@
     $('view-loading').hidden = name !== 'loading';
     $('view-dash').hidden = name !== 'dash';
     $('signout-btn').hidden = name === 'signin';
-    if (name !== 'loading') {
-      $('loading-msg').textContent = 'Loading your dashboard…';
+    if (name === 'loading') {
+      // Skeleton shell while loading; the message + retry only appear on failure.
+      $('loading-skel').hidden = false;
+      $('loading-msg').hidden = true;
       $('retry-btn').hidden = true;
     }
+  }
+
+  // Flip the loading view from skeletons to a failure message + retry.
+  function showLoadFailure(message) {
+    showView('loading');
+    $('loading-skel').hidden = true;
+    $('loading-msg').hidden = false;
+    $('loading-msg').textContent = message;
+    $('retry-btn').hidden = false;
   }
 
   function clearMyKeys() {
@@ -234,6 +250,15 @@
   // ---------------------------------------------------------------------------
   async function loadOverview(quiet) {
     if (!quiet) showView('loading');
+    billingState = 'loading';
+    prefsFormOpen = false;
+    // Both requests go out together: /overview (our DB — fast) paints the
+    // page; /billing (live Stripe) fills the renewal line + receipts when it
+    // lands. A billing hiccup degrades those sections, never the page.
+    const billingPromise = api('/api/my/billing').then(
+      (r) => ({ ok: true, r }),
+      (err) => ({ ok: false, err })
+    );
     try {
       overview = await api('/api/my/overview');
       render(overview);
@@ -248,11 +273,23 @@
         return;
       }
       if (quiet && overview) { surface(err); return; }
-      showView('loading');
-      $('loading-msg').textContent = 'We couldn’t load your dashboard.';
-      $('retry-btn').hidden = false;
+      showLoadFailure('We couldn’t load your dashboard.');
       surface(err);
+      return;
     }
+    const b = await billingPromise;
+    if (b.ok) {
+      billingState = 'done';
+      overview.plan.billing = (b.r && b.r.billing) || null;
+      overview.invoices = (b.r && b.r.invoices) || [];
+    } else {
+      if (b.err && b.err.expired) return;
+      billingState = 'failed';
+      overview.invoices = [];
+    }
+    renderPlan(overview.plan);
+    renderReceipts(overview.invoices || []);
+    renderCancelCard(overview.plan);
   }
 
   function applyBranding(branding) {
@@ -296,21 +333,113 @@
 
   function renderHero(nextVisit) {
     const card = $('hero-card');
+    const prefs = $('hero-prefs');
     if (!nextVisit || (!nextVisit.appointment_at && !nextVisit.due_date)) {
       card.hidden = true;
       return;
     }
     card.hidden = false;
     if (nextVisit.appointment_at) {
+      // Booked: the confirmed slot owns the hero; preferences are done.
       $('hero-k').textContent = 'Next service visit';
       $('hero-when').textContent = fmtAppointment(nextVisit.appointment_at);
       $('hero-who').textContent = 'Regular maintenance service — we’ll confirm the day before.';
       $('btn-calendar').hidden = false;
+      $('btn-reschedule').hidden = false;
+      prefs.hidden = true;
+      prefs.innerHTML = '';
     } else {
+      // Not booked yet: the customer proposes times; the office confirms
+      // (typically about two weeks before the due date).
       $('hero-k').textContent = 'Next service visit — to be scheduled';
       $('hero-when').textContent = 'Due ' + fmtDate(nextVisit.due_date);
-      $('hero-who').textContent = 'We’ll call to schedule a time that works for you.';
+      $('hero-who').textContent = 'Pick times that work for you below, or we’ll call to schedule.';
       $('btn-calendar').hidden = true;
+      $('btn-reschedule').hidden = true;
+      prefs.hidden = false;
+      renderHeroPrefs(nextVisit);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Appointment preferences (hero, unscheduled visits only)
+  // ---------------------------------------------------------------------------
+  const WINDOW_LABELS = { AM: 'Morning (8–12)', PM: 'Afternoon (12–4)' };
+  const PREFS_RECEIVED_COPY = 'Preferences received — we’ll confirm your appointment, typically about two weeks before it’s due.';
+
+  function windowLabel(w) { return WINDOW_LABELS[w] || w || ''; }
+
+  function tomorrowStr() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function renderHeroPrefs(nv) {
+    if (!nv) return;
+    const el = $('hero-prefs');
+    const p = nv.preferences;
+    if (prefsFormOpen) {
+      const existing = (p && p.slots) || [];
+      const rows = [0, 1, 2].map((i) => {
+        const s = existing[i] || {};
+        return '<div class="pref-row">'
+          + '<input type="date" data-pref-date min="' + tomorrowStr() + '" value="' + esc(s.date || '') + '" aria-label="Preferred date ' + (i + 1) + '">'
+          + '<select data-pref-window aria-label="Time of day ' + (i + 1) + '">'
+          + '<option value="AM"' + (s.window === 'PM' ? '' : ' selected') + '>' + esc(WINDOW_LABELS.AM) + '</option>'
+          + '<option value="PM"' + (s.window === 'PM' ? ' selected' : '') + '>' + esc(WINDOW_LABELS.PM) + '</option>'
+          + '</select></div>';
+      }).join('');
+      el.innerHTML = '<div class="pref-form">'
+        + '<label>Preferred times — up to three</label>'
+        + rows
+        + '<textarea data-pref-note rows="2" placeholder="Anything else? Gate code, best number to reach you… (optional)">' + esc((p && p.note) || '') + '</textarea>'
+        + '<div class="row"><button class="btn btn-onhero" data-action="prefs-submit">Send preferences</button>'
+        + '<button class="btn btn-onhero" data-action="prefs-cancel">Cancel</button></div>'
+        + '</div>';
+      return;
+    }
+    if (p && p.slots && p.slots.length) {
+      el.innerHTML = '<div class="pref-list"><b>Your preferred times</b><br>'
+        + p.slots.map((s, i) => (i + 1) + ') ' + esc(fmtDate(s.date)) + ' · ' + esc(windowLabel(s.window))).join('<br>')
+        + '</div>'
+        + '<div class="pref-copy">' + esc(PREFS_RECEIVED_COPY) + ' You can change them until we confirm.</div>'
+        + '<div class="row" style="margin-top:10px"><button class="btn btn-onhero" data-action="prefs-open">Change preferences</button></div>';
+    } else {
+      el.innerHTML = '<div class="pref-copy">Tell us up to three times that work for you — we’ll confirm your appointment, typically about two weeks before it’s due.</div>'
+        + '<div class="row" style="margin-top:10px"><button class="btn btn-onhero" data-action="prefs-open">Pick your preferred times</button></div>';
+    }
+  }
+
+  async function onPrefsSubmit(btn) {
+    const form = $('hero-prefs');
+    const dates = Array.prototype.slice.call(form.querySelectorAll('[data-pref-date]'));
+    const windows = Array.prototype.slice.call(form.querySelectorAll('[data-pref-window]'));
+    const slots = [];
+    for (let i = 0; i < dates.length; i++) {
+      const date = (dates[i].value || '').trim();
+      if (!date) continue;
+      slots.push({ date, window: windows[i] ? windows[i].value : 'AM' });
+    }
+    if (!slots.length) {
+      showStatus('Pick at least one preferred date.', 'warning');
+      return;
+    }
+    const noteEl = form.querySelector('[data-pref-note]');
+    btn.disabled = true;
+    try {
+      const r = await api('/api/my/visit-preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slots, note: (noteEl && noteEl.value) || '' }),
+      });
+      if (overview && overview.next_visit) overview.next_visit.preferences = r.preferences;
+      prefsFormOpen = false;
+      renderHero(overview && overview.next_visit);
+      showStatus(PREFS_RECEIVED_COPY, 'success');
+    } catch (err) {
+      btn.disabled = false;
+      surface(err);
     }
   }
 
@@ -328,18 +457,35 @@
       '<div class="kv"><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>').join('');
   }
 
+  const CHECK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5 9.5 18 20 6.5"/></svg>';
+
   function visitRowHtml(v) {
     if (v.status === 'completed') {
+      // Itemize the visit: the standard plan checklist, add-on services
+      // performed that day, then the tech's notes and photos. On-demand
+      // visits skip the checklist — it's the PLAN visits that include it.
+      const items = v.is_plan_visit ? ((overview && overview.plan && overview.plan.visit_items) || []) : [];
+      const planBlock = items.length
+        ? '<div class="plan-items"><b>Included in your plan</b><ul>'
+          + items.map((it) => '<li>' + CHECK_SVG + '<span>' + esc(it) + '</span></li>').join('')
+          + '</ul></div>'
+        : '';
+      const addonsBlock = (v.performed_addons && v.performed_addons.length)
+        ? '<div class="plan-items"><b>Add-on services this visit</b><ul>'
+          + v.performed_addons.map((a) =>
+              '<li class="addon">' + CHECK_SVG + '<span>' + esc(a.label) + ' — performed</span></li>').join('')
+          + '</ul></div>'
+        : '';
       const note = v.notes
         ? '<div class="note"><b>Technician notes</b>' + esc(v.notes) + '</div>'
         : '';
       const photos = (v.photos && v.photos.length)
-        ? '<div class="photos">' + v.photos.map((url) =>
-            '<a href="' + esc(url) + '" target="_blank" rel="noopener"><img src="' + esc(url) + '" alt="Visit photo" loading="lazy"></a>').join('') + '</div>'
+        ? '<div class="photos">' + v.photos.map((url, i) =>
+            '<button type="button" class="ph-btn" data-action="open-photo" data-visit="' + esc(v.id) + '" data-idx="' + i + '" aria-label="View photo ' + (i + 1) + '"><img src="' + esc(url) + '" alt="Visit photo" loading="lazy"></button>').join('') + '</div>'
         : '';
       return '<div class="visit">'
         + '<div class="head"><span class="date">' + esc(fmtDate(v.completed_date)) + '</span><span class="badge badge-neutral">Completed</span></div>'
-        + note + photos
+        + planBlock + addonsBlock + note + photos
         + '</div>';
     }
     // scheduled / upcoming
@@ -409,6 +555,9 @@
     } else if (billing && billing.current_period_end) {
       rows.push(['Renews', esc(fmtDate(billing.current_period_end)
         + (billing.current_renewal_amount_cents != null ? ' · ' + money(billing.current_renewal_amount_cents) : ''))]);
+    } else if (billingState === 'loading') {
+      // Billing is still on its way from Stripe — hold the row with a skeleton.
+      rows.push(['Renews', '<span class="skel" style="margin:0;height:12px;display:inline-block;width:140px"></span>']);
     }
     rows.push(['Status', planStatusBadge(plan.status)]);
     $('plan-kv').innerHTML = rows.map(([k, v]) =>
@@ -473,6 +622,14 @@
 
   function renderReceipts(invoices) {
     const el = $('receipts');
+    if (billingState === 'loading') {
+      el.innerHTML = '<span class="skel skel-lg"></span><span class="skel skel-md"></span>';
+      return;
+    }
+    if (billingState === 'failed') {
+      el.innerHTML = '<p class="hint" style="margin:0">We couldn’t load your receipts right now — refresh to try again.</p>';
+      return;
+    }
     if (!invoices.length) {
       el.innerHTML = '<p class="hint" style="margin:0">No receipts yet — payment receipts will appear here.</p>';
       return;
@@ -734,6 +891,15 @@
       else if (action === 'resend-receipt') onResendReceipt(el.dataset.id);
       else if (action === 'cancel-plan') onCancelPlan();
       else if (action === 'retry') loadOverview();
+      else if (action === 'open-photo') {
+        const visit = ((overview && overview.visits) || []).find((v) => v.id === el.dataset.visit);
+        if (visit && visit.photos && visit.photos.length) {
+          window.BatesLightbox.open(visit.photos, parseInt(el.dataset.idx, 10) || 0);
+        }
+      }
+      else if (action === 'prefs-open') { prefsFormOpen = true; renderHeroPrefs(overview && overview.next_visit); }
+      else if (action === 'prefs-cancel') { prefsFormOpen = false; renderHeroPrefs(overview && overview.next_visit); }
+      else if (action === 'prefs-submit') onPrefsSubmit(el);
       else if (action === 'show-older') {
         const older = $('older-visits');
         if (older) older.hidden = false;

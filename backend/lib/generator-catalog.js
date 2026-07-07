@@ -120,6 +120,44 @@ const ADDON_CATALOG = {
   },
 };
 
+// Standard services performed on EVERY plan visit, by gen class — the
+// "Included in your plan" checklist the customer dashboard itemizes on each
+// completed visit. Wording mirrors the official included-services list the
+// customer agreed to at signup (bates-generator index.html GENERATORS[..]
+// .included); both liquid-cooled tiers share one checklist.
+const PLAN_VISIT_ITEMS = {
+  air_cooled: [
+    'Inspect enclosure louvers for dirt and debris',
+    'Check fuel and oil lines for leaks',
+    'Check engine oil level',
+    'Inspect for water intrusion',
+    'Perform fuel system leak test',
+    'Check battery voltage and amperage',
+    'Replace engine oil and filter',
+    'Replace engine air filter',
+    'Replace spark plugs',
+  ],
+  liquid_22_38: [
+    'Inspect enclosure slots and openings',
+    'Inspect fuel hoses',
+    'Inspect coolant level and hoses',
+    'Inspect radiator for clogging',
+    'Inspect lubricating oil level and drain hose',
+    'Check battery voltage and amperage',
+    'Replace lubricating oil and oil filter',
+    'Inspect accessory drive belt for wear',
+    'Replace air filter element',
+    'Replace spark plugs',
+    'Tighten critical fasteners',
+  ],
+};
+PLAN_VISIT_ITEMS.liquid_48_150 = PLAN_VISIT_ITEMS.liquid_22_38;
+
+// Checklist for a gen class (empty array when the class is unknown).
+function planVisitItems(genClass) {
+  return PLAN_VISIT_ITEMS[genClass] || [];
+}
+
 // Price (price_id + amount_cents) for an add-on at a gen class, or null if N/A.
 function lookupAddonPrice(addonType, genClass) {
   const entry = ADDON_CATALOG[addonType];
@@ -149,6 +187,8 @@ module.exports = {
   isFleetPriceId,
   annualPriceCents,
   ADDON_CATALOG,
+  PLAN_VISIT_ITEMS,
+  planVisitItems,
   lookupAddonPrice,
   isRecurringAddon,
   recurringAddonTypes,

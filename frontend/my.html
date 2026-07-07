@@ -63,9 +63,17 @@
     .visit .meta{font-size:13px;color:var(--ink-2)}
     .visit .note{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px;margin-top:10px;font-size:13.5px;color:var(--ink-2);white-space:pre-line}
     .visit .note b{color:var(--ink);display:block;font-size:12px;margin-bottom:2px;white-space:normal}
+
+    /* Per-visit itemization: the plan checklist + add-on services performed */
+    .plan-items{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px;margin-top:10px}
+    .plan-items b{color:var(--ink);display:block;font-size:12px;margin-bottom:4px}
+    .plan-items ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(225px,1fr));gap:3px 16px}
+    .plan-items li{display:flex;gap:7px;align-items:flex-start;font-size:13px;color:var(--ink-2);line-height:1.45}
+    .plan-items li svg{flex-shrink:0;color:var(--ok);margin-top:3px}
+    .plan-items li.addon{font-weight:600;color:var(--ink)}
     .photos{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
     .ph{width:64px;height:64px;border-radius:8px;background:linear-gradient(135deg,var(--navy-100),var(--navy-50));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-3)}
-    .photos a{display:block;width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+    .photos a,.photos .ph-btn{display:block;width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--line);padding:0;background:none;cursor:pointer}
     .photos img{width:100%;height:100%;object-fit:cover;display:block}
 
     .receipt{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
@@ -92,6 +100,23 @@
 
     .loading-msg{text-align:center;color:var(--ink-2);padding:60px 0 20px;font-size:14px}
     .loading-actions{text-align:center;padding-bottom:40px}
+
+    /* Skeleton placeholders (v3 pattern, same shapes generator-care uses) */
+    @keyframes skel-pulse{0%,100%{background-color:var(--neutral-bg)}50%{background-color:var(--surface-2)}}
+    .skel{display:block;background:var(--neutral-bg);border-radius:4px;animation:skel-pulse 1.5s ease-in-out infinite;height:14px;margin:8px 0}
+    .skel-sm{width:120px}.skel-md{width:200px}.skel-lg{width:280px;max-width:100%}
+
+    /* Appointment preferences on the hero (dark navy background) */
+    .hero .prefs{margin-top:14px;border-top:1px solid rgba(255,255,255,.2);padding-top:12px}
+    .hero .prefs .pref-copy{font-size:13px;opacity:.85;margin:8px 0 0}
+    .hero .prefs .pref-list{margin:8px 0 0;font-size:13.5px;line-height:1.7}
+    .pref-form{color-scheme:dark;display:flex;flex-direction:column;gap:8px;margin-top:10px}
+    .pref-form label{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;opacity:.75}
+    .pref-row{display:flex;gap:8px}
+    .pref-row input[type=date]{flex:1;min-width:0}
+    .pref-form input,.pref-form select,.pref-form textarea{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:8px;padding:9px 10px;font-family:var(--font);font-size:14px}
+    .pref-form textarea{resize:vertical;min-height:44px}
+    .pref-form ::placeholder{color:rgba(255,255,255,.55)}
 
     .status{position:fixed;bottom:24px;right:24px;left:auto;max-width:min(420px,calc(100vw - 32px));z-index:2000;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:var(--radius-sm);background:var(--navy-900);color:#fff;font-size:13.5px;font-weight:600;box-shadow:var(--shadow-2)}
     .status::before{content:"";width:8px;height:8px;border-radius:50%;flex-shrink:0}
@@ -131,9 +156,14 @@
     </div>
   </section>
 
-  <!-- Loading -->
+  <!-- Loading: skeleton shell, never a blank screen -->
   <section id="view-loading" hidden>
-    <div class="loading-msg" id="loading-msg">Loading your dashboard…</div>
+    <div id="loading-skel" aria-hidden="true">
+      <div class="card"><span class="skel skel-sm"></span><span class="skel skel-lg" style="height:22px"></span><span class="skel skel-md"></span></div>
+      <div class="card"><span class="skel skel-md" style="height:16px"></span><span class="skel skel-lg"></span><span class="skel skel-lg"></span><span class="skel skel-sm"></span></div>
+      <div class="card"><span class="skel skel-md" style="height:16px"></span><span class="skel skel-lg"></span><span class="skel skel-md"></span></div>
+    </div>
+    <div class="loading-msg" id="loading-msg" hidden>Loading your dashboard…</div>
     <div class="loading-actions"><button class="btn btn-secondary" id="retry-btn" data-action="retry" hidden>Try again</button></div>
   </section>
 
@@ -150,6 +180,7 @@
         <button class="btn btn-onhero" id="btn-reschedule">Request a different time</button>
         <button class="btn btn-onhero" id="btn-calendar" hidden>Add to calendar</button>
       </div>
+      <div class="prefs" id="hero-prefs" hidden></div>
     </div>
 
     <div class="card">
@@ -200,6 +231,7 @@
 <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
 <script src="ui-dialogs.js"></script>
+<script src="photo-lightbox.js"></script>
 <script src="my.js"></script>
 </body>
 </html>

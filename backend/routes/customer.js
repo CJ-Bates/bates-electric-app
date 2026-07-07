@@ -106,7 +106,11 @@ async function ctxOr403(req, res) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/my/overview — everything the dashboard needs in one call.
+// GET /api/my/overview — everything the dashboard needs that lives in OUR
+// database. Deliberately NO Stripe calls here: live billing (renewal amount,
+// pending plan change, invoices) comes from GET /api/my/billing, which the
+// page fires right after this one — visits/photos/plan paint immediately and
+// billing fills in a beat later.
 // ---------------------------------------------------------------------------
 router.get('/overview', readLimiter, async (req, res) => {
   try {
@@ -153,22 +157,35 @@ router.get('/overview', readLimiter, async (req, res) => {
     }
 
     // Add-ons: pending/performed one-time set + the standing (auto-return) set.
+    // Charged rows are ALSO fetched — not for the add-ons card, but so each
+    // completed visit can itemize the add-on work done that day.
     const { data: addonRows, error: aErr } = await supabaseAdmin
       .from('generator_pending_addons')
-      .select('id, addon_type, amount_cents, status, date_performed')
+      .select('id, addon_type, amount_cents, status, date_performed, service_visit_id')
       .eq('subscription_id', sub.id)
-      .in('status', ['pending', 'performed'])
+      .in('status', ['pending', 'performed', 'charged'])
       .order('created_at', { ascending: true });
     if (aErr) throw aErr;
     const labelFor = (t) => (catalog.ADDON_CATALOG[t] && catalog.ADDON_CATALOG[t].label) || t;
-    const addons = (addonRows || []).map((a) => ({
-      id: a.id,
-      label: labelFor(a.addon_type),
-      addon_type: a.addon_type,
-      amount_cents: a.amount_cents,
-      status: a.status,
-      removable: a.status === 'pending',
-    }));
+    const addons = (addonRows || [])
+      .filter((a) => a.status === 'pending' || a.status === 'performed')
+      .map((a) => ({
+        id: a.id,
+        label: labelFor(a.addon_type),
+        addon_type: a.addon_type,
+        amount_cents: a.amount_cents,
+        status: a.status,
+        removable: a.status === 'pending',
+      }));
+    // Add-on work by visit: performed or charged, attached to a visit. Names
+    // only — never amounts-owed language on the visit history.
+    const performedByVisit = {};
+    for (const a of addonRows || []) {
+      if (!a.service_visit_id) continue;
+      if (a.status !== 'performed' && a.status !== 'charged') continue;
+      (performedByVisit[a.service_visit_id] = performedByVisit[a.service_visit_id] || [])
+        .push({ label: labelFor(a.addon_type), date_performed: a.date_performed });
+    }
     const standing = (sub.standing_addons || []).map((t) => {
       const price = catalog.lookupAddonPrice(t, sub.gen_class);
       return { addon_type: t, label: labelFor(t), amount_cents: price ? price.amount_cents : null };
@@ -181,40 +198,32 @@ router.get('/overview', readLimiter, async (req, res) => {
       })
       .filter(Boolean);
 
-    // Live Stripe: renewal + pending plan change + paid invoices.
-    let planBilling = null;
-    let invoices = [];
-    if (sub.stripe_customer_id) {
-      const [subResult, invoiceResult] = await Promise.allSettled([
-        sub.stripe_subscription_id
-          ? stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] })
-          : Promise.resolve(null),
-        stripe.invoices.list({ customer: sub.stripe_customer_id, status: 'paid', limit: 24 }),
-      ]);
-      if (subResult.status === 'fulfilled' && subResult.value) {
-        planBilling = computePlanBilling(subResult.value);
-        planBilling.cancel_at_period_end = !!subResult.value.cancel_at_period_end;
-      } else if (subResult.status === 'rejected') {
-        console.error('[my] subscription retrieve failed:', subResult.reason && subResult.reason.message);
-      }
-      if (invoiceResult.status === 'fulfilled') {
-        invoices = (invoiceResult.value.data || []).map((inv) => ({
-          id: inv.id,
-          date: inv.created ? new Date(inv.created * 1000).toISOString().slice(0, 10) : null,
-          description: (inv.lines && inv.lines.data && inv.lines.data[0] && inv.lines.data[0].description) || 'Generator Care',
-          amount_cents: inv.amount_paid || 0,
-          hosted_invoice_url: inv.hosted_invoice_url || null,
-        }));
-      } else {
-        console.error('[my] invoices.list failed:', invoiceResult.reason && invoiceResult.reason.message);
-      }
-    }
-
     // Next visit: earliest open one.
     const open = visits.filter((v) => v.status !== 'completed' && !v.completed_date);
     open.sort((a, b) => String(a.appointment_at || a.scheduled_date || '9999')
       .localeCompare(String(b.appointment_at || b.scheduled_date || '9999')));
     const nextVisit = open[0] || null;
+
+    // The customer's pending appointment preferences for that visit — graceful
+    // no-op when the 016 migration isn't applied yet (same pattern as photos).
+    let preferences = null;
+    if (nextVisit) {
+      try {
+        const { data: prefRow, error: prefErr } = await supabaseAdmin
+          .from('generator_visit_preferences')
+          .select('slots, note, created_at')
+          .eq('visit_id', nextVisit.id)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!prefErr && prefRow) {
+          preferences = { slots: prefRow.slots || [], note: prefRow.note || '', created_at: prefRow.created_at };
+        }
+      } catch (e) {
+        console.log('[my] visit preferences unavailable (migration pending?):', e && e.message);
+      }
+    }
 
     const planLabel = sub.plan === 'semi_annual'
       ? 'Semi-Annual — 2 visits/year'
@@ -245,17 +254,24 @@ router.get('/overview', readLimiter, async (req, res) => {
         label: planLabel,
         status: sub.status,
         service_through: (sub.raw_metadata && sub.raw_metadata.service_through) || null,
-        billing: planBilling, // { current_period_end, current_renewal_amount_cents, pending_change, cancel_at_period_end }
+        billing: null, // live Stripe billing arrives via GET /api/my/billing
         other_plan: sub.plan === 'annual' ? 'semi_annual' : 'annual',
+        // Standard services performed on every plan visit (keyed by gen class)
+        // — the "Included in your plan" checklist on completed visits.
+        visit_items: catalog.planVisitItems(sub.gen_class),
       },
       next_visit: nextVisit && {
         id: nextVisit.id,
         appointment_at: nextVisit.appointment_at,
         due_date: nextVisit.scheduled_date,
         status: nextVisit.status,
+        preferences, // { slots, note, created_at } | null — pending only
       },
       visits: visits.map((v) => ({
         id: v.id,
+        // The plan checklist only applies to regular plan visits — an
+        // on-demand trip didn't include the full service list.
+        is_plan_visit: v.visit_type === 'regular_service',
         status: (v.completed_date || v.status === 'completed') ? 'completed'
           : (v.appointment_at ? 'scheduled' : 'upcoming'),
         appointment_at: v.appointment_at,
@@ -263,12 +279,152 @@ router.get('/overview', readLimiter, async (req, res) => {
         completed_date: v.completed_date,
         notes: v.notes || null,
         photos: photosByVisit[v.id] || [],
+        performed_addons: performedByVisit[v.id] || [],
       })),
       addons: { pending: addons, standing, available: availableAddons },
-      invoices,
     });
   } catch (err) {
     console.error('[my] overview error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/my/billing — the live-Stripe half of the dashboard: renewal amount,
+// pending plan change, cancel-at-period-end, paid invoices. Fired by the page
+// right after /overview so the Stripe round-trips never block first paint.
+// Independent reads run in parallel; if one fails the other still returns
+// (billing: null / invoices: []) — never a 500 for a partial outage.
+// ---------------------------------------------------------------------------
+router.get('/billing', readLimiter, async (req, res) => {
+  try {
+    const ctx = await ctxOr403(req, res);
+    if (!ctx) return;
+    const { sub } = ctx;
+
+    let planBilling = null;
+    let invoices = [];
+    if (sub.stripe_customer_id) {
+      const [subResult, invoiceResult] = await Promise.allSettled([
+        sub.stripe_subscription_id
+          ? stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] })
+          : Promise.resolve(null),
+        stripe.invoices.list({ customer: sub.stripe_customer_id, status: 'paid', limit: 24 }),
+      ]);
+      if (subResult.status === 'fulfilled' && subResult.value) {
+        planBilling = computePlanBilling(subResult.value);
+        planBilling.cancel_at_period_end = !!subResult.value.cancel_at_period_end;
+      } else if (subResult.status === 'rejected') {
+        console.error('[my] subscription retrieve failed:', subResult.reason && subResult.reason.message);
+      }
+      if (invoiceResult.status === 'fulfilled') {
+        invoices = (invoiceResult.value.data || []).map((inv) => ({
+          id: inv.id,
+          date: inv.created ? new Date(inv.created * 1000).toISOString().slice(0, 10) : null,
+          description: (inv.lines && inv.lines.data && inv.lines.data[0] && inv.lines.data[0].description) || 'Generator Care',
+          amount_cents: inv.amount_paid || 0,
+          hosted_invoice_url: inv.hosted_invoice_url || null,
+        }));
+      } else {
+        console.error('[my] invoices.list failed:', invoiceResult.reason && invoiceResult.reason.message);
+      }
+    }
+
+    res.json({ billing: planBilling, invoices });
+  } catch (err) {
+    console.error('[my] billing error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/my/visit-preferences — the customer proposes up to three
+// date + AM/PM windows for their next open visit. Stores them (replacing any
+// still-pending submission for that visit) + emails the office. The office
+// confirms via the existing booking flow — typically about two weeks before
+// the visit is due — which marks these used and sends the confirmation email.
+// ---------------------------------------------------------------------------
+const PREF_WINDOWS = { AM: 'morning (8am–noon)', PM: 'afternoon (noon–4pm)' };
+
+router.post('/visit-preferences', writeLimiter, async (req, res) => {
+  try {
+    const ctx = await ctxOr403(req, res);
+    if (!ctx) return;
+    const { customer, sub } = ctx;
+
+    // Validate: 1-3 future dates, each with an AM/PM window. Today (Central)
+    // is the cutoff — same-day proposals aren't schedulable anyway.
+    const raw = Array.isArray(req.body && req.body.slots) ? req.body.slots.slice(0, 3) : [];
+    const todayCentral = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const slots = [];
+    const seen = new Set();
+    for (const s of raw) {
+      const date = str(s && s.date, 10);
+      const window = str(s && s.window, 2).toUpperCase();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(date + 'T12:00:00').getTime())) {
+        return res.status(400).json({ error: 'One of the dates is not valid.' });
+      }
+      if (date <= todayCentral) {
+        return res.status(400).json({ error: 'Preferred dates need to be in the future.' });
+      }
+      if (!PREF_WINDOWS[window]) {
+        return res.status(400).json({ error: 'Pick morning or afternoon for each date.' });
+      }
+      const key = date + window;
+      if (seen.has(key)) continue; // silently drop exact duplicates
+      seen.add(key);
+      slots.push({ date, window });
+    }
+    if (!slots.length) return res.status(400).json({ error: 'Pick at least one preferred date.' });
+    const note = str(req.body && req.body.note, 500);
+
+    // Their next open visit — server-resolved, never a client-sent visit id.
+    const { data: openVisit, error: ovErr } = await supabaseAdmin
+      .from('generator_service_visits')
+      .select('id, appointment_at, scheduled_date')
+      .eq('subscription_id', sub.id)
+      .is('completed_date', null)
+      .neq('status', 'canceled')
+      .order('scheduled_date', { ascending: true, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    if (ovErr) throw ovErr;
+    if (!openVisit) {
+      return res.status(400).json({ error: 'No upcoming visit to schedule yet — we’ll reach out when your next one comes due.' });
+    }
+
+    // Resubmit replaces: clear any still-pending submission for this visit,
+    // then store the new one. Used/dismissed rows stay for history.
+    const { error: clearErr } = await supabaseAdmin
+      .from('generator_visit_preferences')
+      .update({ status: 'dismissed' })
+      .eq('visit_id', openVisit.id)
+      .eq('status', 'pending');
+    if (clearErr) throw clearErr;
+    const { data: inserted, error: insErr } = await supabaseAdmin
+      .from('generator_visit_preferences')
+      .insert({ visit_id: openVisit.id, slots, note: note || null, status: 'pending' })
+      .select('slots, note, created_at')
+      .single();
+    if (insErr) throw insErr;
+
+    // Heads-up to the office mailbox (same convention as reschedule requests).
+    const slotLines = slots.map((s, i) => `  ${i + 1}) ${fmtDate(s.date)} — ${PREF_WINDOWS[s.window]}`).join('\n');
+    const dueStr = openVisit.scheduled_date ? `due ${fmtDate(openVisit.scheduled_date)}` : 'no due date on record';
+    const officeLine = `Customer ${customer.name} (${customer.email}) proposed appointment times for their next visit (${dueStr}):\n${slotLines}`
+      + (note ? `\nNote: ${note}` : '')
+      + '\n\nOpen their card in the dashboard to book one — booking marks these handled and emails the customer their confirmation.';
+    await sendEmail({
+      to: OFFICE_NOTIFY_TO,
+      subject: `[Generator Care] Appointment preferences — ${customer.name}`,
+      html: `<p style="font-family:system-ui,sans-serif;font-size:14px;white-space:pre-line;">${officeLine.replace(/</g, '&lt;')}</p>`,
+      text: officeLine,
+      logTag: '[my-visit-preferences]',
+    });
+
+    res.json({ ok: true, preferences: { slots: inserted.slots, note: inserted.note || '', created_at: inserted.created_at } });
+  } catch (err) {
+    console.error('[my] visit-preferences error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

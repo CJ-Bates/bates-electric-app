@@ -45,13 +45,14 @@ const BRAND = {
 
 // Customer self-serve dashboard — the canonical URL used by every customer
 // touchpoint (welcome, receipt, visit-complete, shared footer). No password:
-// customers sign in with their email. my.bates-electric.com fronts the same
-// page as https://app.bates-electric.com/my.html — if the my. domain ever
-// lapses, app URLs stay valid. (my.bates-electric.com verified resolving
-// 2026-07-07.)
-const DASHBOARD_URL = 'https://my.bates-electric.com';
-// Bare-host display form for quiet inline mentions in body copy and the footer.
-const DASHBOARD_DISPLAY = 'my.bates-electric.com';
+// customers sign in with their email.
+// Switch to https://my.bates-electric.com once its TLS cert is verified live.
+// (As of 2026-07-07 the my. cert hasn't finished provisioning — browsers show
+// a "connection not private" warning — while app.bates-electric.com/my serves
+// the same page with a valid cert.)
+const DASHBOARD_URL = 'https://app.bates-electric.com/my';
+// Display form for quiet inline mentions in body copy and the footer.
+const DASHBOARD_DISPLAY = 'app.bates-electric.com/my';
 
 // Resolve the per-customer brand from an install-address state. Florida =>
 // "S.E. Bates Electric" + its logo (if configured); everywhere else the default.

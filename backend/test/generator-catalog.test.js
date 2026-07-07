@@ -129,3 +129,20 @@ test('every add-on has a human label (what receipts/batch charges render)', () =
     assert.ok(entry.label && typeof entry.label === 'string' && entry.label.length > 3, type);
   }
 });
+
+test('planVisitItems: every sellable gen class has a per-visit checklist', () => {
+  // The customer dashboard itemizes these on every completed visit — a class
+  // with an empty checklist would silently render nothing.
+  for (const genClass of Object.keys(catalog.SUBSCRIPTION_CATALOG)) {
+    const items = catalog.planVisitItems(genClass);
+    assert.ok(Array.isArray(items) && items.length >= 5, `${genClass} checklist`);
+    for (const item of items) {
+      assert.ok(typeof item === 'string' && item.length > 5, `${genClass}: ${item}`);
+    }
+  }
+  // Air- and liquid-cooled checklists genuinely differ; the two liquid tiers share one.
+  assert.notDeepEqual(catalog.planVisitItems('air_cooled'), catalog.planVisitItems('liquid_22_38'));
+  assert.deepEqual(catalog.planVisitItems('liquid_22_38'), catalog.planVisitItems('liquid_48_150'));
+  // Unknown class renders nothing rather than crashing the overview.
+  assert.deepEqual(catalog.planVisitItems('nuclear'), []);
+});
