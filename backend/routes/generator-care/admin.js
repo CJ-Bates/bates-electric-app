@@ -14,6 +14,7 @@ const {
   buildRenewalUpcomingEmail,
   buildCancellationEmail,
 } = require('../../lib/emails');
+const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -126,6 +127,7 @@ router.post('/admin/send-test-email', async (req, res) => {
     return res.json({ ok: true, sent: true, template, to: to.trim(), subject: subjectWithPrefix });
   } catch (err) {
     console.error('[admin/send-test-email] error:', err);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     return res.status(500).json({ error: err.message || 'unknown error' });
   }
 });

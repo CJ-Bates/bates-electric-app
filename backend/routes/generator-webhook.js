@@ -228,13 +228,26 @@ async function handleSubscriptionCreated(subscription) {
     .single();
   if (subErr) throw new Error('insert subscription: ' + subErr.message);
 
-  // 5. First scheduled service visit (capture its id to tie add-ons to this cycle)
-  const { data: firstVisitRow } = await supabase.from('generator_service_visits').insert({
+  // Shared error-report context for the non-throwing writes in this handler. The
+  // webhook must not throw (Stripe retries on 500s), so each write below reports
+  // through the shared sink and continues.
+  const webhookErrCtx = { route: '/webhooks/stripe (customer.subscription.created)', method: 'POST', user: 'stripe-webhook' };
+
+  // 5. First scheduled service visit (capture its id to tie add-ons to this cycle).
+  // If this insert fails silently, firstVisitId stays null and every on-demand
+  // add-on below is written with service_visit_id: null — so report the failure.
+  const { data: firstVisitRow, error: firstVisitErr } = await supabase.from('generator_service_visits').insert({
     subscription_id: sub.id,
     visit_type: 'regular_service',
     scheduled_date: nextStr,
     status: 'tentative',
   }).select('id').single();
+  if (firstVisitErr) {
+    reportError(
+      new Error(`first service visit insert failed for subscription ${sub.id} (customer ${stripeCustomerId}): ${firstVisitErr.message}`),
+      webhookErrCtx
+    ).catch(() => {});
+  }
   const firstVisitId = firstVisitRow ? firstVisitRow.id : null;
 
   // 6. Pending add-ons (billed when performed). Tied to the first visit cycle.
@@ -243,7 +256,6 @@ async function handleSubscriptionCreated(subscription) {
   // the shared error sink and the row is SKIPPED — never inserted with a NULL
   // amount. The handler still must not throw (Stripe retries on 500s); Amy can
   // re-add a skipped add-on from the dashboard.
-  const webhookErrCtx = { route: '/webhooks/stripe (customer.subscription.created)', method: 'POST', user: 'stripe-webhook' };
   let onDemand = [];
   if (meta.on_demand_addons) {
     try {
@@ -297,10 +309,18 @@ async function handleSubscriptionCreated(subscription) {
   const standing = onDemand
     .map((item) => item.addon)
     .filter((t) => catalog.isRecurringAddon(t));
-  await supabase
+  const { error: standingErr } = await supabase
     .from('generator_subscriptions')
     .update({ standing_addons: Array.from(new Set(standing)) })
     .eq('id', sub.id);
+  if (standingErr) {
+    // A silent failure here means recurring add-ons never seed, so they'd stop
+    // reappearing each cycle. Report; the webhook must still not throw.
+    reportError(
+      new Error(`standing_addons seed update failed for subscription ${sub.id} (customer ${stripeCustomerId}): ${standingErr.message}`),
+      webhookErrCtx
+    ).catch(() => {});
+  }
 
   // Welcome email (non-blocking — failures shouldn't break the webhook).
   sendWelcomeEmail({
@@ -564,6 +584,13 @@ async function handleChargeRefunded(charge) {
 
 // Build + send our state-branded refund confirmation for a refunded charge.
 async function sendRefundReceiptEmail(charge) {
+  // Alert on genuine send failures (e.g. a Brevo outage during a refund). Benign
+  // skips (non-generator charge, no matching customer) stay console-only so we
+  // don't alert on every non-generator refund that flows through here.
+  const alert = (message) => reportError(
+    new Error(message),
+    { route: '/webhooks/stripe (charge.refunded)', method: 'POST', user: 'stripe-webhook' }
+  ).catch(() => {});
   try {
     if (!charge || !charge.customer) return { sent: false, reason: 'no customer' };
 
@@ -618,8 +645,27 @@ async function sendRefundReceiptEmail(charge) {
     if (card) { cardBrand = card.brand || null; cardLast4 = card.last4 || null; }
 
     const description = charge.description || 'Generator Care';
-    // Original charge/receipt reference, if Stripe has one.
-    const originalReceiptNumber = charge.receipt_number || charge.id || null;
+    // Original charge/receipt reference — ONLY if Stripe has a real receipt number.
+    // Dropped the charge.id fallback: a raw ch_… would render as the "Original
+    // receipt #" once Stripe's account-level refund email is off. Null omits the line.
+    const originalReceiptNumber = charge.receipt_number || null;
+
+    // Dedupe: charge.refunded is at-least-once, so a retried delivery would send a
+    // SECOND refund email. Stamp refund_receipt_sent_at on the refund object (the
+    // per-refund unit — a later partial refund is a different object and still
+    // sends). Read CURRENT metadata (the event snapshot is stale). Fails open: if
+    // the check itself errors we still send — a rare duplicate beats a missing one.
+    if (latestRefund && latestRefund.id) {
+      try {
+        const fresh = await stripe.refunds.retrieve(latestRefund.id);
+        if (fresh && fresh.metadata && fresh.metadata.refund_receipt_sent_at) {
+          console.log(`[refund-receipt-email] refund receipt already sent for ${latestRefund.id} at ${fresh.metadata.refund_receipt_sent_at}, skipping`);
+          return { sent: false, reason: 'already sent' };
+        }
+      } catch (e) {
+        console.error('[refund-receipt-email] dedupe check failed (sending anyway):', e && e.message);
+      }
+    }
 
     const { subject, html, text } = buildRefundReceiptEmail({
       customer,
@@ -632,9 +678,27 @@ async function sendRefundReceiptEmail(charge) {
       originalReceiptNumber,
       isPartial,
     });
-    return sendEmail({ to: customer.email, subject, html, text, logTag: '[refund-receipt-email]', companyState: customer.install_state });
+    const result = await sendEmail({ to: customer.email, subject, html, text, logTag: '[refund-receipt-email]', companyState: customer.install_state });
+
+    if (result && result.sent) {
+      // Stamp AFTER a confirmed send. Stripe merges metadata keys on update, so
+      // this can't clobber other refund metadata. Best-effort: a failed stamp only
+      // risks a duplicate on retry, never a missing receipt.
+      if (latestRefund && latestRefund.id) {
+        try {
+          await stripe.refunds.update(latestRefund.id, { metadata: { refund_receipt_sent_at: new Date().toISOString() } });
+        } catch (e) {
+          console.error('[refund-receipt-email] failed to stamp refund_receipt_sent_at:', e && e.message);
+        }
+      }
+    } else {
+      // A send failure (Brevo outage / credit cap) used to be console-only — alert.
+      await alert(`refund receipt email send FAILED for charge ${charge.id} to ${customer.email}: ${(result && result.reason) || 'unknown'}`);
+    }
+    return result;
   } catch (e) {
     console.error('[refund-receipt-email] build/send error:', e && e.message);
+    await alert(`refund receipt build/send error for charge ${charge && charge.id}: ${e && e.message}`);
     return { sent: false, reason: 'error' };
   }
 }

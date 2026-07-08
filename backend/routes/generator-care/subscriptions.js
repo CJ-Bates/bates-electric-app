@@ -561,6 +561,16 @@ router.post('/subscriptions/:id/change-plan', requirePermission('billing_actions
       return res.status(400).json({ error: 'Stripe subscription is canceled' });
     }
 
+    // A pending scheduled change would be silently overwritten here: this route
+    // rebuilds ALL phases from the CURRENT live items, so stacking a second change
+    // erases the first (e.g. re-adding Fleet over a scheduled removal). Refuse —
+    // same guard add-fleet and tier-change already use.
+    const sched0 = subscription.schedule;
+    const sched0Status = sched0 && typeof sched0 === 'object' ? sched0.status : (sched0 ? 'active' : null);
+    if (sched0 && (sched0Status === 'active' || sched0Status === 'not_started')) {
+      return res.status(409).json({ error: 'This customer has a pending change at renewal. Undo it first, then change the plan.' });
+    }
+
     const items = (subscription.items && subscription.items.data) || [];
     const hasFleet = items.some((it) => catalog.isFleetPriceId(it.price.id));
 
@@ -849,6 +859,16 @@ router.post('/subscriptions/:id/remove-fleet', requirePermission('billing_action
       return res.status(400).json({ error: 'Fleet Monitoring is not on this subscription' });
     }
 
+    // A pending scheduled change would be silently overwritten here: this route
+    // rebuilds ALL phases from the CURRENT live items, so stacking it on top of an
+    // existing schedule erases that pending change. Refuse — same guard add-fleet
+    // and tier-change already use.
+    const sched0 = subscription.schedule;
+    const sched0Status = sched0 && typeof sched0 === 'object' ? sched0.status : (sched0 ? 'active' : null);
+    if (sched0 && (sched0Status === 'active' || sched0Status === 'not_started')) {
+      return res.status(409).json({ error: 'This customer has a pending change at renewal. Undo it first, then remove Fleet Monitoring.' });
+    }
+
     // Phase 0 = current items (Fleet stays through the paid period). Phase 1 = same
     // items minus Fleet, starting at renewal. No proration, no refund.
     const phase0Items = items.map((it) => ({ price: it.price.id, quantity: it.quantity || 1 }));
@@ -928,6 +948,10 @@ async function loadForTierChange(req, res) {
   const oldEntry = catalog.planEntry(sub.gen_class, curPlan);
   const newEntry = catalog.planEntry(newGenClass, curPlan);
   if (!newEntry) { res.status(400).json({ error: `no ${newGenClass} price at ${curPlan} cadence` }); return null; }
+  // Hard-fail when the CURRENT tier isn't in the catalog: treating a missing old
+  // price as $0 would charge the customer the ENTIRE new-tier price instead of the
+  // difference. Refuse rather than over-charge.
+  if (!oldEntry) { res.status(400).json({ error: `current tier ${sub.gen_class} has no ${curPlan} price in the catalog; cannot compute a tier-change difference` }); return null; }
 
   const subscription = await stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] });
   if (subscription.status === 'canceled') { res.status(400).json({ error: 'Stripe subscription is canceled' }); return null; }
@@ -943,7 +967,8 @@ async function loadForTierChange(req, res) {
   const hasFleet = items.some((it) => catalog.isFleetPriceId(it.price.id));
   const periodEnd = subscription.current_period_end || planItem.current_period_end || null;
   // Flat catalog difference (signed): >0 = upgrade (charge), <0 = downgrade (credit).
-  const diff = newEntry.amount_cents - (oldEntry ? oldEntry.amount_cents : 0);
+  // oldEntry is guaranteed non-null above, so this is always the true tier delta.
+  const diff = newEntry.amount_cents - oldEntry.amount_cents;
   return { sub, planItem, newGenClass, curPlan, hasFleet, oldEntry, newEntry, diff, periodEnd };
 }
 

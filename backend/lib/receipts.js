@@ -194,7 +194,9 @@ async function sendReceiptEmail(invoice, opts = {}) {
       .filter((l) => l && l.description)
       .map((l) => ({ description: l.description, amountCents: typeof l.amount === 'number' ? l.amount : 0 }));
     const description = lineItems.length ? lineItems.map((li) => li.description).join('; ') : 'Generator Care';
-    const receiptNumber = invoice.number || invoice.receipt_number || invoice.id || null;
+    // Only a real invoice/receipt number — no invoice.id fallback (a raw in_… would
+    // render as "Receipt #" once Stripe's account-level receipt is off). Null omits it.
+    const receiptNumber = invoice.number || invoice.receipt_number || null;
 
     const { subject, html, text } = buildReceiptEmail({
       customer,

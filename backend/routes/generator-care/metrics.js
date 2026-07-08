@@ -4,6 +4,7 @@
 
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
+const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -205,6 +206,7 @@ router.get('/metrics', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] metrics error:', err);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });

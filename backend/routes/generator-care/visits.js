@@ -10,6 +10,7 @@ const { completeServiceVisit } = require('../../lib/completeVisit');
 const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
 const { arrivalWindow, arrivalWindowLabel } = require('../../lib/generator-catalog');
 const { sendEmail, buildVisitScheduledEmail } = require('../../lib/emails');
+const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -35,6 +36,7 @@ router.post('/visits/:id/complete', async (req, res) => {
     res.json({ ok: true, visit: result.visit });
   } catch (err) {
     console.error('[generator-care] visit complete error:', err);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -126,6 +128,7 @@ router.post('/visits/:id/schedule', async (req, res) => {
     res.json({ ok: true, visit: updated });
   } catch (err) {
     console.error('[generator-care] schedule visit error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -165,6 +168,7 @@ router.post('/visits/:id/assign', requirePermission('tech_manage'), async (req, 
     res.json({ ok: true, visit: data });
   } catch (err) {
     console.error('[generator-care] assign visit error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -205,6 +209,7 @@ router.get('/visits/:id/photos', async (req, res) => {
     });
   } catch (err) {
     console.error('[generator-care] visit photos error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });

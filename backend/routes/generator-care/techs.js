@@ -5,6 +5,7 @@
 const express = require('express');
 const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin, supabaseAnon } = require('../../lib/supabase');
+const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -39,6 +40,7 @@ router.get('/techs', requirePermission('tech_manage'), async (req, res) => {
     res.json({ techs: data || [] });
   } catch (err) {
     console.error('[generator-care] list techs error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -89,6 +91,7 @@ router.post('/techs', requirePermission('tech_manage'), async (req, res) => {
     res.json({ ok: true, tech: { id: created.user.id, email, full_name: name, active: true } });
   } catch (err) {
     console.error('[generator-care] create tech error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -109,6 +112,7 @@ router.post('/techs/:id/resend-invite', requirePermission('tech_manage'), async 
     res.json({ ok: true });
   } catch (err) {
     console.error('[generator-care] resend tech invite error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -130,6 +134,7 @@ router.patch('/techs/:id', requirePermission('tech_manage'), async (req, res) =>
     res.json({ ok: true, tech: data });
   } catch (err) {
     console.error('[generator-care] update tech error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
