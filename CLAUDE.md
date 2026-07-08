@@ -48,15 +48,17 @@ Route handlers under `/inspections` intentionally use `supabaseForUser(req.token
 - The Postgres trigger `on_auth_user_created` is the source of truth; it rejects signups from any other domain and auto-inserts a `profiles` row. The JS `allowedBatesEmail()` check in `routes/auth.js` is a fail-fast mirror, not the real gate.
 - `middleware/auth.js` `requireAuth` verifies the bearer token with `supabaseAdmin.auth.getUser()`, loads the profile, and attaches `req.user`, `req.profile`, and `req.token`. Downstream handlers pass `req.token` into `supabaseForUser()` to keep RLS in the loop.
 
-### RLS is the authorization layer
+### RLS is the authorization layer — for inspections only
 
-All permission rules live in `001_initial_schema.sql`, not in Express:
+All inspections permission rules live in `001_initial_schema.sql`, not in Express:
 
 - Techs can only see/insert/update their own inspections. Office sees everything and is the only role that can delete.
 - `inspection_photos` policies mirror the parent inspection.
 - Storage bucket `inspection-photos` enforces the same rule at the object level — photo filenames must be `<inspection_id>/...` so the storage policy can check ownership via `split_part(name, '/', 1)`.
 
-When changing any permission behavior, update the SQL file and re-run it; don't add JS checks that duplicate RLS.
+When changing inspections permission behavior, update the SQL file and re-run it; don't add JS checks that duplicate RLS.
+
+**This does not hold for Generator Care.** Every GC route family (office dashboard, tech PWA, customer portal, Stripe webhook) uses `supabaseAdmin`, which bypasses RLS entirely — there, Express middleware (`requireAuth` / `requireRole` / `requirePermission`, plus hand-written ownership filters like `.eq('assigned_tech_id', ...)`) is the *only* authorization layer, and a route that forgets it is a silent full bypass, not a defense-in-depth gap. See `backend/docs/authz.md` for the full breakdown per surface and `backend/routes/generator-care/README.md` for the checklist to run before adding or changing a GC route.
 
 ### Inspection data shape
 
