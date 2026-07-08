@@ -125,10 +125,10 @@
 
   // ---- Load transactions ----
   async function loadTransactions() {
-    const from = $('from-date').value;
-    const to = $('to-date').value;
-    $('loading').hidden = false;
-    $('empty').hidden = true;
+    const from = $('acc-from-date').value;
+    const to = $('acc-to-date').value;
+    $('acc-loading').hidden = false;
+    $('acc-empty').hidden = true;
     $('table-wrap').hidden = true;
     $('summary-row').hidden = true;
     $('acc-cards').innerHTML = '';
@@ -146,7 +146,7 @@
       console.error('Load failed:', err);
       showStatus('Failed to load: ' + err.message, 'error');
     } finally {
-      $('loading').hidden = true;
+      $('acc-loading').hidden = true;
     }
   }
 
@@ -172,12 +172,12 @@
 
   function render() {
     const txns = visibleTransactions();
-    $('empty').hidden = true;
+    $('acc-empty').hidden = true;
     $('table-wrap').hidden = true;
     $('summary-row').hidden = true;
     $('acc-cards').innerHTML = '';
     if (txns.length === 0) {
-      $('empty').hidden = false;
+      $('acc-empty').hidden = false;
       return;
     }
     const totals = visibleTotals(txns);
@@ -208,9 +208,9 @@
 
   // ---- Payout (bank reconciliation) view ----
   async function loadPayouts() {
-    const from = $('from-date').value;
-    const to = $('to-date').value;
-    $('loading').hidden = false;
+    const from = $('acc-from-date').value;
+    const to = $('acc-to-date').value;
+    $('acc-loading').hidden = false;
     $('payout-summary').hidden = true;
     $('pending-group').innerHTML = '';
     $('payout-list').innerHTML = '';
@@ -227,7 +227,7 @@
       console.error('Load payouts failed:', err);
       showStatus('Failed to load payouts: ' + err.message, 'error');
     } finally {
-      $('loading').hidden = true;
+      $('acc-loading').hidden = true;
     }
   }
 
@@ -489,16 +489,19 @@
   }
 
   // ---- Init ----
-  window.addEventListener('DOMContentLoaded', () => {
+  // Called by generator-care.js the first time the Accounting tab is opened,
+  // rather than on DOMContentLoaded — this view is lazy-loaded, not a
+  // standalone page anymore. refresh() is what the shared header Refresh
+  // button calls while this tab is active.
+  function init() {
     // Default range: first of the current month through today. Formatted in
     // LOCAL time — toISOString() shifts to UTC, which can land a day off.
     const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const today = new Date();
-    $('from-date').value = ymd(new Date(today.getFullYear(), today.getMonth(), 1));
-    $('to-date').value = ymd(today);
+    $('acc-from-date').value = ymd(new Date(today.getFullYear(), today.getMonth(), 1));
+    $('acc-to-date').value = ymd(today);
 
-    $('apply-btn').addEventListener('click', loadCurrent);
-    $('refresh-btn').addEventListener('click', loadCurrent);
+    $('acc-apply-btn').addEventListener('click', loadCurrent);
     $('export-csv-btn').addEventListener('click', downloadCsv);
     $('view-date').addEventListener('click', () => setView('date'));
     $('view-payout').addEventListener('click', () => setView('payout'));
@@ -525,5 +528,7 @@
 
     checkRole();
     loadTransactions();
-  });
+  }
+
+  window.BatesAccounting = { init, refresh: loadCurrent };
 })();

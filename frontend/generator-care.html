@@ -20,6 +20,11 @@
     /* Generator Care page styles — layout + page-specific bits only.
        Buttons/badges/chips/filter pills come from components.css; every color
        reads tokens.css, so html.dark themes this page with no overrides. */
+    /* display:flex/inline-flex below beats the UA [hidden] rule (same reason
+       app.css has .status[hidden] { display: none; }) — without these, these
+       elements would stay visible regardless of their hidden attribute. */
+    #export-csv-btn[hidden], #print-all-btn[hidden] { display: none; }
+    .acc-summary[hidden] { display: none; }
     .gc-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .gc-table-wrap { background: var(--surface); border-radius: 8px; box-shadow: var(--shadow-1); overflow: hidden; }
     .gc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
@@ -185,6 +190,159 @@
       0%, 60% { box-shadow: 0 0 0 3px var(--focus-ring); }
       100% { box-shadow: 0 0 0 3px transparent; }
     }
+
+    /* ============ Metrics view (formerly metrics.html) ============ */
+    .m-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 18px; }
+    .m-control { display: flex; flex-direction: column; }
+    .m-control label { font-size: 0.75rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .m-control input { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
+    .m-control input:focus { outline: none; border-color: var(--focus); }
+
+    /* Headline stat cards */
+    .m-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .m-stat { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); border-top: 3px solid var(--accent); }
+    .m-stat .label { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .m-stat .value { font-size: 1.9rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .m-stat .sub { font-size: 0.78rem; color: var(--ink-3); margin-top: 6px; }
+    .m-stat .sub .up { color: var(--ok); font-weight: 600; }
+    .m-stat .sub .down { color: var(--danger); font-weight: 600; }
+    .m-stat .sub .flat { color: var(--ink-3); font-weight: 600; }
+    #stat-new-sub svg{vertical-align:-2px}
+
+    /* Chart panels */
+    .m-panels { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .m-panel { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); min-width: 0; }
+    .m-panel.wide { grid-column: 1 / -1; }
+    .m-panel-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 700; margin: 0 0 4px; }
+    .m-panel-note { font-size: 0.76rem; color: var(--ink-3); margin: 0 0 12px; }
+    .m-canvas-wrap { position: relative; height: 260px; }
+    .m-canvas-wrap.tall { height: 300px; }
+    .m-empty-note { color: var(--ink-3); font-size: 0.85rem; padding: 28px 4px; text-align: center; }
+
+    @media (max-width: 760px) {
+      .m-panels { grid-template-columns: 1fr; }
+      .m-panel.wide { grid-column: auto; }
+      .m-stat .value { font-size: 1.6rem; }
+    }
+
+    /* ============ Accounting view (formerly accounting.html) ============
+       Reads tokens.css only — no raw colors — so dark mode themes
+       automatically via the html.dark token swap. */
+    .acc-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+    .acc-control { display: flex; flex-direction: column; }
+    .acc-control label { font-size: 0.75rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .acc-control input { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
+    .acc-control input:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+    .acc-toggle { flex-direction: row; align-items: center; gap: 8px; min-height: 38px; font-size: 0.85rem; color: var(--ink-2); cursor: pointer; user-select: none; }
+    .acc-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+    .acc-summary { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; border-radius: var(--radius); box-shadow: var(--shadow-1); margin-bottom: 16px; display: flex; gap: 36px; flex-wrap: wrap; }
+    .acc-summary-item .label { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .acc-summary-item .value { font-size: 1.5rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .acc-summary-item.fee .value { color: var(--warn); }
+    .acc-summary-item.net .value { color: var(--ok); }
+    .acc-table-wrap { background: var(--surface); border-radius: var(--radius-sm); overflow: auto; box-shadow: var(--shadow-1); }
+    .acc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .acc-table th { background: var(--surface-2); padding: 10px 14px; text-align: left; font-weight: 600; color: var(--ink-3); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    .acc-table td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .acc-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .acc-table tbody tr:hover { background: var(--accent-soft); }
+    .acc-table tfoot td { background: var(--surface-2); font-weight: 700; color: var(--ink); }
+    .acc-auth-code { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; letter-spacing: 0.03em; }
+    .acc-mobile-cards { display: none; }
+    .acc-card { background: var(--surface); padding: 14px 16px; margin-bottom: 10px; border-radius: var(--radius-sm); border-left: 4px solid var(--accent); box-shadow: var(--shadow-1); }
+    .acc-card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+    .acc-card-name { font-weight: 600; color: var(--ink); }
+    .acc-card-amount { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .acc-card-meta { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 8px; }
+    .acc-card-footer { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--ink-2); padding-top: 8px; border-top: 1px solid var(--line); }
+    .acc-card-footer .fee { color: var(--warn); }
+    .acc-card-footer .net { color: var(--ok); }
+
+    /* ---- View toggle: By date vs By payout ----
+       Visuals come from the shared .filter pill; this wrapper is layout only. */
+    .acc-viewtabs { display: inline-flex; gap: 6px; margin-bottom: 14px; }
+    .acc-scope { font-size: 0.8rem; color: var(--ink-2); margin: -6px 0 16px; }
+    .acc-scope strong { color: var(--ink); }
+
+    /* ---- Payout reconciliation cards ---- */
+    .payout-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 16px; box-shadow: var(--shadow-1); }
+    .payout-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .payout-date { font-size: 1.05rem; font-weight: 700; color: var(--ink); }
+    .payout-id { font-size: 0.72rem; color: var(--ink-3); font-family: ui-monospace, Menlo, monospace; margin-top: 2px; }
+    /* Status colors come from the shared .badge system — layout only here. */
+    .payout-status { margin-left: 8px; vertical-align: middle; }
+    .payout-bank { text-align: right; }
+    .payout-bank .lbl { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); display: block; }
+    .payout-bank .amt { font-size: 1.4rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .payout-bank.deposit .amt { color: var(--ok); }
+    .payout-bank.debit .amt { color: var(--warn); }
+    .payout-recon { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.85rem; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+    .payout-recon.tied { background: var(--ok-bg); color: var(--ok); }
+    .payout-recon.untied { background: var(--danger-bg); color: var(--danger); font-weight: 600; }
+    .payout-recon .chk { display: inline-flex; flex-shrink: 0; }
+    .payout-recon.tied .chk { color: var(--ok); }
+    .payout-recon.untied .chk { color: var(--warn); }
+
+    /* ---- Pending (not yet settled) group ---- */
+    .pending-card { background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px; }
+    .pending-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .pending-title { font-size: 1.05rem; font-weight: 700; color: var(--warn); }
+    .pending-amt { font-size: 1.3rem; font-weight: 800; color: var(--warn); font-variant-numeric: tabular-nums; }
+    .pending-note { font-size: 0.8rem; color: var(--warn); margin: 4px 0 12px; opacity: 0.92; }
+
+    /* Explanatory note for payouts with no itemized constituents (e.g. auto-debits). */
+    .payout-note { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.85rem; background: var(--surface-2); color: var(--ink-2); border-left: 3px solid var(--ink-3); }
+
+    /* Tables nested inside payout/pending cards sit flat (no inner card chrome). */
+    .payout-card .acc-table-wrap, .pending-card .acc-table-wrap { box-shadow: none; background: transparent; border-radius: 0; }
+    .payout-card .acc-card, .pending-card .acc-card { box-shadow: none; }
+
+    @media (max-width: 768px) {
+      .acc-table-wrap { display: none; }
+      .acc-mobile-cards { display: block; }
+      .acc-summary { gap: 20px; padding: 14px 16px; }
+      .acc-summary-item .value { font-size: 1.2rem; }
+    }
+    /* Phones: 2x2 grid instead of four-across (which cramps/overflows at ~360px). */
+    @media (max-width: 640px) {
+      .acc-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; }
+      /* When the payout header wraps, align the bank amount under the date. */
+      .payout-bank { text-align: left; }
+      .acc-viewtabs { display: flex; width: 100%; }
+      .acc-viewtab { flex: 1 1 0; justify-content: center; }
+    }
+
+    /* ---- Payout print breakdown (Brenda's paper/PDF copy) ----
+       #print-root is filled on demand by accounting.js and never shows on
+       screen. When the body carries .printing, print media hides the app and
+       shows only the print root: black-on-white letterhead-lite, letter
+       portrait, one payout per page. A plain Ctrl+P (no .printing) still
+       prints the normal page. */
+    #print-root { display: none; }
+    .print-payout-btn { margin-top: 8px; }
+    @page { margin: 0.6in; }
+    @media print {
+      body.printing > *:not(#print-root) { display: none !important; }
+      body.printing { background: #fff !important; }
+      body.printing #print-root { display: block !important; }
+      .print-payout { color: #000; font-family: Arial, Helvetica, sans-serif; font-size: 11px; }
+      .print-payout + .print-payout { break-before: page; page-break-before: always; }
+      .print-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 14px; }
+      .print-co { font-size: 18px; font-weight: 700; }
+      .print-sub { font-size: 12px; margin-top: 2px; }
+      .print-gen { font-size: 10px; color: #333; }
+      .print-facts { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 14px; }
+      .print-facts .lbl { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: #444; }
+      .print-facts .val { font-size: 13px; font-weight: 700; }
+      .print-payout .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; font-weight: 400; }
+      .print-note { border: 1px solid #999; padding: 8px 10px; margin-bottom: 12px; font-size: 10.5px; }
+      .print-table { width: 100%; border-collapse: collapse; }
+      .print-table th, .print-table td { border: 1px solid #bbb; padding: 5px 7px; text-align: left; font-size: 10.5px; color: #000; }
+      .print-table th { text-transform: uppercase; font-size: 9px; letter-spacing: 0.04em; }
+      .print-table .num, .print-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .print-table tfoot td { font-weight: 700; }
+      .print-tie { margin-top: 10px; font-size: 11px; font-weight: 700; }
+    }
   </style>
 </head>
 <body class="hub-body dashboard-body">
@@ -195,6 +353,8 @@
       <a href="/home" class="btn btn-secondary btn-sm" style="margin-right:12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care</h1>
       <div class="dashboard-header-actions">
         <span id="result-count" class="result-count"></span>
+        <button type="button" id="print-all-btn" class="btn btn-secondary btn-sm" hidden>Print all groups</button>
+        <button type="button" id="export-csv-btn" class="btn btn-secondary btn-sm" hidden>Download CSV</button>
         <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
       </div>
     </div>
@@ -272,6 +432,202 @@
       </section>
     </div>
 
+    <!-- ============ METRICS ============
+         Lazy-loaded: generator-care.js only loads Chart.js + calls
+         BatesMetrics.init() the first time this section is activated. -->
+    <section id="metrics-view" hidden>
+      <p style="color:var(--ink-3);font-size:0.9rem;margin-bottom:18px;max-width:720px;">
+        How the Generator Care program is doing at a glance. The stat cards and plan/add-on charts reflect your <strong>current active book</strong>; signups, channel, and cancellations follow the date range below.
+      </p>
+
+      <div class="m-controls">
+        <div class="m-control">
+          <label for="m-from-date">From</label>
+          <input type="date" id="m-from-date" />
+        </div>
+        <div class="m-control">
+          <label for="m-to-date">To</label>
+          <input type="date" id="m-to-date" />
+        </div>
+        <button type="button" id="m-apply-btn" class="btn btn-primary btn-sm" style="height:38px;">Apply</button>
+      </div>
+
+      <div id="m-loading" class="loading-state"><p>Loading metrics&hellip;</p></div>
+
+      <div id="m-content" hidden>
+        <!-- Headline stat cards -->
+        <div class="m-stats">
+          <div class="m-stat">
+            <div class="label">Active Subscriptions</div>
+            <div class="value" id="stat-active">0</div>
+            <div class="sub" id="stat-active-sub">&nbsp;</div>
+          </div>
+          <div class="m-stat">
+            <div class="label">New This Month</div>
+            <div class="value" id="stat-new">0</div>
+            <div class="sub" id="stat-new-sub">&nbsp;</div>
+          </div>
+          <div class="m-stat">
+            <div class="label">Annual Recurring Revenue</div>
+            <div class="value" id="stat-arr">$0</div>
+            <div class="sub" id="stat-arr-sub">annualized, active subs</div>
+          </div>
+          <div class="m-stat">
+            <div class="label">Add-on Attach Rate</div>
+            <div class="value" id="stat-attach">0%</div>
+            <div class="sub" id="stat-attach-sub">of active subs have an add-on</div>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="m-panels">
+          <div class="m-panel wide">
+            <h2 class="m-panel-h">Signups Over Time</h2>
+            <p class="m-panel-note" id="signups-note">By month signed up</p>
+            <div class="m-canvas-wrap tall"><canvas id="chart-signups"></canvas></div>
+          </div>
+
+          <div class="m-panel">
+            <h2 class="m-panel-h">Plan Mix</h2>
+            <p class="m-panel-note">Active subscriptions by billing cadence</p>
+            <div class="m-canvas-wrap"><canvas id="chart-plan"></canvas></div>
+          </div>
+
+          <div class="m-panel">
+            <h2 class="m-panel-h">Generator Class</h2>
+            <p class="m-panel-note">Active subscriptions by unit size</p>
+            <div class="m-canvas-wrap"><canvas id="chart-genclass"></canvas></div>
+          </div>
+
+          <div class="m-panel">
+            <h2 class="m-panel-h">Add-on Popularity</h2>
+            <p class="m-panel-note">Active subs with each add-on</p>
+            <div class="m-canvas-wrap" id="addon-wrap"><canvas id="chart-addons"></canvas></div>
+          </div>
+
+          <div class="m-panel">
+            <h2 class="m-panel-h">Cancellations</h2>
+            <p class="m-panel-note" id="churn-note">Overall churn &amp; canceled-per-month</p>
+            <div class="m-canvas-wrap" id="churn-wrap"><canvas id="chart-churn"></canvas></div>
+          </div>
+
+          <div class="m-panel wide">
+            <h2 class="m-panel-h">Signups by Channel</h2>
+            <p class="m-panel-note" id="channel-note">How customers heard about us</p>
+            <div class="m-canvas-wrap" id="channel-wrap"><canvas id="chart-channel"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ACCOUNTING ============
+         Lazy-loaded: generator-care.js calls BatesAccounting.init() the
+         first time this section is activated. -->
+    <section id="accounting-view" hidden>
+      <p style="color:var(--ink-2);font-size:0.9rem;margin-bottom:18px;max-width:680px;">
+        Every customer charge processed through Stripe, with our 2.9% + 30&cent; processing fee broken out so you can record the gross amount in Jonas and the fee as a separate expense line. Use the date range to pick your reconciliation period.
+      </p>
+
+      <div class="acc-viewtabs" role="tablist" aria-label="Accounting view">
+        <button type="button" id="view-date" class="filter acc-viewtab active" data-view="date" role="tab" aria-selected="true">By date</button>
+        <button type="button" id="view-payout" class="filter acc-viewtab" data-view="payout" role="tab" aria-selected="false">By payout</button>
+      </div>
+
+      <div class="acc-controls">
+        <div class="acc-control">
+          <label for="acc-from-date">From</label>
+          <input type="date" id="acc-from-date" />
+        </div>
+        <div class="acc-control">
+          <label for="acc-to-date">To</label>
+          <input type="date" id="acc-to-date" />
+        </div>
+        <button type="button" id="acc-apply-btn" class="btn btn-primary">Apply</button>
+        <label class="acc-control acc-toggle" for="hide-test-toggle">
+          <input type="checkbox" id="hide-test-toggle" checked />
+          <span>Hide early test activity</span>
+        </label>
+      </div>
+
+      <p class="acc-scope" id="scope-hint">Filtering by <strong>transaction date</strong> &mdash; when each charge, refund, or fee occurred.</p>
+
+      <div id="acc-loading" class="loading-state"><p>Loading&hellip;</p></div>
+
+      <!-- View 1: by transaction date (the original list) -->
+      <div id="date-view">
+        <div class="acc-summary" id="summary-row" hidden>
+          <div class="acc-summary-item">
+            <div class="label">Gross Charged</div>
+            <div class="value" id="total-gross">$0.00</div>
+          </div>
+          <div class="acc-summary-item fee">
+            <div class="label">Stripe Fees</div>
+            <div class="value" id="total-fee">$0.00</div>
+          </div>
+          <div class="acc-summary-item net">
+            <div class="label">Net to Bank</div>
+            <div class="value" id="total-net">$0.00</div>
+          </div>
+          <div class="acc-summary-item">
+            <div class="label">Transactions</div>
+            <div class="value" id="total-count">0</div>
+          </div>
+        </div>
+
+        <div id="acc-empty" class="gc-empty" hidden>
+          <p style="font-size:1.1rem;">No transactions in this date range.</p>
+          <p style="font-size:0.85rem;margin-top:8px;">Try a wider window or check back after Stripe processes a charge.</p>
+        </div>
+
+        <div class="acc-table-wrap" id="table-wrap" hidden>
+          <table class="acc-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Customer</th>
+                <th>Address</th>
+                <th>Description</th>
+                <th class="num">Gross</th>
+                <th class="num">Fee</th>
+                <th class="num">Net</th>
+                <th>Auth Code</th>
+              </tr>
+            </thead>
+            <tbody id="acc-tbody"></tbody>
+            <tfoot id="acc-tfoot"></tfoot>
+          </table>
+        </div>
+
+        <div class="acc-mobile-cards" id="acc-cards"></div>
+      </div>
+
+      <!-- View 2: by Stripe payout (bank reconciliation) -->
+      <div id="payout-view" hidden>
+        <div class="acc-summary" id="payout-summary" hidden>
+          <div class="acc-summary-item net">
+            <div class="label">Settled to Bank</div>
+            <div class="value" id="po-settled">$0.00</div>
+          </div>
+          <div class="acc-summary-item">
+            <div class="label">Payouts</div>
+            <div class="value" id="po-count">0</div>
+          </div>
+          <div class="acc-summary-item">
+            <div class="label">Pending (unsettled)</div>
+            <div class="value" id="po-pending">$0.00</div>
+          </div>
+        </div>
+
+        <div id="pending-group"></div>
+        <div id="payout-list"></div>
+
+        <div id="payout-empty" class="gc-empty" hidden>
+          <p style="font-size:1.1rem;">No payouts settled in this date range.</p>
+          <p style="font-size:0.85rem;margin-top:8px;">Try a wider window. Money still sitting in your Stripe balance shows under &ldquo;Pending&rdquo; above once there&rsquo;s activity.</p>
+        </div>
+      </div>
+    </section>
+
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
     <details id="gc-admin-tools" style="margin-top: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);">
@@ -306,6 +662,12 @@
     </details>
   </main>
 
+  <!-- Populated on demand by accounting.js for the payout print breakdown;
+       never visible on screen. Must stay a direct child of <body> (sibling
+       of <main>) — the print CSS hides everything under body.printing
+       EXCEPT this element by direct-child selector. -->
+  <div id="print-root" aria-hidden="true"></div>
+
   <!-- Detail modal -->
   <div id="detailsModal" class="modal" hidden>
     <div class="modal-overlay"></div>
@@ -328,6 +690,9 @@
   <script src="ui-dialogs.js"></script>
   <script src="photo-lightbox.js"></script>
   <script src="arrival-windows.js"></script>
+  <script src="icons.js"></script>
+  <script src="metrics.js"></script>
+  <script src="accounting.js"></script>
   <script src="generator-care.js"></script>
 </body>
 </html>

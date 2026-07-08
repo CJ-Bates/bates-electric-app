@@ -43,6 +43,12 @@
   let snapshotUnavailable = false;
   // Guards renderAttention() so the skeleton stays up until real data lands.
   let subsLoaded = false;
+  // Metrics/Accounting are lazy: data (and, for Metrics, Chart.js itself)
+  // only loads the first time that tab is activated; these guard against
+  // re-fetching on every later tab switch (only the header Refresh button does).
+  let metricsLoaded = false;
+  let accountingLoaded = false;
+  let chartJsPromise = null;
 
   const techName = (id) => {
     const t = techList.find((x) => x.id === id);
@@ -1986,23 +1992,77 @@
   function showLoading(b) {
     document.getElementById('loading').hidden = !b;
   }
-  // ---- View switching (Needs Attention <-> Customers, hash-routed) ----
+  // ---- View switching (hash-routed) ----
   // No hash / #attention = the action queue (default landing view);
-  // #customers = the full list. The shared section switcher renders both as
-  // top-level tabs (shared-nav.js); hash changes swap views without a reload.
+  // #customers = the full list; #metrics / #accounting are the other two
+  // Generator Care tabs, folded in as in-page views too (they used to be
+  // separate documents — see metrics.js/accounting.js, now lazy-loaded
+  // BatesMetrics/BatesAccounting modules). The shared section switcher
+  // renders all four as top-level tabs (shared-nav.js); hash changes swap
+  // views without a reload.
+  const HASH_VIEWS = ['attention', 'customers', 'metrics', 'accounting'];
   function currentHashView() {
-    return location.hash === '#customers' ? 'customers' : 'attention';
+    const h = location.hash.slice(1);
+    return HASH_VIEWS.includes(h) ? h : 'attention';
   }
+  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', metrics: 'metrics', accounting: 'accounting' };
+
+  // Chart.js is only needed by Metrics and costs ~200KB, so it's fetched from
+  // the CDN on first activation of that tab rather than unconditionally in
+  // <head> — everyone else (the common case: Needs Attention/Customers) never
+  // pays for it. Cached in a module-level promise so repeat activations/
+  // concurrent calls don't inject the script twice.
+  function ensureChartJs() {
+    if (window.Chart) return Promise.resolve();
+    if (chartJsPromise) return chartJsPromise;
+    chartJsPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Chart.js failed to load'));
+      document.head.appendChild(s);
+    });
+    return chartJsPromise;
+  }
+
   function showView(view) {
     document.getElementById('attention-view').hidden = view !== 'attention';
     document.getElementById('customers-view').hidden = view !== 'customers';
-    const want = view === 'customers' ? 'gc-customers' : 'gc-attention';
+    document.getElementById('metrics-view').hidden = view !== 'metrics';
+    document.getElementById('accounting-view').hidden = view !== 'accounting';
+
+    // Header controls that only make sense for specific tabs.
+    const listView = view === 'attention' || view === 'customers';
+    document.getElementById('gc-admin-tools').hidden = !listView;
+    const countEl = document.getElementById('result-count');
+    if (countEl) countEl.hidden = !listView;
+    document.getElementById('export-csv-btn').hidden = view !== 'accounting';
+    // print-all-btn also depends on accounting's own by-date/by-payout state
+    // (accounting.js's setView() toggles it) — only force it hidden when
+    // leaving the tab; leave accounting's own state alone while on it.
+    if (view !== 'accounting') document.getElementById('print-all-btn').hidden = true;
+
+    const want = SECTION_TAB_MATCH[view];
     document.querySelectorAll('.section-tab[data-match]').forEach((a) => {
       const on = a.dataset.match === want;
       a.classList.toggle('active', on);
       if (on) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
+
+    if (view === 'metrics' && !metricsLoaded) {
+      metricsLoaded = true;
+      ensureChartJs()
+        .then(() => window.BatesMetrics.init())
+        .catch((err) => {
+          console.error('Chart.js failed to load:', err);
+          showStatus('Could not load charts — check your connection and try again.', 'error');
+        });
+    }
+    if (view === 'accounting' && !accountingLoaded) {
+      accountingLoaded = true;
+      window.BatesAccounting.init();
+    }
   }
   window.addEventListener('hashchange', () => showView(currentHashView()));
 
@@ -2014,6 +2074,9 @@
   showView(currentHashView());
 
   document.getElementById('refresh-btn').addEventListener('click', () => {
+    const view = currentHashView();
+    if (view === 'metrics') { if (window.BatesMetrics) window.BatesMetrics.refresh(); return; }
+    if (view === 'accounting') { if (window.BatesAccounting) window.BatesAccounting.refresh(); return; }
     loadSubscriptions();
     loadBillingSnapshot();
   });

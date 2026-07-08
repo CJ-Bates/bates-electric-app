@@ -104,22 +104,22 @@
 
   // ---- Load + render ----
   async function loadMetrics() {
-    const from = $('from-date').value;
-    const to = $('to-date').value;
-    $('loading').hidden = false;
-    $('content').hidden = true;
+    const from = $('m-from-date').value;
+    const to = $('m-to-date').value;
+    $('m-loading').hidden = false;
+    $('m-content').hidden = true;
     try {
       const url = `${API_BASE}/api/generator-care/metrics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
       const r = await BatesAuth.authFetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       render(data);
-      $('content').hidden = false;
+      $('m-content').hidden = false;
     } catch (err) {
       console.error('Load failed:', err);
       showStatus('Failed to load metrics: ' + err.message, 'error');
     } finally {
-      $('loading').hidden = true;
+      $('m-loading').hidden = true;
     }
   }
 
@@ -300,16 +300,21 @@
   }
 
   // ---- Init ----
-  window.addEventListener('DOMContentLoaded', () => {
+  // Called by generator-care.js the first time the Metrics tab is opened
+  // (after Chart.js has loaded) rather than on DOMContentLoaded — this view
+  // is lazy-loaded, not a standalone page anymore. refresh() is what the
+  // shared header Refresh button calls while this tab is active.
+  function init() {
     const today = new Date();
     const start = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
-    $('from-date').value = start.toISOString().slice(0, 10);
-    $('to-date').value = today.toISOString().slice(0, 10);
+    $('m-from-date').value = start.toISOString().slice(0, 10);
+    $('m-to-date').value = today.toISOString().slice(0, 10);
 
-    $('apply-btn').addEventListener('click', loadMetrics);
-    $('refresh-btn').addEventListener('click', loadMetrics);
+    $('m-apply-btn').addEventListener('click', loadMetrics);
 
     checkRole();
     loadMetrics();
-  });
+  }
+
+  window.BatesMetrics = { init, refresh: loadMetrics };
 })();

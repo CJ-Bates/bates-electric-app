@@ -508,23 +508,22 @@
       const profile = JSON.parse(localStorage.getItem('bates.profile') || '{}');
       if (profile.permissions && profile.permissions.accounting === false) canSeeAccounting = false;
     } catch (e) { /* default to visible; the page + API still enforce */ }
-    // Needs Attention + Customers are both in-page views of generator-care.html
-    // (hash-routed; no hash = the Needs Attention action queue, the default
-    // landing view). generator-care.js keeps the active states in sync on
-    // hashchange via the data-match attribute rendered below.
+    // All four tabs are in-page hash-routed views of the SAME
+    // generator-care.html document (no hash = the Needs Attention action
+    // queue, the default landing view). generator-care.js keeps the active
+    // states in sync on hashchange via the data-match attribute rendered below.
     const tabs = [
-      { label: 'Needs Attention', href: '/generator-care#attention', match: 'gc-attention' },
+      { label: 'Needs Attention', href: '/generator-care#attention',  match: 'gc-attention' },
       { label: 'Customers',       href: '/generator-care#customers', match: 'gc-customers' },
-      { label: 'Metrics',         href: '/metrics',                  match: 'metrics' },
-      { label: 'Accounting',      href: '/accounting',               match: 'accounting' },
+      { label: 'Metrics',         href: '/generator-care#metrics',   match: 'metrics' },
+      { label: 'Accounting',      href: '/generator-care#accounting', match: 'accounting' },
     ].filter((t) => t.match !== 'accounting' || canSeeAccounting);
     const path = window.location.pathname;
     const onGenCare = path.indexOf('generator-care') !== -1;
-    const gcView = window.location.hash === '#customers' ? 'gc-customers' : 'gc-attention';
+    const HASH_TO_MATCH = { customers: 'gc-customers', metrics: 'metrics', accounting: 'accounting' };
+    const gcView = HASH_TO_MATCH[window.location.hash.slice(1)] || 'gc-attention';
     mount.innerHTML = tabs.map((t) => {
-      const active = (t.match === 'gc-attention' || t.match === 'gc-customers')
-        ? (onGenCare && t.match === gcView)
-        : path.indexOf(t.match) !== -1;
+      const active = onGenCare && t.match === gcView;
       return `<a href="${t.href}" data-match="${t.match}" class="section-tab${active ? ' active' : ''}"${active ? ' aria-current="page"' : ''}>` +
         `<span class="section-tab-icon" aria-hidden="true">${ICONS[t.match] || ''}</span>` +
         `<span class="section-tab-label">${t.label}</span></a>`;
