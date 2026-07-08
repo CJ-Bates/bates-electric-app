@@ -25,6 +25,19 @@ const OFFICE_NOTIFY_TO = (process.env.GENERATOR_DIGEST_TO || 'cjbates@bates-elec
 const VISIT_PHOTOS_BUCKET = 'generator-visit-photos';
 const VISIT_PHOTO_URL_TTL_SECONDS = 60 * 60 * 8; // signed URLs last a field day
 
+// Visit-photo storage objects are namespaced `<visit_id>/<filename>` (see the
+// frontend uploader + sql/010_tech_phase2.sql). The generator_visit_photos
+// INSERT policy checks visit_id + uploaded_by but never binds storage_path's
+// prefix to visit_id — so a tech can insert a row on their OWN assigned visit
+// whose storage_path points at ANOTHER visit's object. The backend then signs
+// or removes that path with the SERVICE ROLE (supabaseAdmin), which bypasses
+// storage RLS. Re-bind the prefix here before signing/removing anything to
+// close that confused-deputy. (A DB CHECK binding the prefix at insert time is
+// the belt-and-suspenders follow-up — see sql/019.)
+function pathBelongsToVisit(storagePath, visitId) {
+  return typeof storagePath === 'string' && storagePath.startsWith(visitId + '/');
+}
+
 // Readable Central-time stamp for internal emails ("moved from X to Y").
 function fmtCentral(iso) {
   if (!iso) return 'unscheduled';
@@ -245,15 +258,27 @@ router.get('/my-visits/:id/photos', async (req, res) => {
     if (error) throw error;
     if (!rows || !rows.length) return res.json({ photos: [] });
 
+    // Never sign an object that doesn't live under this visit's prefix. In
+    // normal operation every row matches (uploads are `<visit_id>/...`); a
+    // mismatch is a tampered/confused-deputy row, so we drop it (rather than
+    // fail the whole list) and log it as a security signal.
+    const ownRows = rows.filter((r) => pathBelongsToVisit(r.storage_path, visit.id));
+    if (ownRows.length !== rows.length) {
+      const foreign = rows.filter((r) => !pathBelongsToVisit(r.storage_path, visit.id));
+      console.warn('[generator-tech] photos list: dropped %d visit-photo row(s) with storage_path outside visit %s (ids: %s)',
+        foreign.length, visit.id, foreign.map((r) => r.id).join(','));
+    }
+    if (!ownRows.length) return res.json({ photos: [] });
+
     const { data: signed, error: signErr } = await supabaseAdmin
       .storage
       .from(VISIT_PHOTOS_BUCKET)
-      .createSignedUrls(rows.map((r) => r.storage_path), VISIT_PHOTO_URL_TTL_SECONDS);
+      .createSignedUrls(ownRows.map((r) => r.storage_path), VISIT_PHOTO_URL_TTL_SECONDS);
     if (signErr) throw signErr;
 
     const bySigned = new Map((signed || []).map((s) => [s.path, s.signedUrl]));
     res.json({
-      photos: rows.map((r) => ({
+      photos: ownRows.map((r) => ({
         id: r.id,
         created_at: r.created_at,
         mine: r.uploaded_by === req.user.id,
@@ -287,6 +312,15 @@ router.delete('/my-visits/:id/photos/:photoId', async (req, res) => {
     if (!photo) return res.status(404).json({ error: 'Photo not found on this visit.' });
     if (photo.uploaded_by !== req.user.id) {
       return res.status(403).json({ error: 'You can only delete photos you uploaded.' });
+    }
+    // Confused-deputy guard: the row's visit_id is this visit, but its
+    // storage_path was never bound to visit_id at insert. Refuse to remove an
+    // object outside this visit's prefix — the service role bypasses storage
+    // RLS, so without this a tech could permanently delete another visit's photo.
+    if (!pathBelongsToVisit(photo.storage_path, visit.id)) {
+      console.warn('[generator-tech] photo delete: refused storage_path outside visit %s (photo %s)',
+        visit.id, photo.id);
+      return res.status(403).json({ error: 'This photo does not belong to this visit.' });
     }
 
     const { error: rmErr } = await supabaseAdmin
