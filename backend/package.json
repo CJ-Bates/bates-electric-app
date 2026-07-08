@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "lint": "eslint .",
-    "check-migrations": "node scripts/check-migrations.js"
+    "check-migrations": "node scripts/check-migrations.js",
+    "check-gc-permissions": "node scripts/check-gc-permissions.js"
   },
   "keywords": [],
   "author": "",

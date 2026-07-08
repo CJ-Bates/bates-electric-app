@@ -1,0 +1,32 @@
+# Authorization — how each surface actually enforces permission
+
+This app has **two different authorization models**, not one. Which model
+applies depends entirely on which Supabase client a route uses
+(`backend/lib/supabase.js`):
+
+- `supabaseForUser(req.token)` — bound to the caller's JWT. Reads/writes go
+  through Postgres RLS policies, so **RLS is the real gate**.
+- `supabaseAdmin` — service role. **RLS does not run at all.** Whatever
+  Express middleware and handler logic runs before the query is the *only*
+  thing standing between the request and the data.
+
+Confirmed by grep against the current tree (`backend/routes/`):
+`supabaseForUser` is used **only** by `inspections.js` and `auth.js`.
+Every Generator Care route family — `generator-care/*`, `generator-tech.js`,
+`customer.js`, `generator-webhook.js` — uses `supabaseAdmin` exclusively.
+
+| Surface | Supabase client | Who actually enforces permission | Key risks / rules |
+|---|---|---|---|
+| **Inspections** (`routes/inspections.js`) | `supabaseForUser(req.token)` | **RLS policies** in `001_initial_schema.sql`. `requireAuth` only establishes identity (valid token → `req.token`); the query itself is what's restricted. Techs see/insert/update only their own rows; office sees everything and is the only role that can delete. Storage bucket policy mirrors this via `<inspection_id>/...` object-name prefix. | Adding a new inspections route that switches to `supabaseAdmin` "to make a query easier" silently drops all of this — don't. |
+| **GC office dashboard** (`routes/generator-care/*`) | `supabaseAdmin` (service role) | **Express middleware only.** `routes/generator-care/index.js` mounts `requireAuth, requireRole('office')` once for every sub-router (identity + coarse role gate). Money/customer-data-sensitive mutations additionally require `requirePermission('<flag>')` (`accounting`, `refunds`, `billing_actions`, `customer_edit`, `tech_manage`) from `middleware/permissions.js`, checked against `member_permissions` (sql/014) with role-default fallback and `is_admin` bypass. | RLS provides **no** backstop here — a mutating route that forgets `requirePermission(...)` is a silent full bypass, reachable by *any* office-role account regardless of their permission flags. Nine existing mutating routes intentionally rely on `requireRole('office')` alone with no granular flag (`admin.js` send-test-email; `subscriptions.js` work-order-created + /undo, tier-change-preview, resend-receipt, portal-session, resend-welcome; `visits.js` complete, schedule) — none of them move money or expose another customer's data by id, which is why they were left at the coarser gate. Treat that list as the known baseline, not a precedent to copy blindly for a *new* route. |
+| **GC tech PWA** (`routes/generator-tech.js`) | `supabaseAdmin` (service role) | `router.use(requireAuth, requireRole('tech'))` gates identity + role. **Ownership is enforced by hand** with explicit `.eq('assigned_tech_id', req.user.id)` filters on every visit query — there is no RLS to fall back on if a filter is missed. `requirePermission('tech_reschedule')` additionally gates the reschedule action. | A new tech route that queries `generator_service_visits` (or joins from it) without the `assigned_tech_id` filter would let a tech read/act on another tech's visit. This is the same shape of bug as the WP4/H3 photo-path confused-deputy issue — check every new query, not just the obvious ones. |
+| **Customer portal** (`routes/customer.js`, mounted `/api/my`) | `supabaseAdmin` (service role) | `router.use(requireAuth, requireRole('customer'))`, then the customer is resolved **server-side from the authenticated email** (`req.user.email`, via Supabase Auth) — never from a client-supplied id. `generator_customers` rows are looked up by `ilike('email', email)`, and every subsequent query is scoped to that resolved customer's subscription(s). | If a handler ever accepts a customer/subscription id from the request body or query string instead of re-deriving it from `req.user.email`, that's an IDOR into another customer's billing data. Direct-REST (PostgREST) access from the customer's own JWT is separately restricted by column-level grants (sql/011, tightened by sql/018 to strip `amount_cents` from the shared `authenticated` role — techs share that role, so column grants must stay conservative even though this app doesn't route customer traffic through direct REST for money fields). |
+| **Public signup** (`auth.users` trigger, not a route) | n/a — happens at the Postgres level before any route runs | `public.enforce_signup_domain()` (sql/012), a trigger on `auth.users`. Staff emails (`@bates-electric.com`, `*.bateselectric@gmail.com`) always pass; anyone else passes only if their email matches an **active** (non-canceled) `generator_customers`/`generator_subscriptions` row. Everyone else is rejected at signup, before `handle_new_user` (001/011) ever assigns a role. `routes/auth.js`'s `allowedBatesEmail()` is a JS fail-fast mirror for the staff case, **not** the real gate. | Don't trust the JS check alone when reasoning about who can create an account — the trigger is the actual enforcement, and it can drift from the JS mirror (it already has once; see sql/012's history). |
+| **Stripe webhook** (`routes/generator-webhook.js`) | `supabaseAdmin` (service role) | Not user-authorization at all — trust comes from `stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET)` verifying the Stripe signature. Handler must never throw (Stripe retries on 5xx); side-effects are wrapped in try/catch. | Out of scope for `requirePermission` — there's no `req.profile` on a webhook request. Don't add office-permission middleware here by copy-paste habit. |
+
+## The rule, stated plainly
+
+- **Inspections**: RLS decides. JS checks that duplicate RLS are redundant, not harmful, but the SQL policy is the source of truth.
+- **Everything Generator Care** (office, tech, customer, webhook): the service role bypasses RLS entirely. **Express middleware is the only gate.** A new mutating route on `supabaseAdmin` that skips `requireAuth`/`requireRole`/`requirePermission`/an explicit ownership filter is not "slightly less safe" — it is a full, silent bypass reachable by anyone who can authenticate at all (or, for the webhook, anyone who can forge a valid Stripe signature, which is why that one leans on HMAC instead).
+
+See `backend/routes/generator-care/README.md` for the checklist to run through before adding or changing a GC route.
