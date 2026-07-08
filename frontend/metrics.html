@@ -2,159 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#F4F6FA" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="tokens.css" />
-  <link rel="stylesheet" href="components.css" />
-  <link rel="stylesheet" href="app.css" />
-  <link rel="stylesheet" href="ui-dialogs.css" />
-  <!-- Chart.js (CDN per spec). Note: not precached by the service worker, so the
-       charts need a connection; the rest of the page works from cache offline. -->
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <title>Bates Electric — Metrics</title>
-  <style>
-    .m-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 18px; }
-    .m-control { display: flex; flex-direction: column; }
-    .m-control label { font-size: 0.75rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-    .m-control input { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
-    .m-control input:focus { outline: none; border-color: var(--focus); }
-
-    /* Headline stat cards */
-    .m-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
-    .m-stat { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); border-top: 3px solid var(--accent); }
-    .m-stat .label { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-    .m-stat .value { font-size: 1.9rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
-    .m-stat .sub { font-size: 0.78rem; color: var(--ink-3); margin-top: 6px; }
-    .m-stat .sub .up { color: var(--ok); font-weight: 600; }
-    .m-stat .sub .down { color: var(--danger); font-weight: 600; }
-    .m-stat .sub .flat { color: var(--ink-3); font-weight: 600; }
-    #stat-new-sub svg{vertical-align:-2px}
-
-    /* Chart panels */
-    .m-panels { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-    .m-panel { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); min-width: 0; }
-    .m-panel.wide { grid-column: 1 / -1; }
-    .m-panel-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 700; margin: 0 0 4px; }
-    .m-panel-note { font-size: 0.76rem; color: var(--ink-3); margin: 0 0 12px; }
-    .m-canvas-wrap { position: relative; height: 260px; }
-    .m-canvas-wrap.tall { height: 300px; }
-    .m-empty-note { color: var(--ink-3); font-size: 0.85rem; padding: 28px 4px; text-align: center; }
-
-    @media (max-width: 760px) {
-      .m-panels { grid-template-columns: 1fr; }
-      .m-panel.wide { grid-column: auto; }
-      .m-stat .value { font-size: 1.6rem; }
-    }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bates Electric &mdash; Metrics</title>
+  <!-- Metrics moved into generator-care.html as an in-page tab (#metrics) so
+       switching between Generator Care tabs no longer reloads the document.
+       This page only exists so old bookmarks / PWA home-screen shortcuts
+       still land somewhere — a client-side redirect (not a server 30x)
+       because it must also work offline, from cache, under the service
+       worker, and must preserve the #hash (a real HTTP redirect followed by
+       the SW's network-first fetch() strips URL fragments). -->
+  <script>location.replace('/generator-care#metrics');</script>
 </head>
-<body class="hub-body dashboard-body">
-  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
-  <main class="dashboard-main">
-    <div class="dashboard-header gc-page-header">
-      <a href="/home" class="btn btn-secondary btn-sm" style="margin-right:12px;display:inline-flex;align-items:center;gap:6px;text-decoration:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Home</a><h1 style="display:inline-block;">Generator Care Metrics</h1>
-      <div class="dashboard-header-actions">
-        <button type="button" id="refresh-btn" class="btn btn-secondary btn-sm">Refresh</button>
-      </div>
-    </div>
-
-    <nav class="section-tabs" data-section-tabs aria-label="Generator Care sections"></nav>
-
-    <p style="color:var(--ink-3);font-size:0.9rem;margin-bottom:18px;max-width:720px;">
-      How the Generator Care program is doing at a glance. The stat cards and plan/add-on charts reflect your <strong>current active book</strong>; signups, channel, and cancellations follow the date range below.
-    </p>
-
-    <div class="m-controls">
-      <div class="m-control">
-        <label for="from-date">From</label>
-        <input type="date" id="from-date" />
-      </div>
-      <div class="m-control">
-        <label for="to-date">To</label>
-        <input type="date" id="to-date" />
-      </div>
-      <button type="button" id="apply-btn" class="btn btn-primary btn-sm" style="height:38px;">Apply</button>
-    </div>
-
-    <div id="loading" class="loading-state"><p>Loading metrics&hellip;</p></div>
-
-    <div id="content" hidden>
-      <!-- Headline stat cards -->
-      <div class="m-stats">
-        <div class="m-stat">
-          <div class="label">Active Subscriptions</div>
-          <div class="value" id="stat-active">0</div>
-          <div class="sub" id="stat-active-sub">&nbsp;</div>
-        </div>
-        <div class="m-stat">
-          <div class="label">New This Month</div>
-          <div class="value" id="stat-new">0</div>
-          <div class="sub" id="stat-new-sub">&nbsp;</div>
-        </div>
-        <div class="m-stat">
-          <div class="label">Annual Recurring Revenue</div>
-          <div class="value" id="stat-arr">$0</div>
-          <div class="sub" id="stat-arr-sub">annualized, active subs</div>
-        </div>
-        <div class="m-stat">
-          <div class="label">Add-on Attach Rate</div>
-          <div class="value" id="stat-attach">0%</div>
-          <div class="sub" id="stat-attach-sub">of active subs have an add-on</div>
-        </div>
-      </div>
-
-      <!-- Charts -->
-      <div class="m-panels">
-        <div class="m-panel wide">
-          <h2 class="m-panel-h">Signups Over Time</h2>
-          <p class="m-panel-note" id="signups-note">By month signed up</p>
-          <div class="m-canvas-wrap tall"><canvas id="chart-signups"></canvas></div>
-        </div>
-
-        <div class="m-panel">
-          <h2 class="m-panel-h">Plan Mix</h2>
-          <p class="m-panel-note">Active subscriptions by billing cadence</p>
-          <div class="m-canvas-wrap"><canvas id="chart-plan"></canvas></div>
-        </div>
-
-        <div class="m-panel">
-          <h2 class="m-panel-h">Generator Class</h2>
-          <p class="m-panel-note">Active subscriptions by unit size</p>
-          <div class="m-canvas-wrap"><canvas id="chart-genclass"></canvas></div>
-        </div>
-
-        <div class="m-panel">
-          <h2 class="m-panel-h">Add-on Popularity</h2>
-          <p class="m-panel-note">Active subs with each add-on</p>
-          <div class="m-canvas-wrap" id="addon-wrap"><canvas id="chart-addons"></canvas></div>
-        </div>
-
-        <div class="m-panel">
-          <h2 class="m-panel-h">Cancellations</h2>
-          <p class="m-panel-note" id="churn-note">Overall churn &amp; canceled-per-month</p>
-          <div class="m-canvas-wrap" id="churn-wrap"><canvas id="chart-churn"></canvas></div>
-        </div>
-
-        <div class="m-panel wide">
-          <h2 class="m-panel-h">Signups by Channel</h2>
-          <p class="m-panel-note" id="channel-note">How customers heard about us</p>
-          <div class="m-canvas-wrap" id="channel-wrap"><canvas id="chart-channel"></canvas></div>
-        </div>
-      </div>
-    </div>
-
-    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
-  </main>
-
-  <script src="shared-nav.js"></script>
-  <script src="ui-dialogs.js"></script>
-  <script src="icons.js"></script>
-  <script src="metrics.js"></script>
+<body>
+  <noscript><p>Metrics has moved. <a href="/generator-care#metrics">Continue to Generator Care &rarr; Metrics</a>.</p></noscript>
 </body>
 </html>
