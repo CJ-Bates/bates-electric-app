@@ -8,6 +8,7 @@ const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { completeServiceVisit } = require('../../lib/completeVisit');
 const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
+const { arrivalWindow, arrivalWindowLabel } = require('../../lib/generator-catalog');
 const { sendEmail, buildVisitScheduledEmail } = require('../../lib/emails');
 
 const router = express.Router();
@@ -39,29 +40,37 @@ router.post('/visits/:id/complete', async (req, res) => {
 });
 
 // POST /api/generator-care/visits/:id/schedule
-// Book (or reschedule) an appointment date+time for a visit -> "Scheduled".
-// Distinct from the plan-driven DUE date (which stays on the subscription): this
-// is the actual booked slot Amy confirmed with the customer by phone. Records who
-// booked it + when (audit). This is the single, clear "schedule appointment"
-// action and the intended seam for a future SMS confirmation/reminder (NOT built
-// here). Office-gated; the actor is recorded (not hard-coded), so a future
+// Book (or reschedule) an appointment for a visit -> "Scheduled". The booking
+// is a DATE + 2-hour ARRIVAL WINDOW (how Amy actually schedules): the client
+// sends appointment_at as the window's start instant (the sortable machine
+// key) plus the window code in arrival_window. Distinct from the plan-driven
+// DUE date (which stays on the subscription). Records who booked it + when
+// (audit). This is the single, clear "schedule appointment" action and the
+// intended seam for a future SMS confirmation/reminder (NOT built here).
+// Office-gated; the actor is recorded (not hard-coded), so a future
 // field-tech role could reuse this endpoint without a rewrite.
 router.post('/visits/:id/schedule', async (req, res) => {
   try {
     const { id } = req.params;
-    const { appointment_at } = req.body || {};
+    const { appointment_at, arrival_window } = req.body || {};
     if (!appointment_at) return res.status(400).json({ error: 'appointment_at (date + time) is required' });
     const when = new Date(appointment_at);
     if (isNaN(when.getTime())) return res.status(400).json({ error: 'appointment_at is not a valid date/time' });
+    // Window code must come from the shared list when present. Absent is
+    // allowed (legacy clients) — the visit shows its stored time instead.
+    if (arrival_window && !arrivalWindow(arrival_window)) {
+      return res.status(400).json({ error: 'arrival_window is not one of the bookable windows' });
+    }
 
     const bookedBy = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'office';
 
     // Core update lives in lib/scheduleVisit.js — shared with the field-tech
     // reschedule endpoint (which sends an internal email instead of this
-    // customer email). Behavior here is unchanged.
+    // customer email).
     const { visit: updated } = await scheduleServiceVisit({
       visitId: id,
       appointmentAt: when,
+      arrivalWindow: arrival_window || null,
       bookedBy,
     });
     if (!updated) return res.status(404).json({ error: 'visit not found or already completed' });
@@ -92,14 +101,16 @@ router.post('/visits/:id/schedule', async (req, res) => {
       console.log('[generator-care] preference mark-used skipped:', e && e.message);
     }
 
-    // Notify the customer their appointment is booked (existing template). Future
-    // SMS confirmation hangs off THIS point. Pass the date part — template-safe.
+    // Notify the customer their appointment is booked. The email leads with
+    // the ARRIVAL WINDOW (never a single clock time) — this is the surface
+    // Amy cares most about. Future SMS confirmation hangs off THIS point.
     const sub = updated.subscription;
     const customer = sub && sub.customer;
     if (customer && customer.email) {
       const { subject, html, text } = buildVisitScheduledEmail({
         customer,
         scheduledDate: updated.appointment_at ? updated.appointment_at.slice(0, 10) : null,
+        arrivalWindowLabel: arrivalWindowLabel(updated.arrival_window),
         planLabel: planLabelFor(sub && sub.plan),
       });
       sendEmail({

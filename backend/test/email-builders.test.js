@@ -27,7 +27,8 @@ const BUILDERS = [
     name: CUSTOMER.name, portalUrl: 'https://billing.stripe.com/p/session/test', companyState: state,
   })],
   ['buildVisitScheduledEmail', (state) => emails.buildVisitScheduledEmail({
-    customer: CUSTOMER, scheduledDate: '2026-08-15', planLabel: 'Annual', companyState: state,
+    customer: CUSTOMER, scheduledDate: '2026-08-15', arrivalWindowLabel: '8:00–10:00 AM',
+    planLabel: 'Annual', companyState: state,
   })],
   ['buildVisitCompletedEmail', (state) => emails.buildVisitCompletedEmail({
     customer: CUSTOMER, completedDate: '2026-07-01', nextVisitDate: '2027-07-01',
@@ -138,6 +139,25 @@ test('refund receipt formats the refunded amount', () => {
   const r = build('MO');
   assert.ok(r.html.includes('$85.00'));
   assert.ok(r.text.includes('$85.00'));
+});
+
+test('visit-scheduled email leads with the arrival window, never a clock time', () => {
+  const withWindow = emails.buildVisitScheduledEmail({
+    customer: CUSTOMER, scheduledDate: '2026-08-15', arrivalWindowLabel: '8:00–10:00 AM',
+    planLabel: 'Annual', companyState: 'MO',
+  });
+  for (const out of [withWindow.html, withWindow.text]) {
+    assert.ok(out.includes('8:00–10:00 AM'), 'window label appears');
+    assert.ok(out.includes('between 8:00 and 10:00 AM'), 'friendly between-sentence appears');
+  }
+  assert.ok(withWindow.html.includes('Arrival window'), 'highlighted block heading');
+
+  // Legacy bookings without a window render the date alone, as before.
+  const without = emails.buildVisitScheduledEmail({
+    customer: CUSTOMER, scheduledDate: '2026-08-15', planLabel: 'Annual', companyState: 'MO',
+  });
+  assert.ok(!without.html.includes('Arrival window'));
+  assert.ok(without.html.includes('August 15, 2026'));
 });
 
 test('escHtml: user-supplied values are escaped in rendered HTML', () => {

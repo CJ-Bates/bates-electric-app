@@ -469,14 +469,33 @@ function buildCardUpdateLinkEmail({ name, portalUrl, companyState }) {
 
 // --- 4. Visit scheduled -----------------------------------------------------
 
-function buildVisitScheduledEmail({ customer, scheduledDate, planLabel, companyState }) {
+// arrivalWindowLabel (optional): the booked 2-hour arrival window ("8:00–10:00
+// AM"). When present it's the star of the email — a highlighted block plus a
+// plain "our technician will arrive between …" sentence — so the customer
+// reads a WINDOW, never an exact time they'd hold us to. Absent (legacy
+// bookings) the email shows the date alone, as before.
+function buildVisitScheduledEmail({ customer, scheduledDate, arrivalWindowLabel, planLabel, companyState }) {
   const name = (customer && customer.name) || 'there';
   const dateStr = fmtFriendlyDate(scheduledDate);
   const planText = planLabel ? `${planLabel} ` : '';
   const company = companyName(companyState != null ? companyState : (customer && customer.install_state));
 
+  // "8:00–10:00 AM" -> "between 8:00 and 10:00 AM" (en dash to "and").
+  const betweenStr = arrivalWindowLabel ? arrivalWindowLabel.replace('–', ' and ') : '';
+
+  const windowBlock = arrivalWindowLabel
+    ? (
+        `<div style="margin:20px 0;padding:16px 18px;background:${BRAND.bgPage};border-left:3px solid ${BRAND.navy};border-radius:4px;">` +
+          `<div style="${H3}margin:0 0 4px;">Arrival window</div>` +
+          `<div style="font-family:${FONT_STACK};color:${BRAND.navy};font-size:20px;font-weight:700;line-height:1.3;">${escHtml(arrivalWindowLabel)}</div>` +
+          `<div style="font-family:${FONT_STACK};color:${BRAND.textBody};font-size:14px;line-height:1.6;margin-top:6px;">Our technician will arrive between ${escHtml(betweenStr)}.</div>` +
+        `</div>`
+      )
+    : '';
+
   const body =
     `<p style="${P}">Your ${escHtml(planText)}generator service visit is confirmed for <strong>${escHtml(dateStr)}</strong>.</p>` +
+    windowBlock +
     `<p style="${P}">Our technician will be on-site to perform a full inspection and any services included in your plan. You don&rsquo;t need to be there as long as the generator is accessible &mdash; though we&rsquo;re happy to walk you through what we did if you are.</p>` +
     `<p style="${P_LAST}">Need to reschedule or have a question? Give us a call at <strong>${BRAND.phone}</strong> or email us.</p>`;
 
@@ -487,9 +506,15 @@ function buildVisitScheduledEmail({ customer, scheduledDate, planLabel, companyS
     companyState: companyState != null ? companyState : (customer && customer.install_state),
   });
 
+  const windowText = arrivalWindowLabel
+    ? `ARRIVAL WINDOW: ${arrivalWindowLabel}\n` +
+      `Our technician will arrive between ${betweenStr}.\n\n`
+    : '';
+
   const text =
     `Hi ${name},\n\n` +
     `Your ${planText}generator service visit is confirmed for ${dateStr}.\n\n` +
+    windowText +
     `Our technician will perform a full inspection and any included services. ` +
     `You don't need to be there as long as the generator is accessible.\n\n` +
     `Need to reschedule? Give us a call at ${BRAND.phone} or email ${BRAND.email}.\n\n` +

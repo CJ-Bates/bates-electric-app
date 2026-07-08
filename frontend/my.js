@@ -68,13 +68,26 @@
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  // ISO timestamp -> 'Monday, Aug 3 · 7:00 AM'
+  // ISO timestamp -> 'Monday, Aug 3 · 7:00 AM'. Legacy fallback only — booked
+  // visits display via fmtArrival (date + arrival window, never a clock time).
   function fmtAppointment(iso) {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return String(iso);
     const day = d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     return day + ' · ' + time;
+  }
+
+  // Booked visit -> 'Monday, Aug 3 · 8:00–10:00 AM arrival' when it has an
+  // arrival window (the 2-hour window we actually schedule in); visits booked
+  // before the window change fall back to the stored time.
+  function fmtArrival(iso, windowCode) {
+    const w = window.BatesArrivalWindows.byCode[windowCode];
+    if (!w) return fmtAppointment(iso);
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+      + ' · ' + w.label + ' arrival';
   }
 
   const GEN_CLASS_LABELS = {
@@ -348,10 +361,13 @@
     }
     card.hidden = false;
     if (nextVisit.appointment_at) {
-      // Booked: the confirmed slot owns the hero; preferences are done.
+      // Booked: the confirmed arrival window owns the hero; preferences are done.
+      const win = window.BatesArrivalWindows.byCode[nextVisit.arrival_window];
       $('hero-k').textContent = 'Next service visit';
-      $('hero-when').textContent = fmtAppointment(nextVisit.appointment_at);
-      $('hero-who').textContent = 'Regular maintenance service — we’ll confirm the day before.';
+      $('hero-when').textContent = fmtArrival(nextVisit.appointment_at, nextVisit.arrival_window);
+      $('hero-who').textContent = win
+        ? 'Our technician will arrive between ' + win.label.replace('–', ' and ') + '. We’ll confirm the day before.'
+        : 'Regular maintenance service — we’ll confirm the day before.';
       $('btn-calendar').hidden = false;
       $('btn-reschedule').hidden = false;
       prefs.hidden = true;
@@ -370,12 +386,15 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Appointment preferences (hero, unscheduled visits only)
+  // Appointment preferences (hero, unscheduled visits only). The customer
+  // proposes date + arrival-window slots from the SAME shared window list the
+  // office books from (frontend/arrival-windows.js), so a proposed slot maps
+  // 1:1 to a bookable appointment.
   // ---------------------------------------------------------------------------
-  const WINDOW_LABELS = { AM: 'Morning (8–12)', PM: 'Afternoon (12–4)' };
   const PREFS_RECEIVED_COPY = 'Preferences received — we’ll confirm your appointment, typically about two weeks before it’s due.';
 
-  function windowLabel(w) { return WINDOW_LABELS[w] || w || ''; }
+  // Shared labels; also covers legacy AM/PM slots submitted before the change.
+  function windowLabel(w) { return window.BatesArrivalWindows.label(w); }
 
   function tomorrowStr() {
     const d = new Date();
@@ -389,17 +408,24 @@
     const p = nv.preferences;
     if (prefsFormOpen) {
       const existing = (p && p.slots) || [];
+      // Pre-select each row's saved window; legacy AM/PM slots (submitted
+      // before the arrival-window change) map to the closest window.
+      const LEGACY_MAP = { AM: '8-10', PM: '12-2' };
       const rows = [0, 1, 2].map((i) => {
         const s = existing[i] || {};
+        const sel = window.BatesArrivalWindows.byCode[s.window]
+          ? s.window
+          : (LEGACY_MAP[s.window] || window.BatesArrivalWindows.WINDOWS[0].code);
+        const opts = window.BatesArrivalWindows.WINDOWS.map((w) =>
+          '<option value="' + esc(w.code) + '"' + (sel === w.code ? ' selected' : '') + '>' + esc(w.label) + '</option>').join('');
         return '<div class="pref-row">'
           + '<input type="date" data-pref-date min="' + tomorrowStr() + '" value="' + esc(s.date || '') + '" aria-label="Preferred date ' + (i + 1) + '">'
-          + '<select data-pref-window aria-label="Time of day ' + (i + 1) + '">'
-          + '<option value="AM"' + (s.window === 'PM' ? '' : ' selected') + '>' + esc(WINDOW_LABELS.AM) + '</option>'
-          + '<option value="PM"' + (s.window === 'PM' ? ' selected' : '') + '>' + esc(WINDOW_LABELS.PM) + '</option>'
+          + '<select data-pref-window aria-label="Arrival window ' + (i + 1) + '">'
+          + opts
           + '</select></div>';
       }).join('');
       el.innerHTML = '<div class="pref-form">'
-        + '<label>Preferred times — up to three</label>'
+        + '<label>Preferred dates &amp; arrival windows — up to three</label>'
         + rows
         + '<textarea data-pref-note rows="2" placeholder="Anything else? Gate code, best number to reach you… (optional)">' + esc((p && p.note) || '') + '</textarea>'
         + '<div class="row"><button class="btn btn-onhero" data-action="prefs-submit">Send preferences</button>'
@@ -408,13 +434,13 @@
       return;
     }
     if (p && p.slots && p.slots.length) {
-      el.innerHTML = '<div class="pref-list"><b>Your preferred times</b><br>'
+      el.innerHTML = '<div class="pref-list"><b>Your preferred arrival windows</b><br>'
         + p.slots.map((s, i) => (i + 1) + ') ' + esc(fmtDate(s.date)) + ' · ' + esc(windowLabel(s.window))).join('<br>')
         + '</div>'
         + '<div class="pref-copy">' + esc(PREFS_RECEIVED_COPY) + ' You can change them until we confirm.</div>'
         + '<div class="row" style="margin-top:10px"><button class="btn btn-onhero" data-action="prefs-open">Change preferences</button></div>';
     } else {
-      el.innerHTML = '<div class="pref-copy">Tell us up to three times that work for you — we’ll confirm your appointment, typically about two weeks before it’s due.</div>'
+      el.innerHTML = '<div class="pref-copy">Tell us up to three dates and arrival windows that work for you — we’ll confirm your appointment, typically about two weeks before it’s due.</div>'
         + '<div class="row" style="margin-top:10px"><button class="btn btn-onhero" data-action="prefs-open">Pick your preferred times</button></div>';
     }
   }
@@ -427,7 +453,7 @@
     for (let i = 0; i < dates.length; i++) {
       const date = (dates[i].value || '').trim();
       if (!date) continue;
-      slots.push({ date, window: windows[i] ? windows[i].value : 'AM' });
+      slots.push({ date, window: windows[i] ? windows[i].value : window.BatesArrivalWindows.WINDOWS[0].code });
     }
     if (!slots.length) {
       showStatus('Pick at least one preferred date.', 'warning');
@@ -498,8 +524,9 @@
     }
     // scheduled / upcoming
     const scheduled = v.status === 'scheduled' && v.appointment_at;
+    const win = scheduled && window.BatesArrivalWindows.byCode[v.arrival_window];
     const dateLabel = scheduled
-      ? fmtDate(v.appointment_at) + ' · upcoming'
+      ? fmtDate(v.appointment_at) + (win ? ' · ' + win.label + ' arrival' : ' · upcoming')
       : (v.due_date ? 'Due ' + fmtDate(v.due_date) : 'Upcoming visit');
     const badge = scheduled
       ? '<span class="badge badge-info">Scheduled</span>'
@@ -710,7 +737,10 @@
     if (!nv || !nv.appointment_at) return;
     const start = new Date(nv.appointment_at);
     if (isNaN(start.getTime())) return;
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    // The calendar event spans the whole 2-hour arrival window (appointment_at
+    // is the window's start); legacy exact-time bookings keep the 1-hour block.
+    const win = window.BatesArrivalWindows.byCode[nv.arrival_window];
+    const end = new Date(start.getTime() + (win ? 2 * 60 : 60) * 60 * 1000);
     const utc = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const c = overview.customer || {};
     const where = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
@@ -727,7 +757,7 @@
       'DTEND:' + utc(end),
       'SUMMARY:' + icsEscape('Generator service visit — ' + company),
       'LOCATION:' + icsEscape(where),
-      'DESCRIPTION:' + icsEscape('Regular generator maintenance service. Questions? (636) 464-3939'),
+      'DESCRIPTION:' + icsEscape((win ? 'Arrival window: ' + win.label + '. ' : '') + 'Regular generator maintenance service. Questions? (636) 464-3939'),
       'END:VEVENT',
       'END:VCALENDAR',
     ];

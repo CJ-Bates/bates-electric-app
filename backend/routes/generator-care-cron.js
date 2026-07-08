@@ -5,6 +5,7 @@
 const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendViaBrevo } = require('../lib/mailer');
+const { arrivalWindowLabel } = require('../lib/generator-catalog');
 
 const router = express.Router();
 
@@ -68,17 +69,23 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  else upcoming.push(s);
  }
 
-    // Look up visit statuses for upcoming subs to split tentative vs confirmed.
+    // Look up visit statuses for upcoming subs to split tentative vs confirmed,
+    // and carry the booked appointment (date + arrival window) so confirmed
+    // rows can show WHEN the visit is booked, not just when it's due.
     const upcomingSubIds = upcoming.map(s => s.id);
     const statusBySubId = {};
+    const bookedBySubId = {};
     if (upcomingSubIds.length > 0) {
       const { data: visits } = await supabaseAdmin
         .from('generator_service_visits')
-        .select('subscription_id, status')
+        .select('subscription_id, status, appointment_at, arrival_window')
         .in('subscription_id', upcomingSubIds)
         .in('status', ['tentative', 'scheduled']);
       for (const v of (visits || [])) {
         if (!statusBySubId[v.subscription_id]) statusBySubId[v.subscription_id] = v.status;
+        if (!bookedBySubId[v.subscription_id] && v.status === 'scheduled' && v.appointment_at) {
+          bookedBySubId[v.subscription_id] = { appointment_at: v.appointment_at, arrival_window: v.arrival_window };
+        }
       }
     }
     const upcomingTentative = upcoming.filter(s => statusBySubId[s.id] === 'tentative');
@@ -117,7 +124,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 
     const { subject, html, text } = isQuiet
       ? buildQuietEmail({ todayStr })
-      : buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, failedAddons, failedAdhoc, pastDue, todayStr });
+      : buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, todayStr });
 
  // Send via Brevo. A missing BREVO_API_KEY or a provider error throws below ->
  // caught -> 500 + Healthchecks '/fail' ping, so we hear about it.
@@ -145,7 +152,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 
 // Helpers --------------------------------------------------
 
-function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirmed = [], failedAddons = [], failedAdhoc = [], pastDue = [], todayStr }) {
+function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], todayStr }) {
  const total = overdue.length + upcoming.length;
  const failedTotalForSubject = failedAddons.length + failedAdhoc.length;
       const subject = pastDue.length > 0
@@ -172,6 +179,17 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  };
  const fmtDate = (s) => new Date(s + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
+ // Booked appointment -> "Tue, Jul 21 · 8:00–10:00 AM arrival" (window when
+ // set; legacy exact time otherwise). The whole app speaks arrival windows.
+ const fmtBooked = (b) => {
+ if (!b || !b.appointment_at) return '';
+ const winLabel = arrivalWindowLabel(b.arrival_window);
+ const day = new Date(b.appointment_at).toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric' });
+ if (winLabel) return `${day} · ${winLabel} arrival`;
+ const time = new Date(b.appointment_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+ return `${day} · ${time} CT`;
+ };
+
  const rowHtml = (s, kind) => {
  const c = s.customer || {};
  const d = daysUntil(s.next_visit_due);
@@ -179,6 +197,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  ? `${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} OVERDUE`
  : (d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : `In ${d} days  | ${fmtDate(s.next_visit_due)}`);
  const dueColor = kind === 'overdue' ? '#b91c1c' : (d <= 7 ? '#b45309' : '#1F3A5F');
+ const bookedStr = kind === 'overdue' ? '' : fmtBooked(bookedBySubId[s.id]);
  const addr = [c.install_city, c.install_state].filter(Boolean).join(', ');
  return `
  <tr>
@@ -192,6 +211,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  </td>
  <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;vertical-align:top;color:${dueColor};font-size:13px;font-weight:600;text-align:right;white-space:nowrap;">
  ${dueText}
+ ${bookedStr ? `<div style="color:#1F3A5F;font-size:12px;font-weight:600;margin-top:2px;">Booked ${escapeHtml(bookedStr)}</div>` : ''}
  </td>
  </tr>
  `;
@@ -340,7 +360,8 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
         for (const s of upcomingConfirmed) {
           const d = Math.round((new Date(s.next_visit_due) - new Date(todayStr)) / 86400000);
           const c = s.customer || {};
-          textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  in ${d} days  -  ${c.phone || ''}`);
+          const bookedStr = fmtBooked(bookedBySubId[s.id]);
+          textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  in ${d} days${bookedStr ? `  -  booked ${bookedStr}` : ''}  -  ${c.phone || ''}`);
         }
       }
 

@@ -121,7 +121,7 @@ router.get('/overview', readLimiter, async (req, res) => {
     // Visits (customer-visible fields ONLY — never internal_note).
     const { data: visitRows, error: vErr } = await supabaseAdmin
       .from('generator_service_visits')
-      .select('id, visit_type, status, scheduled_date, appointment_at, completed_date, notes')
+      .select('id, visit_type, status, scheduled_date, appointment_at, arrival_window, completed_date, notes')
       .eq('subscription_id', sub.id)
       .neq('status', 'canceled')
       .order('completed_date', { ascending: false, nullsFirst: true })
@@ -263,6 +263,7 @@ router.get('/overview', readLimiter, async (req, res) => {
       next_visit: nextVisit && {
         id: nextVisit.id,
         appointment_at: nextVisit.appointment_at,
+        arrival_window: nextVisit.arrival_window || null,
         due_date: nextVisit.scheduled_date,
         status: nextVisit.status,
         preferences, // { slots, note, created_at } | null — pending only
@@ -275,6 +276,7 @@ router.get('/overview', readLimiter, async (req, res) => {
         status: (v.completed_date || v.status === 'completed') ? 'completed'
           : (v.appointment_at ? 'scheduled' : 'upcoming'),
         appointment_at: v.appointment_at,
+        arrival_window: v.arrival_window || null,
         due_date: v.scheduled_date,
         completed_date: v.completed_date,
         notes: v.notes || null,
@@ -339,12 +341,23 @@ router.get('/billing', readLimiter, async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/my/visit-preferences — the customer proposes up to three
-// date + AM/PM windows for their next open visit. Stores them (replacing any
-// still-pending submission for that visit) + emails the office. The office
-// confirms via the existing booking flow — typically about two weeks before
-// the visit is due — which marks these used and sends the confirmation email.
+// date + arrival-window slots for their next open visit, from the SAME
+// window list Amy books from (generator-catalog ARRIVAL_WINDOWS), so a
+// proposed slot maps 1:1 to a bookable appointment. Stores them (replacing
+// any still-pending submission for that visit) + emails the office. The
+// office confirms via the existing booking flow — typically about two weeks
+// before the visit is due — which marks these used and sends the
+// confirmation email.
 // ---------------------------------------------------------------------------
-const PREF_WINDOWS = { AM: 'morning (8am–noon)', PM: 'afternoon (noon–4pm)' };
+// Slots submitted by pre-arrival-window clients (cached my.js) used 'AM'/'PM';
+// still accepted + labeled so nothing breaks mid-rollout.
+const LEGACY_PREF_WINDOWS = { AM: 'morning (8am–noon)', PM: 'afternoon (noon–4pm)' };
+
+// Human label for a preference slot's window (arrival-window code or legacy
+// AM/PM), or null when it isn't a recognized value.
+function prefWindowLabel(w) {
+  return catalog.arrivalWindowLabel(w) || LEGACY_PREF_WINDOWS[w] || null;
+}
 
 router.post('/visit-preferences', writeLimiter, async (req, res) => {
   try {
@@ -352,23 +365,24 @@ router.post('/visit-preferences', writeLimiter, async (req, res) => {
     if (!ctx) return;
     const { customer, sub } = ctx;
 
-    // Validate: 1-3 future dates, each with an AM/PM window. Today (Central)
-    // is the cutoff — same-day proposals aren't schedulable anyway.
+    // Validate: 1-3 future dates, each with an arrival window (or legacy
+    // AM/PM from a stale client). Today (Central) is the cutoff — same-day
+    // proposals aren't schedulable anyway.
     const raw = Array.isArray(req.body && req.body.slots) ? req.body.slots.slice(0, 3) : [];
     const todayCentral = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
     const slots = [];
     const seen = new Set();
     for (const s of raw) {
       const date = str(s && s.date, 10);
-      const window = str(s && s.window, 2).toUpperCase();
+      const window = str(s && s.window, 8);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(date + 'T12:00:00').getTime())) {
         return res.status(400).json({ error: 'One of the dates is not valid.' });
       }
       if (date <= todayCentral) {
         return res.status(400).json({ error: 'Preferred dates need to be in the future.' });
       }
-      if (!PREF_WINDOWS[window]) {
-        return res.status(400).json({ error: 'Pick morning or afternoon for each date.' });
+      if (!prefWindowLabel(window)) {
+        return res.status(400).json({ error: 'Pick an arrival window for each date.' });
       }
       const key = date + window;
       if (seen.has(key)) continue; // silently drop exact duplicates
@@ -409,7 +423,7 @@ router.post('/visit-preferences', writeLimiter, async (req, res) => {
     if (insErr) throw insErr;
 
     // Heads-up to the office mailbox (same convention as reschedule requests).
-    const slotLines = slots.map((s, i) => `  ${i + 1}) ${fmtDate(s.date)} — ${PREF_WINDOWS[s.window]}`).join('\n');
+    const slotLines = slots.map((s, i) => `  ${i + 1}) ${fmtDate(s.date)} — ${prefWindowLabel(s.window)} arrival`).join('\n');
     const dueStr = openVisit.scheduled_date ? `due ${fmtDate(openVisit.scheduled_date)}` : 'no due date on record';
     const officeLine = `Customer ${customer.name} (${customer.email}) proposed appointment times for their next visit (${dueStr}):\n${slotLines}`
       + (note ? `\nNote: ${note}` : '')
@@ -447,7 +461,7 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
     // from the client).
     const { data: openVisit, error: ovErr } = await supabaseAdmin
       .from('generator_service_visits')
-      .select('id, appointment_at, scheduled_date')
+      .select('id, appointment_at, arrival_window, scheduled_date')
       .eq('subscription_id', sub.id)
       .is('completed_date', null)
       .neq('status', 'canceled')
@@ -480,9 +494,14 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
       if (insErr) throw insErr;
     }
 
+    // Booked appointments read as date + arrival window (how the whole app
+    // speaks now); legacy bookings without a window fall back to the exact time.
+    const windowLabel = openVisit && catalog.arrivalWindowLabel(openVisit.arrival_window);
     const currentStr = openVisit
       ? (openVisit.appointment_at
-        ? new Date(openVisit.appointment_at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' CT'
+        ? (windowLabel
+          ? new Date(openVisit.appointment_at).toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ` · ${windowLabel} arrival`
+          : new Date(openVisit.appointment_at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' CT')
         : (openVisit.scheduled_date ? 'due ' + fmtDate(openVisit.scheduled_date) : 'unscheduled'))
       : 'unscheduled';
 

@@ -13,7 +13,7 @@ const { requirePermission } = require('../middleware/permissions');
 const { completeServiceVisit } = require('../lib/completeVisit');
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail } = require('../lib/emails');
-const { ADDON_CATALOG } = require('../lib/generator-catalog');
+const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel } = require('../lib/generator-catalog');
 
 const router = express.Router();
 
@@ -37,6 +37,22 @@ function fmtCentral(iso) {
   } catch (e) { return iso; }
 }
 
+// Appointment display for internal emails: date + arrival window ("Tue,
+// Jul 21 · 8:00–10:00 AM arrival") when the visit has one; otherwise the
+// legacy exact-time stamp.
+function fmtApptCentral(iso, windowCode) {
+  if (!iso) return 'unscheduled';
+  const label = arrivalWindowLabel(windowCode);
+  if (!label) return fmtCentral(iso);
+  try {
+    const day = new Date(iso).toLocaleDateString('en-US', {
+      timeZone: 'America/Chicago',
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    });
+    return `${day} · ${label} arrival`;
+  } catch (e) { return fmtCentral(iso); }
+}
+
 // Ownership guard shared by the phase-2 endpoints: the visit must be assigned
 // to the calling tech (the IDOR boundary). Returns the visit row or null.
 async function assignedVisit(req, extraCols) {
@@ -58,7 +74,7 @@ router.use(requireAuth, requireRole('tech'));
 
 // Curated visit shape: what a tech needs in the field, nothing about billing.
 const TECH_VISIT_SELECT = `
-  id, status, visit_type, scheduled_date, appointment_at, completed_date, completed_by,
+  id, status, visit_type, scheduled_date, appointment_at, arrival_window, completed_date, completed_by,
   notes, internal_note, assigned_at,
   subscription:generator_subscriptions(
     id, plan, gen_class, gen_type_label, gen_model, gen_serial,
@@ -158,24 +174,29 @@ router.post('/my-visits/:id/complete', async (req, res) => {
 // ============================================================================
 // PHASE 2 — Feature 2: tech reschedules their OWN assigned appointment.
 // POST /api/generator-care/tech/my-visits/:id/schedule
-// Body: { appointment_at }. Same core update as the office seam
-// (lib/scheduleVisit.js) with the assignment check inside the UPDATE, and
-// scheduled_by = the tech's name so the office audit line reads
-// "Booked by <tech>". Sends a plain INTERNAL email to the office mailbox;
-// deliberately NO customer email in this phase.
+// Body: { appointment_at, arrival_window } — a date + 2-hour arrival window
+// (same booking shape as the office; appointment_at is the window's start
+// instant). Same core update as the office seam (lib/scheduleVisit.js) with
+// the assignment check inside the UPDATE, and scheduled_by = the tech's name
+// so the office audit line reads "Booked by <tech>". Sends a plain INTERNAL
+// email to the office mailbox; deliberately NO customer email in this phase.
 // ============================================================================
 router.post('/my-visits/:id/schedule', requirePermission('tech_reschedule'), async (req, res) => {
   try {
-    const { appointment_at } = req.body || {};
+    const { appointment_at, arrival_window } = req.body || {};
     if (!appointment_at) return res.status(400).json({ error: 'appointment_at (date + time) is required' });
     const when = new Date(appointment_at);
     if (isNaN(when.getTime())) return res.status(400).json({ error: 'appointment_at is not a valid date/time' });
+    if (arrival_window && !arrivalWindow(arrival_window)) {
+      return res.status(400).json({ error: 'arrival_window is not one of the bookable windows' });
+    }
 
     const techName = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'tech';
 
-    const { visit, previousAppointmentAt } = await scheduleServiceVisit({
+    const { visit, previousAppointmentAt, previousArrivalWindow } = await scheduleServiceVisit({
       visitId: req.params.id,
       appointmentAt: when,
+      arrivalWindow: arrival_window || null,
       bookedBy: techName,
       assignedTechId: req.user.id, // IDOR boundary, enforced inside the UPDATE
     });
@@ -184,8 +205,8 @@ router.post('/my-visits/:id/schedule', requirePermission('tech_reschedule'), asy
     // Internal heads-up to the office. Fire-and-forget: a mail hiccup must not
     // fail the reschedule the tech just made from a job site.
     const customerName = (visit.subscription && visit.subscription.customer && visit.subscription.customer.name) || 'customer';
-    const fromStr = fmtCentral(previousAppointmentAt);
-    const toStr = fmtCentral(visit.appointment_at);
+    const fromStr = fmtApptCentral(previousAppointmentAt, previousArrivalWindow);
+    const toStr = fmtApptCentral(visit.appointment_at, visit.arrival_window);
     const line = `Visit for ${customerName} moved from ${fromStr} to ${toStr} by ${techName}.`;
     sendEmail({
       to: OFFICE_NOTIFY_TO,
@@ -195,7 +216,7 @@ router.post('/my-visits/:id/schedule', requirePermission('tech_reschedule'), asy
       logTag: '[tech-reschedule-email]',
     }).catch((e) => console.error('[tech-reschedule-email] unexpected:', e && e.message));
 
-    res.json({ ok: true, visit: { id: visit.id, appointment_at: visit.appointment_at, status: visit.status } });
+    res.json({ ok: true, visit: { id: visit.id, appointment_at: visit.appointment_at, arrival_window: visit.arrival_window || null, status: visit.status } });
   } catch (err) {
     console.error('[generator-tech] schedule error:', err && err.message);
     res.status(500).json({ error: 'Server error' });

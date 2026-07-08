@@ -65,6 +65,7 @@ function buildTestTemplate(template) {
     return buildVisitScheduledEmail({
       customer: { name: 'Sample Customer' },
       scheduledDate: '2026-08-15',
+      arrivalWindowLabel: '8:00–10:00 AM',
       planLabel: 'Annual',
     });
   }

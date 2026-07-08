@@ -34,6 +34,15 @@
     if (isNaN(dt)) return esc(d);
     return dt.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
+  // Booked appointment -> "Tue, Jul 21 · 8:00–10:00 AM arrival" when the visit
+  // has an arrival window; legacy exact-time bookings fall back to fmtDateTime.
+  function fmtAppt(iso, windowCode) {
+    const w = iso && window.BatesArrivalWindows.byCode[windowCode];
+    if (!w) return fmtDateTime(iso);
+    const dt = new Date(iso);
+    if (isNaN(dt)) return esc(iso);
+    return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + w.label + ' arrival';
+  }
   function todayStr() { return new Date().toISOString().slice(0, 10); }
   function localDateOf(v) {
     // The visit's effective date for grouping: booked appointment, else due date.
@@ -216,7 +225,7 @@
         when = '';
       } else if (st === 'scheduled') {
         chip = `<span class="badge badge-ok">Scheduled</span>`;
-        when = `<div class="tv-meta">${esc(fmtDateTime(v.appointment_at))}</div>`;
+        when = `<div class="tv-meta">${esc(fmtAppt(v.appointment_at, v.arrival_window))}</div>`;
       } else {
         chip = `<span class="badge badge-warn">Needs scheduling</span>`;
         when = v.scheduled_date ? `<div class="tv-meta">Due ${esc(fmtDate(v.scheduled_date))}</div>` : '';
@@ -277,7 +286,7 @@
 
     let when;
     if (done) when = `Completed ${fmtDate(v.completed_date)}${v.completed_by ? ' by ' + esc(v.completed_by) : ''}`;
-    else if (v.appointment_at) when = `Scheduled ${fmtDateTime(v.appointment_at)}`;
+    else if (v.appointment_at) when = `Scheduled ${fmtAppt(v.appointment_at, v.arrival_window)}`;
     else when = v.scheduled_date ? `Needs scheduling · due ${fmtDate(v.scheduled_date)}` : 'Needs scheduling';
 
     body.innerHTML = `
@@ -439,29 +448,44 @@
   }
 
   // ---- Reschedule (phase 2, open visits only) ----
+  // Books a date + 2-hour ARRIVAL WINDOW (same shape as the office books in);
+  // appointment_at is stored as the window's start on that date.
   async function rescheduleVisit(v) {
     const hasAppt = !!v.appointment_at;
+    const AW = window.BatesArrivalWindows;
     const res = await openPrompt({
       title: hasAppt ? 'Reschedule visit' : 'Book time',
-      message: 'Pick the date and time you\'ll be on site.',
-      fields: [{ name: 'when', label: 'New date & time', type: 'datetime-local', value: hasAppt ? toLocalInput(v.appointment_at) : '', required: true }],
-      validate: (vals) => isNaN(new Date(vals.when).getTime()) ? 'Enter a valid date and time.' : '',
+      message: 'Pick the date and the arrival window you\'ll be on site in.',
+      fields: [
+        { name: 'date', label: 'New date', type: 'date', value: hasAppt ? toLocalInput(v.appointment_at).slice(0, 10) : '', required: true },
+        {
+          name: 'window', label: 'Arrival window', type: 'select',
+          value: AW.byCode[v.arrival_window] ? v.arrival_window : AW.WINDOWS[0].code,
+          options: AW.WINDOWS.map((w) => ({ value: w.code, label: w.label })),
+        },
+      ],
+      validate: (vals) => {
+        if (isNaN(new Date(vals.date + 'T12:00:00').getTime())) return 'Enter a valid date.';
+        if (!AW.byCode[vals.window]) return 'Pick an arrival window.';
+        return '';
+      },
       confirmText: hasAppt ? 'Reschedule' : 'Book',
     });
     if (res === null) return;
-    const when = new Date(res.when);
-    if (isNaN(when.getTime())) { showStatus('That date and time didn\'t parse — try again.', 'error'); return; }
+    const win = AW.byCode[res.window];
+    const when = new Date(`${res.date}T${win.start}`);
+    if (isNaN(when.getTime())) { showStatus('That date didn\'t parse — try again.', 'error'); return; }
     try {
       const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/schedule`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointment_at: when.toISOString() }),
+        body: JSON.stringify({ appointment_at: when.toISOString(), arrival_window: win.code }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Could not reschedule: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`Visit scheduled for ${fmtDateTime(data.visit && data.visit.appointment_at ? data.visit.appointment_at : when.toISOString())}.`, 'success');
+      showStatus(`Visit scheduled for ${data.visit && data.visit.appointment_at ? fmtAppt(data.visit.appointment_at, data.visit.arrival_window) : fmtAppt(when.toISOString(), win.code)}.`, 'success');
       loadVisits();
-      openVisit(v.id); // re-fetch so the detail shows the new time
+      openVisit(v.id); // re-fetch so the detail shows the new window
     } catch (e) {
       console.error('reschedule failed', e);
       showStatus(`Failed: ${e.message}`, 'error');

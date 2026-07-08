@@ -224,7 +224,14 @@
     if (a.pending_prefs) return { key: 'awaiting_confirm', tab: 'action', badge: ['badge-info', 'Awaiting your confirm'] };
     if (apptPassed(ov)) return { key: 'appt_passed', tab: 'action', badge: ['badge-info', 'Confirm completion'] };
     if (!sub.work_order_created_at) return { key: 'needs_wo', tab: 'action', badge: ['badge-warn', 'New \u2014 needs WO'] };
-    if (booked) return { key: 'scheduled', tab: 'scheduled', badge: ['badge-ok', `Scheduled ${fmtDate(String(ov.appointment_at).slice(0, 10))}`] };
+    // Badge shows the arrival window when the visit has one; legacy bookings
+    // without a window keep the date-only form (never a bare clock time).
+    if (booked) {
+      const label = window.BatesArrivalWindows.byCode[ov.arrival_window]
+        ? fmtAppt(ov.appointment_at, ov.arrival_window)
+        : fmtDate(String(ov.appointment_at).slice(0, 10));
+      return { key: 'scheduled', tab: 'scheduled', badge: ['badge-ok', `Scheduled ${label}`] };
+    }
     if (d === null) return { key: 'no_due', tab: 'action', badge: ['badge-warn', 'No due date'] };
     if (d <= DUE_SOON_DAYS) return { key: 'due_soon', tab: 'due-soon', badge: ['badge-warn', 'Due soon \u2014 schedule'] };
     return { key: 'all_good', tab: 'all-good', badge: ['badge-neutral', 'All good \u2014 nothing due'] };
@@ -381,19 +388,30 @@
     return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
   // Appointment date+time (absolute instant stored as timestamptz) -> local display.
+  // Legacy fallback only — booked visits display via fmtAppt (date + arrival window).
   function fmtDateTime(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
-  // Absolute instant -> a datetime-local input value in the viewer's local tz.
-  function toLocalInput(iso) {
+  // Booked appointment -> "Jul 21, 2026 · 8:00–10:00 AM arrival" when the
+  // visit carries an arrival window (the whole app speaks windows, never a
+  // bare clock time); legacy visits without one fall back to the stored time.
+  function fmtAppt(iso, windowCode) {
+    const w = iso && window.BatesArrivalWindows.byCode[windowCode];
+    if (!w) return fmtDateTime(iso);
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + w.label + ' arrival';
+  }
+  // Absolute instant -> a date input value (YYYY-MM-DD) in the viewer's local tz.
+  function toLocalDateInput(iso) {
     if (!iso) return '';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '';
     const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
   function dueLabel(sub) {
     const d = daysUntil(sub.next_visit_due);
@@ -598,7 +616,7 @@
       if (a.pending_prefs && sub.status !== 'canceled') {
         const p = a.pending_prefs;
         const slots = (Array.isArray(p.slots) ? p.slots : [])
-          .map((s) => `${fmtDate(s.date)} ${escapeHtml(s.window || '')}`.trim()).join(' &middot; ');
+          .map((s) => `${fmtDate(s.date)} ${escapeHtml(window.BatesArrivalWindows.label(s.window))}`.trim()).join(' &middot; ');
         items.push({
           tier: 'action', cls: 'c-info', icon: 'calendar', sub, sort: Date.parse(p.created_at || '') || 0,
           title: booked ? 'Reschedule requested' : 'Visit times proposed',
@@ -614,7 +632,7 @@
         items.push({
           tier: 'action', cls: 'c-info', icon: 'checksquare', sub, sort: Date.parse(ov.appointment_at) || 0,
           title: 'Appointment passed &mdash; confirm completion',
-          desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtDateTime(ov.appointment_at))}. If the visit happened, mark it complete so the next cycle starts.`,
+          desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))}. If the visit happened, mark it complete so the next cycle starts.`,
           action: { kind: 'visits', label: 'Mark complete' },
         });
       }
@@ -944,8 +962,9 @@
   }
 
   // Plain-text work-order packet — the fields Brenda keys into Jonas as an internal
-  // record (customers are not invoiced). Copy with "Copy packet".
-  function buildPacketText(sub, pendingAddons, actualChargeCents) {
+  // record (customers are not invoiced). Copy with "Copy packet". openVisit adds
+  // the booked appointment (date + arrival window) when there is one.
+  function buildPacketText(sub, pendingAddons, actualChargeCents, openVisit) {
     const c = sub.customer || {};
     const addr = [c.install_address, fmtNameCase(c.install_city), c.install_state, c.install_zip].filter(Boolean).join(', ');
     const cadence = sub.plan === 'semi_annual' ? 'every 6 months' : (sub.plan === 'annual' ? 'annually' : '');
@@ -971,17 +990,21 @@
       ['Amount charged at signup', money(signupCharge)],
       ['Renews at', money(renewal) + (cadence ? ` ${cadence}` : '')],
     ];
+    // Booked appointment rides along for Brenda's record (window, not a time).
+    if (openVisit && openVisit.appointment_at) {
+      lines.push(['Appointment', fmtAppt(openVisit.appointment_at, openVisit.arrival_window)]);
+    }
     return lines.map(([k, v]) => `${k}: ${v}`).join('\n');
   }
 
   // Internal Jonas work-order record. Brenda keys the work order into Jonas for
   // internal records; customers are NOT invoiced (their document of record is the
   // branded receipt). Distinct from the Service-Visit card.
-  function renderHandoffCard(subscription, pendingAddons) {
+  function renderHandoffCard(subscription, pendingAddons, openVisit) {
     const woAt = subscription.work_order_created_at;
     const woBy = subscription.work_order_created_by;
     const woNum = subscription.work_order_number;
-    const packet = escapeHtml(buildPacketText(subscription, pendingAddons));
+    const packet = escapeHtml(buildPacketText(subscription, pendingAddons, undefined, openVisit));
 
     const check = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
     const dot = (done, n) =>
@@ -1015,11 +1038,13 @@
       </div>`;
   }
 
-  // Customer-proposed appointment windows (dashboard v2). AM/PM map to the
-  // booking defaults Amy would key in anyway; she can nudge the minutes before
-  // booking. Booking marks the pending preferences used (server-side).
-  const PREF_WINDOW_LABELS = { AM: 'Morning (8–12)', PM: 'Afternoon (12–4)' };
-  const PREF_WINDOW_TIMES = { AM: '09:00', PM: '13:00' };
+  // Customer-proposed appointment slots (dashboard v2): date + arrival window
+  // from the SAME shared list the booking control uses, so "Use this slot"
+  // maps 1:1 to what Amy books. Slots submitted before the arrival-window
+  // change carry legacy AM/PM — shown with their old labels and mapped to the
+  // closest window on use. Booking marks the pending preferences used
+  // (server-side).
+  const LEGACY_PREF_WINDOW_MAP = { AM: '8-10', PM: '12-2' };
 
   function renderVisitPrefsBox(pref) {
     // Two shapes: structured slots (customer picked dates) or note-only (a
@@ -1027,22 +1052,22 @@
     const slots = (pref && Array.isArray(pref.slots)) ? pref.slots : [];
     if (!pref || (!slots.length && !pref.note)) return '';
     const slotRows = slots.map((s, i) => {
-      const label = `${fmtDate(s.date)} · ${PREF_WINDOW_LABELS[s.window] || s.window || ''}`;
+      const label = `${fmtDate(s.date)} · ${window.BatesArrivalWindows.label(s.window)}`;
       return `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
         <span style="font-size:0.85rem;">${i + 1}) ${escapeHtml(label)}</span>
-        <button class="btn btn-secondary btn-sm" data-use-slot data-date="${escapeHtml(s.date)}" data-window="${escapeHtml(s.window || 'AM')}" style="padding:2px 10px;font-size:0.75rem;">Use this slot</button>
+        <button class="btn btn-secondary btn-sm" data-use-slot data-date="${escapeHtml(s.date)}" data-window="${escapeHtml(LEGACY_PREF_WINDOW_MAP[s.window] || s.window || '')}" style="padding:2px 10px;font-size:0.75rem;">Use this slot</button>
       </div>`;
     }).join('');
     return `<div style="margin-top:8px;background:var(--info-bg);border:1px solid color-mix(in srgb, var(--info) 35%, transparent);border-radius:6px;padding:8px 10px;">
       <div class="gc-meta-label" style="color:var(--info);">${slots.length ? 'Customer prefers' : 'Customer asked for a different time'}${pref.created_at ? ` (sent ${fmtDate(String(pref.created_at).slice(0, 10))})` : ''}:</div>
       ${slotRows}
       ${pref.note ? `<div class="gc-meta-label" style="margin-top:6px;white-space:pre-line;">${slots.length ? 'Note: ' : ''}${escapeHtml(pref.note)}</div>` : ''}
-      <div class="gc-meta-label" style="margin-top:6px;opacity:0.8;">${slots.length ? '&quot;Use this slot&quot; fills the booking input below &mdash; booking' : 'Booking a new time below'} sends the customer their confirmation email and clears this.</div>
+      <div class="gc-meta-label" style="margin-top:6px;opacity:0.8;">${slots.length ? '&quot;Use this slot&quot; fills the booking controls below &mdash; booking' : 'Booking a new window below'} sends the customer their confirmation email and clears this.</div>
     </div>`;
   }
 
   // Three clear states per visit: Needs scheduling (due, not booked) / Scheduled
-  // (booked appointment date+time) / Completed. The plan-driven DUE date stays
+  // (booked date + arrival window) / Completed. The plan-driven DUE date stays
   // separate and is shown as context.
   function renderVisitsCard(visits, subscription, visitPreferences) {
     const prefByVisit = {};
@@ -1074,7 +1099,7 @@
       if (completed) {
         badge = `<span class="badge badge-neutral">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
       } else if (scheduled) {
-        badge = `<span class="badge badge-ok">Scheduled &middot; ${escapeHtml(fmtDateTime(v.appointment_at))}</span>`;
+        badge = `<span class="badge badge-ok">Scheduled &middot; ${escapeHtml(fmtAppt(v.appointment_at, v.arrival_window))}</span>`;
       } else {
         badge = `<span class="badge badge-warn">Needs scheduling</span>`;
       }
@@ -1091,7 +1116,13 @@
 
       let actions = '';
       if (!completed) {
-        const localVal = v.appointment_at ? toLocalInput(v.appointment_at) : '';
+        // Booking = date + arrival window (how Amy schedules), from the shared
+        // window list. A legacy visit booked with an exact time pre-fills its
+        // date but makes her pick a window to rebook.
+        const dateVal = v.appointment_at ? toLocalDateInput(v.appointment_at) : '';
+        const winOptions = `<option value="" disabled${v.arrival_window ? '' : ' selected'}>Arrival window&hellip;</option>`
+          + window.BatesArrivalWindows.WINDOWS.map((w) =>
+              `<option value="${escapeHtml(w.code)}"${w.code === v.arrival_window ? ' selected' : ''}>${escapeHtml(w.label)}</option>`).join('');
         actions = `
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
             <label class="gc-meta-label" style="display:flex;align-items:center;gap:5px;">Assign tech:
@@ -1100,7 +1131,8 @@
           </div>
           ${renderVisitPrefsBox(prefByVisit[v.id])}
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
-            <input type="datetime-local" class="gc-appt-input" data-visit="${v.id}" value="${localVal}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+            <input type="date" class="gc-appt-date" data-visit="${v.id}" value="${dateVal}" aria-label="Appointment date" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;" />
+            <select class="gc-appt-window" data-visit="${v.id}" aria-label="Arrival window" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;">${winOptions}</select>
             <button class="btn btn-secondary btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
             <button class="btn btn-primary btn-sm" data-complete-visit="${v.id}">Mark complete</button>
           </div>`;
@@ -1369,7 +1401,7 @@
         renderHeaderBar(c, subscription) +
         renderContactCard(c) +
         renderPlanCard(subscription, isCanceled) +
-        renderHandoffCard(subscription, pending_addons) +
+        renderHandoffCard(subscription, pending_addons, openVisit) +
         renderVisitsCard(visits, subscription, visit_preferences) +
         renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) +
         renderChargesCard(adhoc_charges, isCanceled) +
@@ -1385,15 +1417,19 @@
       body.querySelectorAll('[data-schedule-visit]').forEach(btn => {
         btn.addEventListener('click', () => scheduleAppointment(btn.dataset.scheduleVisit, id));
       });
-      // One-tap "use this slot": fill the visit's booking input from a
-      // customer-proposed window (AM -> 09:00, PM -> 13:00), then Amy books
-      // with the existing button.
+      // One-tap "use this slot": fill the visit's booking controls (date +
+      // arrival window) from a customer-proposed slot, then Amy books with
+      // the existing button. Legacy AM/PM slots arrive pre-mapped to the
+      // closest window by renderVisitPrefsBox.
       body.querySelectorAll('[data-use-slot]').forEach(btn => {
         btn.addEventListener('click', () => {
-          const input = btn.closest('.gc-card-row') && btn.closest('.gc-card-row').querySelector('.gc-appt-input');
-          if (!input) return;
-          input.value = `${btn.dataset.date}T${PREF_WINDOW_TIMES[btn.dataset.window] || '09:00'}`;
-          input.focus();
+          const row = btn.closest('.gc-card-row');
+          const dateInput = row && row.querySelector('.gc-appt-date');
+          const winSelect = row && row.querySelector('.gc-appt-window');
+          if (!dateInput || !winSelect) return;
+          dateInput.value = btn.dataset.date;
+          if (window.BatesArrivalWindows.byCode[btn.dataset.window]) winSelect.value = btn.dataset.window;
+          dateInput.focus();
         });
       });
       body.querySelectorAll('[data-assign-visit]').forEach(sel => {
@@ -1540,7 +1576,7 @@
 
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
       // and the work-order packet's actual signup charge)
-      loadStripeData(id, subscription, pending_addons, c.id);
+      loadStripeData(id, subscription, pending_addons, c.id, openVisit);
 
     } catch (err) {
       console.error('Detail load failed:', err);
@@ -1844,26 +1880,30 @@
     }
   }
 
-  // Book (or reschedule) an appointment date+time -> the visit becomes "Scheduled".
-  // Reads the inline datetime-local input next to the visit. The single backend
-  // "schedule" action is where a future SMS confirmation will hang.
+  // Book (or reschedule) an appointment date + arrival window -> the visit
+  // becomes "Scheduled". Reads the inline date input + window select next to
+  // the visit; appointment_at is stored as the window's START on that date
+  // (local wall-clock -> absolute instant) so sorting/state logic is
+  // unchanged, and arrival_window is the human-facing label everywhere. The
+  // single backend "schedule" action is where a future SMS confirmation will hang.
   async function scheduleAppointment(visitId, subscriptionId) {
-    const input = document.querySelector(`.gc-appt-input[data-visit="${visitId}"]`);
-    if (!input || !input.value) {
-      showStatus('Pick an appointment date and time first.', 'error');
+    const dateInput = document.querySelector(`.gc-appt-date[data-visit="${visitId}"]`);
+    const winSelect = document.querySelector(`.gc-appt-window[data-visit="${visitId}"]`);
+    const win = winSelect && window.BatesArrivalWindows.byCode[winSelect.value];
+    if (!dateInput || !dateInput.value || !win) {
+      showStatus('Pick a date and an arrival window first.', 'error');
       return;
     }
-    // datetime-local is local wall-clock; convert to an absolute instant to store.
-    const when = new Date(input.value);
+    const when = new Date(`${dateInput.value}T${win.start}`);
     if (isNaN(when.getTime())) {
-      showStatus('That date/time isn’t valid.', 'error');
+      showStatus('That date isn’t valid.', 'error');
       return;
     }
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/schedule`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointment_at: when.toISOString() }),
+        body: JSON.stringify({ appointment_at: when.toISOString(), arrival_window: win.code }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -2390,7 +2430,7 @@
     }
   }
 
-  async function loadStripeData(subscriptionId, subscription, pendingAddons, customerId) {
+  async function loadStripeData(subscriptionId, subscription, pendingAddons, customerId, openVisit) {
     const body = document.getElementById('modal-body');
     if (!body) return;
     try {
@@ -2534,7 +2574,7 @@
       // now that Stripe data is in — replaces the plan-price fallback shown at first paint.
       const pktEl = body.querySelector('#gc-packet');
       if (pktEl && subscription) {
-        pktEl.value = buildPacketText(subscription, pendingAddons, data.signup_charge_cents);
+        pktEl.value = buildPacketText(subscription, pendingAddons, data.signup_charge_cents, openVisit);
       }
     } catch (err) {
       console.error('[stripe-data] load failed:', err);
