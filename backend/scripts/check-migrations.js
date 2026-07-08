@@ -13,6 +13,13 @@ const { createClient } = require('@supabase/supabase-js');
 
 const SQL_DIR = path.join(__dirname, '..', 'sql');
 
+// Files intentionally written but not yet applied live (a deliberate,
+// tracked decision — not drift). Remove an entry here the same time you
+// apply it and record it in schema_migrations.
+const KNOWN_DEFERRED = new Set([
+  '019_visit_photo_path_binding.sql', // WP4/H3 belt-and-suspenders hardening — deferred
+]);
+
 (async () => {
   console.log('\n=== Bates Electric — Migration Drift Check ===\n');
 
@@ -42,16 +49,23 @@ const SQL_DIR = path.join(__dirname, '..', 'sql');
   const onDiskSet = new Set(onDisk);
 
   const notApplied = onDisk.filter((name) => !applied.has(name));
+  const deferred = notApplied.filter((name) => KNOWN_DEFERRED.has(name));
+  const missing = notApplied.filter((name) => !KNOWN_DEFERRED.has(name));
   const noMatchingFile = [...applied].filter((id) => !onDiskSet.has(id)).sort();
 
   console.log(`Files on disk: ${onDisk.length}`);
   console.log(`Recorded as applied: ${applied.size}\n`);
 
   console.log('Files on disk NOT recorded as applied (danger — may be missing from the live DB):');
-  if (notApplied.length === 0) {
+  if (missing.length === 0) {
     console.log('  none');
   } else {
-    for (const name of notApplied) console.log('  ' + name);
+    for (const name of missing) console.log('  ' + name);
+  }
+
+  if (deferred.length > 0) {
+    console.log('\nKnown-deferred (written, intentionally not yet applied — not a failure):');
+    for (const name of deferred) console.log('  ' + name);
   }
 
   console.log('\nRecorded ids with no matching file on disk:');
@@ -61,6 +75,6 @@ const SQL_DIR = path.join(__dirname, '..', 'sql');
     for (const id of noMatchingFile) console.log('  ' + id);
   }
 
-  console.log('\n=== Result: ' + (notApplied.length === 0 ? 'IN SYNC' : 'DRIFT DETECTED') + ' ===\n');
-  process.exitCode = notApplied.length === 0 ? 0 : 1;
+  console.log('\n=== Result: ' + (missing.length === 0 ? 'IN SYNC' : 'DRIFT DETECTED') + ' ===\n');
+  process.exitCode = missing.length === 0 ? 0 : 1;
 })();
