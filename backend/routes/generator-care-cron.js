@@ -6,6 +6,7 @@ const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendViaBrevo } = require('../lib/mailer');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
+const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -146,6 +147,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  // Signal failure to Healthchecks first so we hear about a crashed cron.
  pingHealthcheck('/fail');
  console.error('[gc-cron] daily-email error:', err && (err.response?.body || err.message));
+ reportError(err, { route: '/api/cron/generator-care/daily-email', method: 'POST', user: 'gc-cron' }).catch(() => {});
  res.status(500).json({ error: 'Server error' });
  }
 });

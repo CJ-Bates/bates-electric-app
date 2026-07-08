@@ -545,7 +545,14 @@ router.post('/change-plan', writeLimiter, async (req, res) => {
     const newPlan = str(req.body && req.body.new_plan, 20);
     const result = await changePlanAtRenewal({ stripe, subRow: sub, newPlan });
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
-    res.json(result);
+    // Whitelist the customer-facing response — never leak the Stripe schedule id
+    // (sub_sched_…) onto a customer surface.
+    res.json({
+      ok: result.ok,
+      new_plan: result.new_plan,
+      effective_date: result.effective_date,
+      new_renewal_amount_cents: result.new_renewal_amount_cents,
+    });
   } catch (err) {
     console.error('[my] change-plan error:', err && err.message);
     res.status(500).json({ error: 'Server error' });

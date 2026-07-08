@@ -7,6 +7,7 @@ const express = require('express');
 const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { stripe } = require('../../lib/gcShared');
+const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -210,8 +211,6 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
           fee_cents: bt ? bt.fee : 0,
           net_cents: bt ? bt.net : c.amount,
           auth_code: authByChargeId[c.id] || null,
-          stripe_charge_id: c.id,        // kept in the API response for debugging; not shown in the table/CSV
-          stripe_customer_id: c.customer,
           is_refund: false
         };
       });
@@ -237,8 +236,6 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
         fee_cents: bt ? bt.fee : 0,
         net_cents: bt ? bt.net : -r.amount,
         auth_code: origChargeId ? (authByChargeId[origChargeId] || null) : null,  // original charge's approval code (ties the refund back)
-        stripe_charge_id: origChargeId,
-        stripe_customer_id: custId,
         is_refund: true
       };
     });
@@ -255,8 +252,6 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
       fee_cents: 0,
       net_cents: typeof t.net === 'number' ? t.net : t.amount,
       auth_code: null,                   // account-level fee, no card authorization
-      stripe_charge_id: t.id,
-      stripe_customer_id: null,
       is_fee: true
     }));
 
@@ -275,6 +270,7 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
     });
   } catch (err) {
     console.error('[accounting] transactions error:', err);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -688,6 +684,7 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
     // Log the full stack so we're never blind again; keep the client message
     // generic unless ?debug=1 is set (office-gated route).
     console.error('[accounting] payouts error:', (err && err.stack) ? err.stack : err);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     const body = { error: 'Server error' };
     if (req.query.debug === '1') {
       body.detail = { message: err && err.message, type: err && err.type, code: err && err.code, param: err && err.param, stack: err && err.stack };
