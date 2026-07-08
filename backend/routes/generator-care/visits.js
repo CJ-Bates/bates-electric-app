@@ -66,15 +66,26 @@ router.post('/visits/:id/schedule', async (req, res) => {
     });
     if (!updated) return res.status(404).json({ error: 'visit not found or already completed' });
 
-    // Booking settles any pending customer appointment preferences for this
-    // visit (customer dashboard v2) — they flip to 'used' so the office modal
-    // and the customer's hero stop showing them. Best-effort: booking must
-    // never fail because the 016 migration isn't applied yet.
+    // Booking settles pending customer appointment preferences across the
+    // WHOLE subscription — not just this visit — so a request that rode in on
+    // an older (since-completed/rolled) visit clears from the Needs Attention
+    // queue too. They flip to 'used' so the office modal and the customer's
+    // hero stop showing them. Best-effort: booking must never fail because
+    // the 016 migration isn't applied yet.
     try {
+      const subId = updated.subscription_id || (updated.subscription && updated.subscription.id) || null;
+      let visitIds = [id];
+      if (subId) {
+        const { data: vRows } = await supabaseAdmin
+          .from('generator_service_visits')
+          .select('id')
+          .eq('subscription_id', subId);
+        if (vRows && vRows.length) visitIds = vRows.map((v) => v.id);
+      }
       const { error: prefErr } = await supabaseAdmin
         .from('generator_visit_preferences')
         .update({ status: 'used' })
-        .eq('visit_id', id)
+        .in('visit_id', visitIds)
         .eq('status', 'pending');
       if (prefErr) console.log('[generator-care] preference mark-used skipped:', prefErr.message);
     } catch (e) {

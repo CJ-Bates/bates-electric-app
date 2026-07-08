@@ -344,14 +344,23 @@
   }
 
   /**
-   * Handle sign out (clear tokens and redirect)
+   * Handle sign out (confirm, then clear tokens and redirect). The confirm is
+   * the shared inline dialog (ui-dialogs.js, loaded on every page with this
+   * topbar) — a stray tap on the icon used to sign you out instantly. If a
+   * page somehow lacks the dialog helper, sign out rather than trap the user.
    */
   function handleSignOut() {
-    localStorage.removeItem('bates.auth.token');
-    sessionStorage.removeItem('bates.auth.token');
-    localStorage.removeItem('bates.auth.refresh');
-    sessionStorage.removeItem('bates.auth.refresh');
-    window.location.href = '/';
+    const confirmed = (typeof window.openConfirm === 'function')
+      ? window.openConfirm({ title: 'Sign out of Bates Electric?', confirmText: 'Sign out', cancelText: 'Cancel' })
+      : Promise.resolve(true);
+    confirmed.then(function (ok) {
+      if (!ok) return;
+      localStorage.removeItem('bates.auth.token');
+      sessionStorage.removeItem('bates.auth.token');
+      localStorage.removeItem('bates.auth.refresh');
+      sessionStorage.removeItem('bates.auth.refresh');
+      window.location.href = '/';
+    });
   }
 
   /**
@@ -484,7 +493,7 @@
     const mount = document.querySelector('[data-section-tabs]');
     if (!mount) return;
     // Icons are currently hidden at all widths (the switcher stays a top
-    // segmented control everywhere; the bottom slot belongs to .app-tabbar).
+    // segmented control everywhere; the hamburger drawer is the single nav).
     const ICONS = {
       'gc-attention': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.5a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 14.5 6 8.5"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></svg>',
       'gc-customers': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -523,60 +532,8 @@
   }
 
   /**
-   * Inject the global mobile tab bar (v3: floating glass-strong bottom nav,
-   * Home · Gen Care/My Visits · Inspections · More). CSS shows it only at
-   * <=640px (.app-tabbar in app.css). Skipped on pages whose bottom slot
-   * belongs to a sticky form action bar (inspection / site-visit, v3 demo #2).
-   * Tab targets respect the same role gating as the drawer: Gen Care is
-   * office-only, My Visits (tech.html) is the techs' slot.
-   */
-  function injectTabBar() {
-    if (document.querySelector('.app-tabbar')) return;
-    if (document.querySelector('.insp-actions, .sv-footer-actions')) return;
-    const path = window.location.pathname;
-    const tabs = [
-      { label: 'Home', icon: 'house', href: '/home', match: ['home'] },
-      isOfficeRole()
-        ? { label: 'Gen Care', icon: 'zap', href: '/generator-care', match: ['generator-care', 'metrics', 'accounting'] }
-        : { label: 'My Visits', icon: 'zap', href: '/tech', match: ['tech'] },
-      { label: 'Inspections', icon: 'clipboardCheck', href: '/inspection', match: ['inspection', 'office'] },
-    ];
-    const isActive = (t) => t.match.some((m) => path.includes(m));
-    // Pages reachable only through the drawer (Contacts, Documents, Settings…)
-    // light up "More" so the bar always shows where you are.
-    const moreActive = !tabs.some(isActive);
-    const tabbarHTML = `
-      <nav class="app-tabbar" aria-label="Primary">
-        ${tabs.map((t) => {
-          const active = isActive(t);
-          return `<a href="${t.href}" class="app-tab${active ? ' active' : ''}"${active ? ' aria-current="page"' : ''}>` +
-            `<span class="app-tab-ico" aria-hidden="true">${svgIcons[t.icon]}</span>` +
-            `<span class="app-tab-label">${t.label}</span></a>`;
-        }).join('')}
-        <button type="button" class="app-tab${moreActive ? ' active' : ''}" id="tabbarMore" aria-label="More — open menu">
-          <span class="app-tab-ico" aria-hidden="true">${svgIcons.hamburger}</span>
-          <span class="app-tab-label">More</span>
-        </button>
-      </nav>
-    `;
-    document.body.insertAdjacentHTML('beforeend', tabbarHTML);
-    // Content reserves room for the floating bar (see .has-tabbar in app.css).
-    document.body.classList.add('has-tabbar');
-    const moreBtn = document.getElementById('tabbarMore');
-    moreBtn.querySelectorAll('svg').forEach((svg) => { svg.style.pointerEvents = 'none'; });
-    moreBtn.addEventListener('click', function (e) {
-      e.preventDefault();
-      openDrawer();
-    });
-    moreBtn.addEventListener('touchend', function (e) {
-      e.preventDefault();
-      openDrawer();
-    }, { passive: false });
-  }
-
-  /**
    * Prefetch main-nav targets on hover (desktop) / touchstart (mobile) so the
-   * next page is warm before the tap lands. Nav links only — drawer, tab bar,
+   * next page is warm before the tap lands. Nav links only — drawer and
    * GC section tabs — never arbitrary anchors (PDFs etc.). One <link
    * rel="prefetch"> per URL per page load; requests flow through the service
    * worker, which caches fresh copies as a side effect.
@@ -585,7 +542,7 @@
     const done = new Set();
     function handler(e) {
       const t = e.target;
-      const a = t && t.closest ? t.closest('a.shared-drawer-item, a.app-tab, a.section-tab') : null;
+      const a = t && t.closest ? t.closest('a.shared-drawer-item, a.section-tab') : null;
       if (!a || !a.href || a.origin !== location.origin) return;
       const href = a.href.split('#')[0];
       if (done.has(href) || a.pathname === location.pathname) return;
@@ -613,7 +570,6 @@
   function initialize() {
     injectNavigation();
     injectSectionTabs();
-    injectTabBar();
     fixSvgPointerEvents();
     updateActiveState();
     setupHamburgerListener();

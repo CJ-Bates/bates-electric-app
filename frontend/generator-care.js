@@ -602,7 +602,9 @@
         items.push({
           tier: 'action', cls: 'c-info', icon: 'calendar', sub, sort: Date.parse(p.created_at || '') || 0,
           title: booked ? 'Reschedule requested' : 'Visit times proposed',
-          desc: `${customerLink(sub)} proposed ${slots ? `<i>${slots}</i>` : 'times'}${p.note ? ` &mdash; &ldquo;${escapeHtml(p.note)}&rdquo;` : ''}. Confirm one.`,
+          desc: slots
+            ? `${customerLink(sub)} proposed <i>${slots}</i>${p.note ? ` &mdash; &ldquo;${escapeHtml(p.note)}&rdquo;` : ''}. Confirm one.`
+            : `${customerLink(sub)} asked for a different time${p.note ? ` &mdash; &ldquo;${escapeHtml(p.note)}&rdquo;` : ''}. Rebook with them.`,
           action: { kind: 'visits', label: 'Review &amp; book' },
         });
       }
@@ -921,11 +923,11 @@
         <div class="gc-card-row"><span class="gc-meta-label">Signed up</span><span class="gc-meta-value">${fmtDate(subscription.signup_date)}</span></div>
         <div class="gc-card-row"><span class="gc-meta-label">Last visit</span><span class="gc-meta-value">${lastVisitText}</span></div>
         <div class="gc-card-row" style="display:block;">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="gc-meta-label">Next due (target)</span>
-            <span class="gc-meta-value">
+            <span class="gc-meta-value" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
               <input type="date" id="gc-next-visit-input" value="${subscription.next_visit_due || ''}" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;" />
-              <button class="btn btn-secondary btn-sm" id="gc-next-visit-save" style="margin-left:6px;">Save</button>
+              <button class="btn btn-secondary btn-sm" id="gc-next-visit-save">Save</button>
             </span>
           </div>
           <div class="gc-meta-label" style="margin-top:4px;opacity:0.8;font-size:0.78rem;">Auto-set from the plan cadence. Book the actual appointment in Service Visits below.</div>
@@ -1020,8 +1022,11 @@
   const PREF_WINDOW_TIMES = { AM: '09:00', PM: '13:00' };
 
   function renderVisitPrefsBox(pref) {
-    if (!pref || !Array.isArray(pref.slots) || !pref.slots.length) return '';
-    const slotRows = pref.slots.map((s, i) => {
+    // Two shapes: structured slots (customer picked dates) or note-only (a
+    // "request a different time" reschedule — free text, no slots).
+    const slots = (pref && Array.isArray(pref.slots)) ? pref.slots : [];
+    if (!pref || (!slots.length && !pref.note)) return '';
+    const slotRows = slots.map((s, i) => {
       const label = `${fmtDate(s.date)} · ${PREF_WINDOW_LABELS[s.window] || s.window || ''}`;
       return `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
         <span style="font-size:0.85rem;">${i + 1}) ${escapeHtml(label)}</span>
@@ -1029,10 +1034,10 @@
       </div>`;
     }).join('');
     return `<div style="margin-top:8px;background:var(--info-bg);border:1px solid color-mix(in srgb, var(--info) 35%, transparent);border-radius:6px;padding:8px 10px;">
-      <div class="gc-meta-label" style="color:var(--info);">Customer prefers${pref.created_at ? ` (sent ${fmtDate(String(pref.created_at).slice(0, 10))})` : ''}:</div>
+      <div class="gc-meta-label" style="color:var(--info);">${slots.length ? 'Customer prefers' : 'Customer asked for a different time'}${pref.created_at ? ` (sent ${fmtDate(String(pref.created_at).slice(0, 10))})` : ''}:</div>
       ${slotRows}
-      ${pref.note ? `<div class="gc-meta-label" style="margin-top:6px;">Note: ${escapeHtml(pref.note)}</div>` : ''}
-      <div class="gc-meta-label" style="margin-top:6px;opacity:0.8;">"Use this slot" fills the booking input below — booking sends the customer their confirmation email and clears this.</div>
+      ${pref.note ? `<div class="gc-meta-label" style="margin-top:6px;white-space:pre-line;">${slots.length ? 'Note: ' : ''}${escapeHtml(pref.note)}</div>` : ''}
+      <div class="gc-meta-label" style="margin-top:6px;opacity:0.8;">${slots.length ? '&quot;Use this slot&quot; fills the booking input below &mdash; booking' : 'Booking a new time below'} sends the customer their confirmation email and clears this.</div>
     </div>`;
   }
 
@@ -1045,6 +1050,18 @@
       // Rows arrive newest-first; keep the newest pending row per visit.
       if (!prefByVisit[p.visit_id]) prefByVisit[p.visit_id] = p;
     });
+    // The prefs box only renders on OPEN visit rows — a pending pref whose
+    // visit already completed (it rolled before booking) would never show.
+    // Surface the newest such pref on the current open visit instead; booking
+    // that visit marks every pending pref on the sub used, so it clears.
+    const isOpenVisit = (v) => !(v.completed_date || v.status === 'completed');
+    const openIdSet = new Set((visits || []).filter(isOpenVisit).map((v) => v.id));
+    const firstOpen = (visits || []).filter(isOpenVisit)
+      .sort((a, b) => String(a.appointment_at || a.scheduled_date || '').localeCompare(String(b.appointment_at || b.scheduled_date || '')))[0];
+    if (firstOpen && !prefByVisit[firstOpen.id]) {
+      const orphan = (visitPreferences || []).find((p) => !openIdSet.has(p.visit_id));
+      if (orphan) prefByVisit[firstOpen.id] = orphan;
+    }
     const dueCtx = (v) => {
       const d = (subscription && subscription.next_visit_due) || v.scheduled_date || null;
       return d ? fmtDate(d) : null;
@@ -1095,7 +1112,7 @@
 
       const due = !completed ? dueCtx(v) : null;
       return `<div class="gc-card-row" style="display:block;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
           <div>
             <div class="gc-meta-value">${escapeHtml(v.visit_type === 'regular_service' ? 'Regular service' : 'On-demand')}</div>
             ${due ? `<div class="gc-meta-label" style="margin-top:2px;">Due ${escapeHtml(due)}</div>` : ''}
