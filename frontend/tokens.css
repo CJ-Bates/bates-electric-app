@@ -51,6 +51,20 @@ html.dark{
 /* ============ BASE ============ */
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;min-height:100%}
+/* Reserve the scrollbar's width always, instead of only when content is tall
+   enough to need one — otherwise a tab switch that crosses the viewport-height
+   threshold (e.g. a short queue vs. a tall charts page) shifts the whole page
+   sideways by the scrollbar's width as it appears/disappears. Verified in
+   Chrome: (a) scrollbar-gutter:stable does NOT take effect here — it only
+   applies to an element that is itself an explicit scroll container, not via
+   the body-to-viewport overflow propagation this app relies on for document
+   scrolling; (b) putting overflow-y:scroll on <html> itself breaks that same
+   propagation (html's own overflow no longer defers to body's), which would
+   silently defeat every body.style.overflow = 'hidden' scroll-lock in the
+   app (drawer/modals/lightbox). Putting it on BODY instead keeps propagation
+   intact — those scroll-locks set an inline style that still wins over this
+   rule when a drawer/modal opens, same as today. */
+body{overflow-y:scroll}
 body{
   font-family:var(--font);
   background:var(--bg);

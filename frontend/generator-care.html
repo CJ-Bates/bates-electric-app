@@ -452,7 +452,25 @@
         <button type="button" id="m-apply-btn" class="btn btn-primary btn-sm" style="height:38px;">Apply</button>
       </div>
 
-      <div id="m-loading" class="loading-state"><p>Loading metrics&hellip;</p></div>
+      <!-- Skeleton mirrors #m-content's exact grid (.m-stats/.m-panels) so the
+           swap to real data doesn't reflow the page — same layout footprint,
+           just pulsing placeholders instead of numbers/charts. -->
+      <div id="m-loading" aria-hidden="true">
+        <div class="m-stats">
+          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
+          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
+          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
+          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
+        </div>
+        <div class="m-panels">
+          <div class="m-panel wide"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><div class="m-canvas-wrap tall"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+          <div class="m-panel wide"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+        </div>
+      </div>
 
       <div id="m-content" hidden>
         <!-- Headline stat cards -->
@@ -551,7 +569,35 @@
 
       <p class="acc-scope" id="scope-hint">Filtering by <strong>transaction date</strong> &mdash; when each charge, refund, or fee occurred.</p>
 
-      <div id="acc-loading" class="loading-state"><p>Loading&hellip;</p></div>
+      <!-- Skeleton mirrors the by-date view's shape (.acc-summary + table/
+           cards) so the swap to real data doesn't reflow the page as much —
+           row COUNT still varies once real data lands, but the summary row
+           and first few rows are already the right size/position. -->
+      <div id="acc-loading" aria-hidden="true">
+        <div class="acc-summary">
+          <div class="acc-summary-item"><div class="label">Gross Charged</div><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="acc-summary-item fee"><div class="label">Stripe Fees</div><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="acc-summary-item net"><div class="label">Net to Bank</div><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="acc-summary-item"><div class="label">Transactions</div><span class="gc-skeleton" style="display:block;width:40px;height:24px;margin-top:4px;"></span></div>
+        </div>
+        <div class="acc-table-wrap">
+          <table class="acc-table">
+            <thead>
+              <tr><th>Date</th><th>Customer</th><th>Address</th><th>Description</th><th class="num">Gross</th><th class="num">Fee</th><th class="num">Net</th><th>Auth Code</th></tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="8"><span class="gc-skeleton gc-skeleton-line" style="width:100%;"></span></td></tr>
+              <tr><td colspan="8"><span class="gc-skeleton gc-skeleton-line" style="width:100%;"></span></td></tr>
+              <tr><td colspan="8"><span class="gc-skeleton gc-skeleton-line" style="width:100%;"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="acc-mobile-cards">
+          <div class="acc-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+          <div class="acc-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+          <div class="acc-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+        </div>
+      </div>
 
       <!-- View 1: by transaction date (the original list) -->
       <div id="date-view">
