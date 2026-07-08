@@ -38,6 +38,13 @@ const INDEXED_MAX_LEN = 300;
 // a plain object whose top-level values are JSON scalars, arrays, or plain
 // objects, and the indexed fields must be strings capped at 300 chars.
 // Returns an error message, or null when the payload is acceptable.
+//
+// XSS NOTE: these values are stored RAW on purpose — HTML-stripping on input
+// would corrupt legitimate content (e.g. "A & B Electric") and the PDF needs
+// the true data. The XSS control is render-time escaping: every consumer must
+// escape these before writing them into innerHTML (see frontend/office.js,
+// which routes all submitted fields through BatesUI.escapeHtml). If you render
+// inspection data anywhere new, escape it there too.
 function validateInspectionData(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return 'Form data must be an object.';

@@ -131,24 +131,24 @@
       // the profile is gone (deleted account).
       const techLabel = insp.technician_name
         ? `Tech: ${escapeHtml(insp.technician_name)}`
-        : (insp.technician_id ? `Tech: ${insp.technician_id.substring(0, 8)}\u2026` : 'Tech: Unknown');
+        : (insp.technician_id ? `Tech: ${escapeHtml(insp.technician_id.substring(0, 8))}\u2026` : 'Tech: Unknown');
       return `
-        <div class="insp-card" data-id="${insp.id}">
+        <div class="insp-card" data-id="${escapeHtml(insp.id)}">
           <div class="insp-card-header">
             <div class="insp-card-date">${date}</div>
-            <span class="badge ${insp.status === 'draft' ? 'badge-info' : 'badge-ok'} insp-card-status ${insp.status}">${insp.status}</span>
+            <span class="badge ${insp.status === 'draft' ? 'badge-info' : 'badge-ok'} insp-card-status ${escapeHtml(insp.status)}">${escapeHtml(insp.status)}</span>
           </div>
           <div class="insp-card-body">
-            <h3>${insp.customer_name || 'Unknown Customer'}</h3>
+            <h3>${escapeHtml(insp.customer_name || 'Unknown Customer')}</h3>
             <div class="insp-card-meta">
-              <p><strong>Job #:</strong> ${insp.job_number || 'N/A'}</p>
-              <p><strong>Email:</strong> ${insp.customer_email || 'N/A'}</p>
+              <p><strong>Job #:</strong> ${escapeHtml(insp.job_number || 'N/A')}</p>
+              <p><strong>Email:</strong> ${escapeHtml(insp.customer_email || 'N/A')}</p>
               <p><strong>${techLabel}</strong></p>
             </div>
           </div>
           <div class="insp-card-footer">
-            <button type="button" class="btn btn-secondary btn-sm view-btn" data-id="${insp.id}">View Details</button>
-            <button type="button" class="btn btn-danger-soft btn-sm delete-btn" data-id="${insp.id}">Delete</button>
+            <button type="button" class="btn btn-secondary btn-sm view-btn" data-id="${escapeHtml(insp.id)}">View Details</button>
+            <button type="button" class="btn btn-danger-soft btn-sm delete-btn" data-id="${escapeHtml(insp.id)}">Delete</button>
           </div>
         </div>
       `;
@@ -208,15 +208,15 @@
       html += `
         <h3 class="details-section-title">Job Information</h3>
         <table class="details-table">
-          <tr><td><strong>Date:</strong></td><td>${inspection.job_date || 'N/A'}</td></tr>
-          <tr><td><strong>Job #:</strong></td><td>${inspection.job_number || 'N/A'}</td></tr>
-          <tr><td><strong>Invoice #:</strong></td><td>${data.job_inv || 'N/A'}</td></tr>
-          <tr><td><strong>Customer:</strong></td><td>${inspection.customer_name || 'N/A'}</td></tr>
-          <tr><td><strong>Address:</strong></td><td>${data.job_addr || 'N/A'}</td></tr>
-          <tr><td><strong>Email:</strong></td><td>${inspection.customer_email || 'N/A'}</td></tr>
-          <tr><td><strong>Technician:</strong></td><td>${data.job_tech || 'N/A'}</td></tr>
-          <tr><td><strong>Year Built:</strong></td><td>${data.job_yr || 'N/A'}</td></tr>
-          <tr><td><strong>Property Type:</strong></td><td>${data.job_type || 'N/A'}</td></tr>
+          <tr><td><strong>Date:</strong></td><td>${escapeHtml(inspection.job_date || 'N/A')}</td></tr>
+          <tr><td><strong>Job #:</strong></td><td>${escapeHtml(inspection.job_number || 'N/A')}</td></tr>
+          <tr><td><strong>Invoice #:</strong></td><td>${escapeHtml(data.job_inv || 'N/A')}</td></tr>
+          <tr><td><strong>Customer:</strong></td><td>${escapeHtml(inspection.customer_name || 'N/A')}</td></tr>
+          <tr><td><strong>Address:</strong></td><td>${escapeHtml(data.job_addr || 'N/A')}</td></tr>
+          <tr><td><strong>Email:</strong></td><td>${escapeHtml(inspection.customer_email || 'N/A')}</td></tr>
+          <tr><td><strong>Technician:</strong></td><td>${escapeHtml(data.job_tech || 'N/A')}</td></tr>
+          <tr><td><strong>Year Built:</strong></td><td>${escapeHtml(data.job_yr || 'N/A')}</td></tr>
+          <tr><td><strong>Property Type:</strong></td><td>${escapeHtml(data.job_type || 'N/A')}</td></tr>
         </table>
       `;
 
@@ -224,15 +224,15 @@
       html += `
         <h3 class="details-section-title">Main Electrical Panel</h3>
         <table class="details-table">
-          <tr><td><strong>Manufacturer:</strong></td><td>${data.mp_mfr || 'N/A'}</td></tr>
-          <tr><td><strong>Voltage:</strong></td><td>${data.mp_volt || 'N/A'}</td></tr>
-          <tr><td><strong>Ampere Rating:</strong></td><td>${data.mp_amps || 'N/A'}</td></tr>
-          <tr><td><strong>Phase:</strong></td><td>${data.mp_phase || 'N/A'}</td></tr>
-          <tr><td><strong>Age:</strong></td><td>${data.mp_age || 'N/A'}</td></tr>
-          <tr><td><strong>Obsolete?:</strong></td><td>${data.mp_obs || 'N/A'}</td></tr>
-          <tr><td><strong>UL Listed?:</strong></td><td>${data.mp_ul || 'N/A'}</td></tr>
-          <tr><td><strong>Breakers Sized?:</strong></td><td>${data.mp_sized || 'N/A'}</td></tr>
-          <tr><td><strong>Panel Overall Rating:</strong></td><td><strong style="color: ${ratingColor(data.mp_rating)}">${data.mp_rating || 'N/A'}</strong></td></tr>
+          <tr><td><strong>Manufacturer:</strong></td><td>${escapeHtml(data.mp_mfr || 'N/A')}</td></tr>
+          <tr><td><strong>Voltage:</strong></td><td>${escapeHtml(data.mp_volt || 'N/A')}</td></tr>
+          <tr><td><strong>Ampere Rating:</strong></td><td>${escapeHtml(data.mp_amps || 'N/A')}</td></tr>
+          <tr><td><strong>Phase:</strong></td><td>${escapeHtml(data.mp_phase || 'N/A')}</td></tr>
+          <tr><td><strong>Age:</strong></td><td>${escapeHtml(data.mp_age || 'N/A')}</td></tr>
+          <tr><td><strong>Obsolete?:</strong></td><td>${escapeHtml(data.mp_obs || 'N/A')}</td></tr>
+          <tr><td><strong>UL Listed?:</strong></td><td>${escapeHtml(data.mp_ul || 'N/A')}</td></tr>
+          <tr><td><strong>Breakers Sized?:</strong></td><td>${escapeHtml(data.mp_sized || 'N/A')}</td></tr>
+          <tr><td><strong>Panel Overall Rating:</strong></td><td><strong style="color: ${ratingColor(data.mp_rating)}">${escapeHtml(data.mp_rating || 'N/A')}</strong></td></tr>
         </table>
       `;
 
@@ -240,9 +240,9 @@
       html += `
         <h3 class="details-section-title">Secondary / Sub Panel</h3>
         <table class="details-table">
-          <tr><td><strong>Manufacturer:</strong></td><td>${data.sp_mfr || 'N/A'}</td></tr>
-          <tr><td><strong>Voltage:</strong></td><td>${data.sp_volt || 'N/A'}</td></tr>
-          <tr><td><strong>Overall Rating:</strong></td><td><strong style="color: ${ratingColor(data.sp_rating)}">${data.sp_rating || 'N/A'}</strong></td></tr>
+          <tr><td><strong>Manufacturer:</strong></td><td>${escapeHtml(data.sp_mfr || 'N/A')}</td></tr>
+          <tr><td><strong>Voltage:</strong></td><td>${escapeHtml(data.sp_volt || 'N/A')}</td></tr>
+          <tr><td><strong>Overall Rating:</strong></td><td><strong style="color: ${ratingColor(data.sp_rating)}">${escapeHtml(data.sp_rating || 'N/A')}</strong></td></tr>
         </table>
       `;
 
@@ -250,9 +250,9 @@
       html += `
         <h3 class="details-section-title">Main Electrical Service</h3>
         <table class="details-table">
-          <tr><td><strong>Ampere Rating:</strong></td><td>${data.svc_amps || 'N/A'}</td></tr>
-          <tr><td><strong>Riser Type:</strong></td><td>${data.svc_riser || 'N/A'}</td></tr>
-          <tr><td><strong>Overall Rating:</strong></td><td><strong style="color: ${ratingColor(data.svc_rating)}">${data.svc_rating || 'N/A'}</strong></td></tr>
+          <tr><td><strong>Ampere Rating:</strong></td><td>${escapeHtml(data.svc_amps || 'N/A')}</td></tr>
+          <tr><td><strong>Riser Type:</strong></td><td>${escapeHtml(data.svc_riser || 'N/A')}</td></tr>
+          <tr><td><strong>Overall Rating:</strong></td><td><strong style="color: ${ratingColor(data.svc_rating)}">${escapeHtml(data.svc_rating || 'N/A')}</strong></td></tr>
         </table>
       `;
 
@@ -283,13 +283,13 @@
       Object.keys(upsellLabels).forEach((n) => {
         const v = data[n];
         if (!v) return;
-        checked.push(typeof v === 'string' ? v : upsellLabels[n]);
+        checked.push(typeof v === 'string' ? escapeHtml(v) : upsellLabels[n]);
       });
       if (checked.length || data.up_other) {
         html += `<h3 class="details-section-title">Recommended Services</h3><p>`;
         if (checked.length) html += checked.join('<br>');
         if (checked.length && data.up_other) html += '<br>';
-        if (data.up_other) html += `<strong>Other:</strong> ${data.up_other}`;
+        if (data.up_other) html += `<strong>Other:</strong> ${escapeHtml(data.up_other)}`;
         html += `</p>`;
       }
 
@@ -305,9 +305,9 @@
       html += `
         <h3 class="details-section-title">Signatures</h3>
         <table class="details-table">
-          <tr><td><strong>Technician:</strong></td><td>${data.sig_tech_name || 'N/A'}</td></tr>
-          <tr><td><strong>Customer:</strong></td><td>${data.sig_cust_name || 'N/A'}</td></tr>
-          <tr><td><strong>Date:</strong></td><td>${data.sig_date || 'N/A'}</td></tr>
+          <tr><td><strong>Technician:</strong></td><td>${escapeHtml(data.sig_tech_name || 'N/A')}</td></tr>
+          <tr><td><strong>Customer:</strong></td><td>${escapeHtml(data.sig_cust_name || 'N/A')}</td></tr>
+          <tr><td><strong>Date:</strong></td><td>${escapeHtml(data.sig_date || 'N/A')}</td></tr>
         </table>
       `;
 
