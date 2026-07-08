@@ -2030,6 +2030,11 @@
     document.getElementById('customers-view').hidden = view !== 'customers';
     document.getElementById('metrics-view').hidden = view !== 'metrics';
     document.getElementById('accounting-view').hidden = view !== 'accounting';
+    // Chart.js's canvases keep whatever size they last measured while
+    // display:none, so every re-activation (not just the first) needs an
+    // explicit resize — see the comment on resizeCharts() in metrics.js.
+    // No-op if no charts exist yet (first activation, before data loads).
+    if (view === 'metrics') window.BatesMetrics.onShow();
 
     // Header controls that only make sense for specific tabs.
     const listView = view === 'attention' || view === 'customers';

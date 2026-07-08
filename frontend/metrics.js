@@ -79,6 +79,15 @@
 
   // ---- Chart lifecycle: keep refs so Refresh can destroy before redraw ----
   const charts = {};
+  // Chart.js's own ResizeObserver reads 0x0 while this tab's section is
+  // display:none, then corrects itself a frame after the section is shown
+  // again — that two-paint correction is exactly the resize "flash" on every
+  // switch back to this tab. Calling resize() synchronously right after the
+  // section un-hides forces the recalculation into the same frame instead
+  // (a no-op before any chart exists, e.g. on first activation).
+  function resizeCharts() {
+    Object.values(charts).forEach((c) => c.resize());
+  }
   function draw(key, canvasId, config) {
     if (charts[key]) { charts[key].destroy(); delete charts[key]; }
     const el = $(canvasId);
@@ -316,5 +325,5 @@
     loadMetrics();
   }
 
-  window.BatesMetrics = { init, refresh: loadMetrics };
+  window.BatesMetrics = { init, refresh: loadMetrics, onShow: resizeCharts };
 })();
