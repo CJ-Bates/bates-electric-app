@@ -43,6 +43,17 @@
     const [y, m, d] = ymd.split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
   };
+  // Transaction/reconciliation rows show US MM/DD/YYYY (Brenda's Jonas/Excel
+  // convention), unlike niceDate's long-form summary headings above — one
+  // shared spot so a future user-selectable format is a one-place change.
+  // Built straight from the parsed ISO parts (no Date object) so there's no
+  // UTC-midnight-shifts-a-day-back risk from the caller's local timezone.
+  const formatDate = (ymd) => {
+    if (!ymd) return '';
+    const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number);
+    if (!y || !m || !d) return ymd;
+    return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${y}`;
+  };
   const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
@@ -67,7 +78,7 @@
 
   // ---- Shared transaction-row rendering (used by both views) ----
   const rowTr = (t) => `<tr>
-      <td>${t.date}</td>
+      <td>${formatDate(t.date)}</td>
       <td>${escapeHtml(t.customer_name)}</td>
       <td style="color:var(--ink-2);font-size:0.82rem;">${escapeHtml(t.address)}</td>
       <td>${escapeHtml(t.description)}</td>
@@ -83,7 +94,7 @@
           <span class="acc-card-name">${escapeHtml(t.customer_name)}</span>
           <span class="acc-card-amount">${fmtMoney(t.gross_cents)}</span>
         </div>
-        <div class="acc-card-meta">${t.date} &middot; ${escapeHtml(t.description)}</div>
+        <div class="acc-card-meta">${formatDate(t.date)} &middot; ${escapeHtml(t.description)}</div>
         <div class="acc-card-meta" style="margin-bottom:0;">${escapeHtml(t.address)}</div>
         <div class="acc-card-meta" style="margin-bottom:0;">Auth code: <span class="acc-auth-code">${escapeHtml(t.auth_code || '—')}</span></div>
         <div class="acc-card-footer">
@@ -353,7 +364,7 @@
     const totals = visibleTotals(txns);
     const header = ['Date', 'Customer', 'Address', 'Description', 'Gross', 'Stripe Fee', 'Net', 'Auth Code'];
     const rows = txns.map(t => [
-      t.date,
+      formatDate(t.date),
       t.customer_name,
       t.address,
       t.description,
@@ -400,15 +411,15 @@
     if (hasPending) {
       lines.push(line(['PENDING - not yet paid out', '', '', '', '', '', '', money(data.pending.net_cents), '']));
       lines.push(line(rowsHdr));
-      data.pending.transactions.forEach((t) => lines.push(line(['', t.date, t.customer_name, t.address, t.description, money(t.gross_cents), money(t.fee_cents), money(t.net_cents), t.auth_code || ''])));
+      data.pending.transactions.forEach((t) => lines.push(line(['', formatDate(t.date), t.customer_name, t.address, t.description, money(t.gross_cents), money(t.fee_cents), money(t.net_cents), t.auth_code || ''])));
       lines.push('');
     }
 
     (data.payouts || []).forEach((g) => {
       lines.push(line(['Payout', 'Arrival Date', 'Status', 'Direction', 'Bank Amount']));
-      lines.push(line([g.id, g.arrival_date, g.status, g.direction, money(g.bank_amount_cents)]));
+      lines.push(line([g.id, formatDate(g.arrival_date), g.status, g.direction, money(g.bank_amount_cents)]));
       lines.push(line(rowsHdr));
-      g.transactions.forEach((t) => lines.push(line(['', t.date, t.customer_name, t.address, t.description, money(t.gross_cents), money(t.fee_cents), money(t.net_cents), t.auth_code || ''])));
+      g.transactions.forEach((t) => lines.push(line(['', formatDate(t.date), t.customer_name, t.address, t.description, money(t.gross_cents), money(t.fee_cents), money(t.net_cents), t.auth_code || ''])));
       lines.push(line(['', '', '', '', '', '', 'Transactions Net', money(g.transactions_net_cents), g.ties ? 'TIES' : 'DOES NOT TIE']));
       lines.push('');
     });
@@ -432,7 +443,7 @@
   // "Print all groups" emits every payout with a page break between. Cleanup
   // happens on afterprint so a plain Ctrl+P later prints the normal page.
   const printRow = (t) => `<tr>
-      <td>${t.date}</td>
+      <td>${formatDate(t.date)}</td>
       <td>${escapeHtml(t.customer_name)}</td>
       <td>${escapeHtml(t.description)}</td>
       <td class="num">${fmtMoney(t.gross_cents)}</td>
