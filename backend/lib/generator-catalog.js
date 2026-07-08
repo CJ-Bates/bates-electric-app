@@ -158,6 +158,33 @@ function planVisitItems(genClass) {
   return PLAN_VISIT_ITEMS[genClass] || [];
 }
 
+// Arrival windows -- the 2-hour windows Amy books generator visits in (never
+// exact clock times). SINGLE SOURCE OF TRUTH for the backend; the browser
+// pages load the mirror in frontend/arrival-windows.js (no bundler, separate
+// deploy) -- edit BOTH files together. `code` is what's stored in
+// generator_service_visits.arrival_window (sql/017); `start` (HH:MM, office
+// local) is what booking sets appointment_at to, so the timestamp stays the
+// sortable machine key. The 1-3 window is Amy's occasional late slot.
+const ARRIVAL_WINDOWS = [
+  { code: '7-9',   label: '7:00–9:00 AM',       start: '07:00', end: '09:00' },
+  { code: '8-10',  label: '8:00–10:00 AM',      start: '08:00', end: '10:00' },
+  { code: '10-12', label: '10:00 AM–12:00 PM',  start: '10:00', end: '12:00' },
+  { code: '12-2',  label: '12:00–2:00 PM',      start: '12:00', end: '14:00' },
+  { code: '1-3',   label: '1:00–3:00 PM',       start: '13:00', end: '15:00' },
+];
+
+// Window entry for a stored code, or null (legacy/unset visits).
+function arrivalWindow(code) {
+  return ARRIVAL_WINDOWS.find((w) => w.code === code) || null;
+}
+
+// Human label ('8:00–10:00 AM') for a stored code, or null when unknown so
+// callers can fall back to the stored appointment time.
+function arrivalWindowLabel(code) {
+  const w = arrivalWindow(code);
+  return w ? w.label : null;
+}
+
 // Price (price_id + amount_cents) for an add-on at a gen class, or null if N/A.
 function lookupAddonPrice(addonType, genClass) {
   const entry = ADDON_CATALOG[addonType];
@@ -180,6 +207,9 @@ module.exports = {
   SUBSCRIPTION_CATALOG,
   FLEET_CATALOG,
   PLANS,
+  ARRIVAL_WINDOWS,
+  arrivalWindow,
+  arrivalWindowLabel,
   planEntry,
   planForPriceId,
   isPlanPriceId,

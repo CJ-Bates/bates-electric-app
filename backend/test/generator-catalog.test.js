@@ -130,6 +130,37 @@ test('every add-on has a human label (what receipts/batch charges render)', () =
   }
 });
 
+test('arrival windows: the five bookable 2-hour windows, well-formed', () => {
+  // Amy books in these exact windows (7-9, 8-10, 10-12, 12-2, occasional 1-3);
+  // the frontend mirror (frontend/arrival-windows.js) must list the SAME codes.
+  assert.deepEqual(
+    catalog.ARRIVAL_WINDOWS.map((w) => w.code),
+    ['7-9', '8-10', '10-12', '12-2', '1-3']
+  );
+  const seen = new Set();
+  for (const w of catalog.ARRIVAL_WINDOWS) {
+    assert.ok(!seen.has(w.code), `duplicate code ${w.code}`);
+    seen.add(w.code);
+    // start/end are HH:MM wall-clock strings the booking control turns into
+    // appointment_at; every window is exactly 2 hours.
+    assert.match(w.start, /^\d{2}:\d{2}$/, w.code);
+    assert.match(w.end, /^\d{2}:\d{2}$/, w.code);
+    const mins = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3));
+    assert.equal(mins(w.end) - mins(w.start), 120, `${w.code} spans 2 hours`);
+    assert.ok(w.label && w.label.includes('–'), `${w.code} label has the en-dash range`);
+  }
+});
+
+test('arrivalWindow/arrivalWindowLabel: lookup by code, null for legacy/unset', () => {
+  assert.equal(catalog.arrivalWindow('8-10').start, '08:00');
+  assert.equal(catalog.arrivalWindowLabel('8-10'), '8:00–10:00 AM');
+  assert.equal(catalog.arrivalWindowLabel('10-12'), '10:00 AM–12:00 PM');
+  // Unknown/legacy values return null so displays fall back to the stored time.
+  assert.equal(catalog.arrivalWindow('9-11'), null);
+  assert.equal(catalog.arrivalWindowLabel('AM'), null);
+  assert.equal(catalog.arrivalWindowLabel(null), null);
+});
+
 test('planVisitItems: every sellable gen class has a per-visit checklist', () => {
   // The customer dashboard itemizes these on every completed visit — a class
   // with an empty checklist would silently render nothing.

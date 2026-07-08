@@ -54,7 +54,7 @@ router.get('/subscriptions', async (req, res) => {
         work_order_created_at, work_order_number, canceled_at,
         service_through:raw_metadata->>service_through,
         customer:generator_customers(id, name, email, phone, install_address, install_city, install_state, install_zip),
-        visits:generator_service_visits(id, status, appointment_at, completed_date, scheduled_date, visit_type)
+        visits:generator_service_visits(id, status, appointment_at, arrival_window, completed_date, scheduled_date, visit_type)
       `)
       .order('next_visit_due', { ascending: true, nullsFirst: false });
     if (error) throw error;
@@ -122,7 +122,7 @@ router.get('/subscriptions', async (req, res) => {
       return {
         ...rest,
         open_visit: open
-          ? { id: open.id, status: open.status, appointment_at: open.appointment_at, scheduled_date: open.scheduled_date }
+          ? { id: open.id, status: open.status, appointment_at: open.appointment_at, arrival_window: open.arrival_window || null, scheduled_date: open.scheduled_date }
           : null,
         attention: {
           performed_addons: addons
