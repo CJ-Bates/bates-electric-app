@@ -127,10 +127,18 @@
     } catch (e) { /* ignore */ }
   }
 
+  // Confirm first (shared inline dialog) — a stray tap on the topbar button
+  // used to sign the customer out instantly. sessionExpired() stays instant.
   function signOut() {
-    clearMyKeys();
-    overview = null;
-    showView('signin');
+    const confirmed = (typeof window.openConfirm === 'function')
+      ? window.openConfirm({ title: 'Sign out of Bates Electric?', confirmText: 'Sign out', cancelText: 'Cancel' })
+      : Promise.resolve(true);
+    confirmed.then(function (ok) {
+      if (!ok) return;
+      clearMyKeys();
+      overview = null;
+      showView('signin');
+    });
   }
 
   function sessionExpired() {

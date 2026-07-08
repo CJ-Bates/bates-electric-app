@@ -1831,78 +1831,14 @@ input:focus-visible {
 .section-tab:hover { color: var(--ink); background: var(--accent-soft); }
 .section-tab.active,
 .section-tab.active:hover { background: var(--accent); color: var(--ink-inverse); }
-/* Tab icons are only used in the mobile bottom bar (hidden in the desktop top switcher). */
+/* Tab icons are hidden everywhere (the switcher is text-only); markup keeps
+   them so a future variant can reveal them with CSS alone. */
 .section-tab-icon { display: none; }
 
-/* Phones keep the same top segmented switcher (the bottom slot belongs to the
-   global .app-tabbar below); the switcher just gets comfortable 44px targets. */
+/* Phones keep the same top segmented switcher (the hamburger drawer is the
+   single nav); the switcher just gets comfortable 44px targets. */
 @media (max-width: 640px) {
   .section-tab { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
-}
-
-/* ============================================================
-   GLOBAL MOBILE TAB BAR — v3 §2: floating glass-strong bottom nav
-   (Home · Gen Care/My Visits · Inspections · More), injected by
-   shared-nav.js on staff pages. Hidden on desktop; form pages
-   (inspection / site-visit) skip it — their sticky action bar owns
-   the bottom slot instead (v3 phone demo #2).
-   ============================================================ */
-.app-tabbar { display: none; }
-@media (max-width: 640px) {
-  .app-tabbar {
-    position: fixed;
-    left: 12px;
-    right: 12px;
-    bottom: calc(12px + env(safe-area-inset-bottom));
-    z-index: 400; /* above content, below the drawer scrim (500) and modals (1500) */
-    display: flex;
-    justify-content: space-around;
-    padding: 8px 6px;
-    border-radius: 26px;
-    background: var(--glass-bg-strong);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-line);
-    box-shadow: var(--glass-shadow);
-  }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .app-tabbar { background: var(--surface); border-color: var(--line); }
-  }
-  .app-tab {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    min-width: 60px;
-    min-height: 44px;
-    padding: 6px 10px;
-    border-radius: 18px;
-    border: none;
-    background: none;
-    font-family: var(--font);
-    font-size: 10.5px;
-    font-weight: 700;
-    color: var(--ink-3);
-    text-decoration: none;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    transition: background var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
-  }
-  .app-tab:active { transform: scale(.94); }
-  .app-tab.active { color: var(--accent); background: var(--accent-soft); }
-  .app-tab-ico { line-height: 0; pointer-events: none; }
-  .app-tab-ico svg { width: 20px; height: 20px; }
-  .app-tab-label { pointer-events: none; }
-  /* Reserve room so the floating bar never covers the last row of content
-     (bar zone ≈ 80px; max() so pages with roomier padding keep theirs). */
-  body.has-tabbar main { padding-bottom: max(120px, calc(96px + env(safe-area-inset-bottom))); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .app-tab:active { transform: none; }
-}
-@media print {
-  .app-tabbar { display: none !important; }
 }
 
 /* ============================================================

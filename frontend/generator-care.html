@@ -49,11 +49,25 @@
       .gc-card-due.overdue { color: var(--danger); }
       .gc-card-due.soon { color: var(--warn); }
 
-      /* Detail modal: stack action buttons + give them room */
-      .modal-content { width: 95% !important; max-width: 95% !important; max-height: 92vh !important; }
-      .modal-body { padding: 16px !important; }
-      /* Inputs at least 16px to prevent iOS zoom */
-      .modal-body input, .modal-body select, .modal-body textarea { font-size: 16px !important; }
+      /* Detail modal: full-screen sheet on phones — the 760px dialog squeezed
+         to ~300px of content once its chrome + card padding stacked up. */
+      .modal { padding: 0; align-items: stretch; }
+      .modal-content {
+        width: 100% !important; max-width: 100% !important;
+        height: 100vh; height: 100dvh;
+        max-height: 100vh !important; max-height: 100dvh !important;
+        border-radius: 0;
+        padding-top: env(safe-area-inset-top);
+      }
+      .modal-header { padding: 12px 16px; }
+      .modal-body { padding: 14px 14px 20px !important; }
+      .modal-footer {
+        padding: 10px 16px;
+        padding-bottom: calc(10px + env(safe-area-inset-bottom));
+        border-radius: 0;
+      }
+      /* Inputs at least 16px to prevent iOS zoom; never wider than the sheet */
+      .modal-body input, .modal-body select, .modal-body textarea { font-size: 16px !important; max-width: 100%; }
     }
 
     /* ---- Detail modal v2: card-based layout ---- */
@@ -117,7 +131,8 @@
       .gc-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; padding-right: 12px; }
       .gc-tabs::-webkit-scrollbar { display: none; }
       .gc-tab { flex: 0 0 auto; }
-      .gc-card { padding: 16px; margin-bottom: 12px; }
+      .gc-card { padding: 14px; margin-bottom: 12px; }
+      .gc-card-h { flex-wrap: wrap; }
       .gc-card-actions { flex-direction: column; }
       .gc-card-actions .btn { width: 100%; justify-content: center; }
       .gc-card-row { flex-direction: column; gap: 4px; }

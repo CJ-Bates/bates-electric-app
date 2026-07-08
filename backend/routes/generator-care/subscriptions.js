@@ -80,7 +80,7 @@ router.get('/subscriptions', async (req, res) => {
           .in('subscription_id', subIds),
         supabaseAdmin
           .from('generator_visit_preferences')
-          .select('visit_id, slots, note, created_at')
+          .select('visit_id, slots, note, created_at, visit:generator_service_visits(subscription_id)')
           .eq('status', 'pending')
           .order('created_at', { ascending: false }),
       ]);
@@ -99,9 +99,13 @@ router.get('/subscriptions', async (req, res) => {
       if (!adhocBySub.has(c.subscription_id)) adhocBySub.set(c.subscription_id, []);
       adhocBySub.get(c.subscription_id).push(c);
     }
-    const prefByVisit = new Map();
+    // Pending prefs resolve to their subscription DIRECTLY (via the visit join
+    // in the query above) — never through the s.visits join below, whose scope
+    // must not decide whether a customer's request surfaces. Newest wins.
+    const prefBySub = new Map();
     for (const p of prefRows) {
-      if (!prefByVisit.has(p.visit_id)) prefByVisit.set(p.visit_id, p); // rows sorted newest-first
+      const sid = p.visit && p.visit.subscription_id;
+      if (sid && !prefBySub.has(sid)) prefBySub.set(sid, p); // rows sorted newest-first
     }
 
     // Attach each sub's current OPEN (un-completed) visit so the list STATUS
@@ -110,13 +114,9 @@ router.get('/subscriptions', async (req, res) => {
       const open = (s.visits || [])
         .filter((v) => v.status !== 'completed' && !v.completed_date)
         .sort((a, b) => String(a.appointment_at || a.scheduled_date || '').localeCompare(String(b.appointment_at || b.scheduled_date || '')))[0] || null;
-      // Newest pending customer preference across this sub's visits (booking
-      // marks prefs used, resubmits dismiss older ones, so this is ~the open visit's).
-      let pref = null;
-      for (const v of (s.visits || [])) {
-        const p = prefByVisit.get(v.id);
-        if (p && (!pref || String(p.created_at) > String(pref.created_at))) pref = p;
-      }
+      // Newest pending customer preference for this sub (booking marks prefs
+      // used, resubmits dismiss older ones, so this is ~the open visit's).
+      const pref = prefBySub.get(s.id) || null;
       const addons = addonsBySub.get(s.id) || [];
       const { visits, ...rest } = s;
       return {

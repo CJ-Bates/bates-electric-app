@@ -445,7 +445,7 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
 
     // Their next open visit provides the "from" context (no visit id trusted
     // from the client).
-    const { data: openVisit } = await supabaseAdmin
+    const { data: openVisit, error: ovErr } = await supabaseAdmin
       .from('generator_service_visits')
       .select('id, appointment_at, scheduled_date')
       .eq('subscription_id', sub.id)
@@ -454,6 +454,31 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
       .order('scheduled_date', { ascending: true, nullsFirst: false })
       .limit(1)
       .maybeSingle();
+    if (ovErr) throw ovErr;
+
+    // Persist as a pending preference row — the SAME path /visit-preferences
+    // writes — so the office Needs Attention queue surfaces this request; the
+    // email alone is easy to lose. Free-text goes in the note (no structured
+    // slots, so the office books manually rather than one-tap). Must succeed
+    // BEFORE the emails go out: a request the customer believes was received
+    // has to be visible in the queue.
+    if (openVisit) {
+      const { error: clearErr } = await supabaseAdmin
+        .from('generator_visit_preferences')
+        .update({ status: 'dismissed' })
+        .eq('visit_id', openVisit.id)
+        .eq('status', 'pending');
+      if (clearErr) throw clearErr;
+      const { error: insErr } = await supabaseAdmin
+        .from('generator_visit_preferences')
+        .insert({
+          visit_id: openVisit.id,
+          slots: [],
+          note: 'Requested: ' + preferred + (note ? '\n' + note : ''),
+          status: 'pending',
+        });
+      if (insErr) throw insErr;
+    }
 
     const currentStr = openVisit
       ? (openVisit.appointment_at
