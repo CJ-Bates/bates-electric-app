@@ -21,8 +21,7 @@ const { supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { stripe } = require('../lib/gcShared');
 const catalog = require('../lib/generator-catalog');
-const { computePlanBilling } = require('../lib/planBilling');
-const { changePlanAtRenewal } = require('../lib/planChange');
+const { computePlanBilling, changePlanAtRenewal } = require('../lib/planChange');
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildCancellationEmail } = require('../lib/emails');
 const { companyName, isFlorida } = require('../lib/branding');
@@ -544,7 +543,15 @@ router.post('/change-plan', writeLimiter, async (req, res) => {
 
     const newPlan = str(req.body && req.body.new_plan, 20);
     const result = await changePlanAtRenewal({ stripe, subRow: sub, newPlan });
-    if (result.error) return res.status(result.status || 400).json({ error: result.error });
+    if (result.error) {
+      // Undo/revert is office-only — a customer can't self-clear a pending
+      // schedule, so the raw office-facing message ("undo it first...") would
+      // be a dead end. Route them to the office instead.
+      const message = result.code === 'pending_schedule'
+        ? 'You already have a plan change scheduled for your next billing date. Please contact our office to adjust it.'
+        : result.error;
+      return res.status(result.status || 400).json({ error: message });
+    }
     // Whitelist the customer-facing response — never leak the Stripe schedule id
     // (sub_sched_…) onto a customer surface.
     res.json({
