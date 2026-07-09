@@ -51,6 +51,57 @@
     const dt = new Date(String(src).length <= 10 ? src + 'T00:00:00' : src);
     return isNaN(dt) ? null : dt.toISOString().slice(0, 10);
   }
+  // Arrival-window label only, no date (the "My Day" cards imply the date via
+  // their section/day-chip, so repeating it in every row would be noise).
+  function windowLabelOnly(v) {
+    const w = window.BatesArrivalWindows.byCode[v.arrival_window];
+    if (w) return w.label + ' arrival';
+    return fmtDateTime(v.appointment_at); // legacy exact-time booking, no window
+  }
+  // Up-next time chip: bare window label for a stop happening today, dated
+  // window label otherwise (overdue or a future soonest-upcoming pick).
+  function apptChipText(v) {
+    const w = window.BatesArrivalWindows.byCode[v.arrival_window];
+    const d = localDateOf(v);
+    if (!w) return fmtDateTime(v.appointment_at);
+    return d === todayStr() ? w.label : `${fmtDate(v.appointment_at)} · ${w.label}`;
+  }
+  // "first one at 8 AM" — just the window's start clock time.
+  function startTimeLabel(v) {
+    const w = window.BatesArrivalWindows.byCode[v.arrival_window];
+    if (w && w.start) {
+      const [h, m] = w.start.split(':').map(Number);
+      const dt = new Date();
+      dt.setHours(h, m, 0, 0);
+      return dt.toLocaleTimeString('en-US', m ? { hour: 'numeric', minute: '2-digit' } : { hour: 'numeric' });
+    }
+    return fmtDateTime(v.appointment_at);
+  }
+  function dayChipParts(dateStr) {
+    const dt = new Date(dateStr + 'T00:00:00');
+    if (isNaN(dt)) return { dow: '', day: '' };
+    return { dow: dt.toLocaleDateString('en-US', { weekday: 'short' }), day: String(dt.getDate()) };
+  }
+  function customerName(v) {
+    return (v.subscription && v.subscription.customer && v.subscription.customer.name) || 'Customer';
+  }
+  function cityState(v) {
+    const c = (v.subscription && v.subscription.customer) || {};
+    return [c.install_city, c.install_state].filter(Boolean).join(', ');
+  }
+  function firstNameOf(profile) {
+    const displayName = (profile && (profile.full_name || (profile.email && profile.email.split('@')[0]))) || 'there';
+    return displayName.split(' ')[0];
+  }
+  // Delegated tap-to-open: the whole card/row opens the visit EXCEPT taps that
+  // land on a real link/button inside it (Navigate, Call, Book time, Open visit),
+  // which keep their own behavior.
+  function makeTappable(el, id) {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('a, button')) return;
+      openVisit(id);
+    });
+  }
   const planLabel = (p) => p === 'semi_annual' ? 'Semi-Annual' : (p === 'annual' ? 'Annual' : (p || '—'));
   const genClassLabel = (g) => ({
     air_cooled: 'Air cooled', liquid_22_38: 'Liquid cooled', liquid_48_150: 'Liquid cooled',
@@ -150,6 +201,9 @@
   }
 
   // ---- Role guard: this view is for techs ----
+  // Returns the profile on success, `undefined` on a failed profile fetch
+  // (fail OPEN — still render the day; the API itself is tech-gated), or
+  // `null` when we've redirected a non-tech away (caller must stop).
   async function checkRole() {
     try {
       const r = await BatesAuth.authFetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } });
@@ -158,28 +212,43 @@
       if (profile.role !== 'tech') {
         // Office (or anyone else) belongs on the office hub, not the field view.
         window.location.replace('/home');
-        return false;
+        return null;
       }
-      const sub = document.getElementById('tv-sub');
-      if (sub && profile.full_name) sub.textContent = `Assigned visits for ${profile.full_name}.`;
-      return true;
+      return profile;
     } catch (e) {
       console.error('role check failed', e);
-      return true; // fail open to the list; the API is still tech-gated.
+      return undefined;
     }
+  }
+
+  // ---- Hero: greeting + date + weather ----
+  function renderHero(profile) {
+    const now = new Date();
+    const dateEl = document.getElementById('hero-date');
+    const greetEl = document.getElementById('hero-greet');
+    const nameEl = document.getElementById('hero-name');
+    if (dateEl) dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    if (greetEl) greetEl.textContent = window.BatesWeather.greetingForHour(now.getHours());
+    if (nameEl) nameEl.textContent = firstNameOf(profile);
+    window.BatesWeather.mount({
+      wrapEl: document.getElementById('hero-weather'),
+      iconEl: document.getElementById('hero-weather-icon'),
+      tempEl: document.getElementById('hero-weather-temp'),
+      locEl: document.getElementById('hero-weather-loc'),
+    });
   }
 
   // ---- List ----
   async function loadVisits() {
-    const list = document.getElementById('tv-list');
     try {
       const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits`, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { visits } = await r.json();
-      renderList(visits || []);
+      renderDay(visits || []);
     } catch (e) {
       console.error('load visits failed', e);
-      list.innerHTML = `<p class="tv-empty">Couldn't load your visits. Pull to refresh or try again.</p>`;
+      const sub = document.getElementById('hero-sub');
+      if (sub) sub.textContent = "Couldn't load your visits. Pull to refresh or try again.";
     }
   }
 
@@ -189,62 +258,207 @@
     return 'need';
   }
 
-  function renderList(visits) {
-    const list = document.getElementById('tv-list');
-    if (!visits.length) {
-      list.innerHTML = `<div class="tv-empty"><div class="tv-empty-icon">${BatesIcons.icon('check', 24)}</div>No visits assigned to you right now.<br>The office will dispatch visits here.</div>`;
-      return;
-    }
+  // Buckets every visit into the "My Day" sections, then renders each.
+  function renderDay(visits) {
     const today = todayStr();
     const open = visits.filter((v) => visitStatus(v) !== 'done');
-    const done = visits.filter((v) => visitStatus(v) === 'done')
-      .sort((a, b) => String(b.completed_date || '').localeCompare(String(a.completed_date || '')))
-      .slice(0, 10);
-    const todayList = open.filter((v) => localDateOf(v) && localDateOf(v) <= today);
-    const upcoming = open.filter((v) => !localDateOf(v) || localDateOf(v) > today);
+    const done = visits.filter((v) => visitStatus(v) === 'done');
 
-    let html = '';
-    html += groupHtml('Today / overdue', todayList);
-    html += groupHtml('Upcoming', upcoming);
-    html += groupHtml('Recently completed', done);
-    list.innerHTML = html || `<div class="tv-empty">No visits assigned to you right now.</div>`;
+    const scheduledOpen = open
+      .filter((v) => visitStatus(v) === 'scheduled')
+      .sort((a, b) => new Date(a.appointment_at) - new Date(b.appointment_at));
+    const overdueScheduled = scheduledOpen.filter((v) => localDateOf(v) && localDateOf(v) < today);
+    const todayOpen = scheduledOpen.filter((v) => localDateOf(v) === today);
+    const futureScheduled = scheduledOpen.filter((v) => localDateOf(v) && localDateOf(v) > today);
 
-    list.querySelectorAll('[data-visit]').forEach((el) => {
-      el.addEventListener('click', () => openVisit(el.getAttribute('data-visit')));
+    // Not-yet-booked visits: a future due date is just an upcoming reminder;
+    // no due date (or a due date already here/passed) needs action now.
+    const needStatus = open.filter((v) => visitStatus(v) === 'need');
+    const needFuture = needStatus.filter((v) => localDateOf(v) && localDateOf(v) > today);
+    const needNow = needStatus.filter((v) => !localDateOf(v) || localDateOf(v) <= today);
+
+    const needsAttention = [...overdueScheduled, ...needNow];
+    const upcoming = [...futureScheduled, ...needFuture].sort((a, b) => {
+      const da = localDateOf(a) || '9999-99-99';
+      const db = localDateOf(b) || '9999-99-99';
+      return da < db ? -1 : (da > db ? 1 : 0);
+    });
+
+    const todayOrOverdue = [...overdueScheduled, ...todayOpen]
+      .sort((a, b) => new Date(a.appointment_at) - new Date(b.appointment_at));
+    const upNext = todayOrOverdue[0] || futureScheduled[0] || null;
+    const laterToday = todayOpen.filter((v) => !upNext || v.id !== upNext.id);
+
+    const weekAgoStr = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const doneThisWeek = done
+      .filter((v) => v.completed_date && v.completed_date >= weekAgoStr)
+      .sort((a, b) => String(b.completed_date || '').localeCompare(String(a.completed_date || '')));
+
+    renderStats(todayOpen.length, needsAttention.length, doneThisWeek.length);
+    renderHeroSub(todayOpen, needsAttention, upNext);
+    renderUpNext(upNext, todayOpen.length, open.length > 0);
+    renderLaterToday(laterToday);
+    renderAttention(needsAttention);
+    renderUpcoming(upcoming);
+    renderDoneSummary(doneThisWeek);
+  }
+
+  function renderStats(todayCount, overdueCount, doneCount) {
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = String(val); };
+    set('td-stat-today', todayCount);
+    set('td-stat-overdue', overdueCount);
+    set('td-stat-done', doneCount);
+  }
+
+  function renderHeroSub(todayOpen, needsAttention, upNext) {
+    const el = document.getElementById('hero-sub');
+    if (!el) return;
+    if (todayOpen.length > 0) {
+      el.innerHTML = `You've got <b>${todayOpen.length}</b> stop${todayOpen.length === 1 ? '' : 's'} today — first one at ${esc(startTimeLabel(todayOpen[0]))}.`;
+    } else if (needsAttention.length > 0) {
+      el.innerHTML = `No stops today — but <b>${needsAttention.length}</b> visit${needsAttention.length === 1 ? '' : 's'} need${needsAttention.length === 1 ? 's' : ''} attention.`;
+    } else if (upNext) {
+      el.textContent = `No stops today — next up ${fmtDate(upNext.appointment_at)}.`;
+    } else {
+      el.textContent = "You're all caught up for now.";
+    }
+  }
+
+  function renderUpNext(v, todayCount, hasAnyOpen) {
+    const wrap = document.getElementById('td-upnext-wrap');
+    if (!wrap) return;
+    if (!v) {
+      wrap.innerHTML = hasAnyOpen ? '' : `<div class="section-label">Up next</div>
+        <div class="td-empty"><div class="td-empty-icon">${BatesIcons.icon('check', 24)}</div>You're all caught up — the office will dispatch new visits here.</div>`;
+      return;
+    }
+    const cust = customerName(v);
+    const c = (v.subscription && v.subscription.customer) || {};
+    const sub = v.subscription || {};
+    const addrFull = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
+    const mapUrl = addrFull ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addrFull)}` : null;
+    const telDigits = c.phone ? String(c.phone).replace(/[^\d+]/g, '') : null;
+    const genParts = [genClassLabel(sub.gen_class), sub.gen_type_label, planLabel(sub.plan)].filter(Boolean);
+
+    const overdue = localDateOf(v) && localDateOf(v) < todayStr();
+    const tag = overdue ? 'Overdue' : (localDateOf(v) === todayStr() ? `Stop 1 of ${todayCount}` : 'Next visit');
+
+    const actions = [];
+    if (mapUrl) actions.push(`<a class="td-upnext-btn td-upnext-btn-nav" href="${esc(mapUrl)}" target="_blank" rel="noopener">${BatesIcons.icon('navigate', 16)}Navigate</a>`);
+    if (telDigits) actions.push(`<a class="td-upnext-btn td-upnext-btn-soft" href="tel:${esc(telDigits)}">${BatesIcons.icon('phone', 15)}Call</a>`);
+    actions.push(`<button type="button" class="td-upnext-btn td-upnext-btn-soft" data-open-visit="${esc(v.id)}">${BatesIcons.icon('chevronRight', 15)}Open visit</button>`);
+
+    wrap.innerHTML = `
+      <div class="section-label">Up next</div>
+      <div class="td-upnext" data-visit="${esc(v.id)}">
+        <div class="td-upnext-head">
+          <span class="td-upnext-time">${BatesIcons.icon('clock', 14)}${esc(apptChipText(v))}</span>
+          <span class="td-upnext-tag">${esc(tag)}</span>
+        </div>
+        <h3>${esc(cust)}</h3>
+        ${addrFull ? `<div class="td-upnext-addr">${esc(addrFull)}</div>` : ''}
+        ${genParts.length ? `<div class="td-upnext-gen">${genParts.map((p) => `<span>${esc(p)}</span>`).join('<span class="dot"></span>')}</div>` : ''}
+        <div class="td-upnext-actions">${actions.join('')}</div>
+      </div>`;
+    makeTappable(wrap.querySelector('.td-upnext'), v.id);
+    const openBtn = wrap.querySelector('[data-open-visit]');
+    if (openBtn) openBtn.addEventListener('click', () => openVisit(v.id));
+  }
+
+  // Shared card markup for "Later today" (mode='today') and "Needs attention"
+  // (mode='attention') — same shape, warn-accented + a Book-time affordance.
+  function cardHtml(v, mode) {
+    const warn = mode === 'attention';
+    const cust = customerName(v);
+    const addr = cityState(v);
+    let metaText, rightHtml;
+    if (warn) {
+      const st = visitStatus(v);
+      metaText = st === 'scheduled'
+        ? `Overdue — was ${windowLabelOnly(v)} on ${fmtDate(v.appointment_at)}`
+        : (v.scheduled_date ? `Due ${fmtDate(v.scheduled_date)} — not booked` : 'Not booked');
+      rightHtml = `<button type="button" class="badge badge-warn" data-book="${esc(v.id)}">Book time</button>`;
+    } else {
+      metaText = windowLabelOnly(v);
+      rightHtml = `<span class="badge badge-ok">Scheduled</span>`;
+    }
+    const meta = [addr, metaText].filter(Boolean).join(' · ');
+    return `<div class="td-card${warn ? ' td-warncard' : ''}" data-visit="${esc(v.id)}">
+      <div class="td-card-pin">${BatesIcons.icon(warn ? 'warn' : 'mapPin', 20)}</div>
+      <div class="td-card-mid">
+        <div class="td-card-cust">${esc(cust)}</div>
+        ${meta ? `<div class="td-card-meta">${esc(meta)}</div>` : ''}
+      </div>
+      <div class="td-card-right">${rightHtml}</div>
+      <span class="td-card-chev">${BatesIcons.icon('chevronRight', 18)}</span>
+    </div>`;
+  }
+
+  function renderLaterToday(list) {
+    const wrap = document.getElementById('td-later-wrap');
+    if (!wrap) return;
+    if (!list.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = `<div class="section-label">Later today</div>${list.map((v) => cardHtml(v, 'today')).join('')}`;
+    wrap.querySelectorAll('[data-visit]').forEach((el) => makeTappable(el, el.getAttribute('data-visit')));
+  }
+
+  function renderAttention(list) {
+    const wrap = document.getElementById('td-attention-wrap');
+    if (!wrap) return;
+    if (!list.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = `<div class="section-label td-label-warn">Needs attention</div>${list.map((v) => cardHtml(v, 'attention')).join('')}`;
+    wrap.querySelectorAll('[data-visit]').forEach((el) => makeTappable(el, el.getAttribute('data-visit')));
+    wrap.querySelectorAll('[data-book]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const v = list.find((x) => String(x.id) === btn.getAttribute('data-book'));
+        if (v) rescheduleVisit(v);
+      });
     });
   }
 
-  function groupHtml(title, items) {
-    if (!items.length) return '';
-    const rows = items.map((v) => {
-      const cust = (v.subscription && v.subscription.customer && v.subscription.customer.name) || 'Customer';
-      const st = visitStatus(v);
-      let chip, when;
-      if (st === 'done') {
-        chip = `<span class="badge badge-neutral">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
-        when = '';
-      } else if (st === 'scheduled') {
-        chip = `<span class="badge badge-ok">Scheduled</span>`;
-        when = `<div class="tv-meta">${esc(fmtAppt(v.appointment_at, v.arrival_window))}</div>`;
-      } else {
-        chip = `<span class="badge badge-warn">Needs scheduling</span>`;
-        when = v.scheduled_date ? `<div class="tv-meta">Due ${esc(fmtDate(v.scheduled_date))}</div>` : '';
-      }
-      const addr = (v.subscription && v.subscription.customer)
-        ? [v.subscription.customer.install_city, v.subscription.customer.install_state].filter(Boolean).join(', ')
-        : '';
-      return `<div class="tv-card" data-visit="${esc(v.id)}">
-        <div class="tv-card-top">
-          <div>
-            <div class="tv-cust">${esc(cust)}</div>
-            ${addr ? `<div class="tv-meta">${esc(addr)}</div>` : ''}
-            ${when}
-          </div>
-          <div>${chip}</div>
-        </div>
+  function renderUpcoming(list) {
+    const wrap = document.getElementById('td-upcoming-wrap');
+    if (!wrap) return;
+    if (!list.length) { wrap.innerHTML = ''; return; }
+    const rows = list.map((v) => {
+      const cust = customerName(v);
+      const addr = cityState(v);
+      const metaText = visitStatus(v) === 'scheduled' ? windowLabelOnly(v) : 'needs scheduling';
+      const { dow, day } = dayChipParts(localDateOf(v));
+      const meta = [addr, metaText].filter(Boolean).join(' · ');
+      return `<div class="td-urow" data-visit="${esc(v.id)}">
+        <div class="td-urow-d"><div class="td-urow-dow">${esc(dow)}</div><div class="td-urow-day">${esc(day)}</div></div>
+        <div class="td-urow-mid"><div class="td-urow-cust">${esc(cust)}</div>${meta ? `<div class="td-urow-meta">${esc(meta)}</div>` : ''}</div>
+        <span class="td-card-chev">${BatesIcons.icon('chevronRight', 18)}</span>
       </div>`;
     }).join('');
-    return `<div class="tv-group"><div class="tv-group-h">${esc(title)}</div>${rows}</div>`;
+    wrap.innerHTML = `<hr class="td-divider" /><div class="section-label">Upcoming</div>${rows}`;
+    wrap.querySelectorAll('[data-visit]').forEach((el) => makeTappable(el, el.getAttribute('data-visit')));
+  }
+
+  function renderDoneSummary(doneThisWeek) {
+    const wrap = document.getElementById('td-done-wrap');
+    if (!wrap) return;
+    if (!doneThisWeek.length) { wrap.innerHTML = ''; return; }
+    const rows = doneThisWeek.map((v) => {
+      const cust = customerName(v);
+      const addr = cityState(v);
+      const meta = [addr, v.completed_date ? `Completed ${fmtDate(v.completed_date)}` : ''].filter(Boolean).join(' · ');
+      return `<div class="td-urow" data-visit="${esc(v.id)}">
+        <div class="td-urow-mid"><div class="td-urow-cust">${esc(cust)}</div>${meta ? `<div class="td-urow-meta">${esc(meta)}</div>` : ''}</div>
+        <span class="badge badge-neutral">Done</span>
+      </div>`;
+    }).join('');
+    wrap.innerHTML = `<hr class="td-divider" />
+      <div class="td-done-note" id="td-done-toggle" role="button" tabindex="0">&#10003; <b>${doneThisWeek.length}</b> visit${doneThisWeek.length === 1 ? '' : 's'} completed this week — tap to view</div>
+      <div id="td-done-list" hidden>${rows}</div>`;
+    const toggle = document.getElementById('td-done-toggle');
+    const list = document.getElementById('td-done-list');
+    const flip = () => { list.hidden = !list.hidden; };
+    toggle.addEventListener('click', flip);
+    toggle.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+    list.querySelectorAll('[data-visit]').forEach((el) => makeTappable(el, el.getAttribute('data-visit')));
   }
 
   // ---- Detail ----
@@ -601,7 +815,9 @@
   });
 
   (async () => {
-    const ok = await checkRole();
-    if (ok) loadVisits();
+    const profile = await checkRole();
+    if (profile === null) return; // redirected to /home
+    renderHero(profile || {});
+    loadVisits();
   })();
 })();

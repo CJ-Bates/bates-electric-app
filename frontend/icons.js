@@ -27,6 +27,10 @@
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
     bolt: '<path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H13L13 2z"/>',
+    mapPin: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
+    chevronRight: '<path d="m9 6 6 6-6 6"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    navigate: '<polygon points="3 11 22 2 13 21 11 13 3 11"/>',
   };
 
   function icon(name, size) {

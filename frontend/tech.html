@@ -15,26 +15,80 @@
   <link rel="stylesheet" href="components.css" />
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
-  <title>Bates Electric &mdash; My Visits</title>
+  <title>Bates Electric &mdash; My Day</title>
   <style>
-    /* Field-tech view — mobile-first. Cards, not tables.
-       v3: colors/radii/shadows read tokens.css; status chips use the shared
-       .badge system and buttons the shared .btn system (components.css), so
-       dark mode is the token swap — no html.dark overrides needed here. */
-    .tv-wrap { max-width: 720px; margin: 0 auto; padding: 4px 0 40px; }
-    .tv-h { font-size: 1.25rem; font-weight: 800; color: var(--ink); margin: 4px 2px 2px; }
-    .tv-sub { color: var(--ink-2); font-size: 0.85rem; margin: 0 2px 14px; }
-    .tv-group { margin-bottom: 22px; }
-    .tv-group-h { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); margin: 0 2px 8px; }
-    .tv-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 14px; margin-bottom: 10px; box-shadow: var(--shadow-1); cursor: pointer; transition: box-shadow 0.12s, transform 0.04s; }
-    .tv-card:active { transform: scale(0.995); }
-    .tv-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-    .tv-cust { font-weight: 700; color: var(--ink); font-size: 1.02rem; }
-    .tv-meta { color: var(--ink-2); font-size: 0.84rem; margin-top: 2px; }
-    .tv-empty { text-align: center; color: var(--ink-2); padding: 40px 16px; }
-    .tv-empty-icon { opacity: 0.5; margin-bottom: 8px; }
+    /* Field-tech "My Day" landing — mobile-first (~390px primary). v3: colors/
+       radii/shadows read tokens.css; badges/buttons use the shared components.css
+       system, so dark mode is the token swap — no html.dark overrides needed
+       here except where the up-next card's navy gradient needs a dark variant. */
+    .td-wrap { max-width: 720px; margin: 0 auto; padding: 4px 0 40px; }
 
-    /* Detail modal (full-screen on phones) */
+    .td-safety { display: flex; align-items: center; gap: 10px; margin: -6px 0 22px; background: color-mix(in srgb, var(--warn-bg) 82%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent); border-radius: var(--radius-sm); padding: 10px 12px; }
+    .td-safety svg { color: var(--warn); flex-shrink: 0; }
+    .td-safety div { font-size: 0.8rem; line-height: 1.35; }
+    .td-safety strong { color: var(--ink); font-weight: 700; }
+    .td-safety span { color: var(--ink-2); }
+
+    /* Stat strip */
+    .td-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 26px; }
+    .td-stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 10px; text-align: center; box-shadow: var(--shadow-1); }
+    .td-stat-n { font-size: 1.5rem; font-weight: 800; line-height: 1; color: var(--ink); }
+    .td-stat-n.td-warnc { color: var(--warn); }
+    .td-stat-n.td-okc { color: var(--ok); }
+    .td-stat-l { font-size: 0.68rem; font-weight: 600; color: var(--ink-2); margin-top: 5px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+    .section-label.td-label-warn { color: var(--warn); }
+    .section-label.td-label-warn::before { background: var(--warn); }
+
+    /* Up-next featured card */
+    .td-upnext { background: linear-gradient(150deg, var(--navy-800), var(--navy-900)); border-radius: var(--radius); padding: 17px; color: #fff; box-shadow: var(--shadow-2); margin-bottom: 26px; position: relative; overflow: hidden; }
+    html.dark .td-upnext { background: linear-gradient(150deg, #1E2A4C, #141b2e); border: 1px solid #2A3350; }
+    .td-upnext-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+    .td-upnext-time { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.18); border-radius: 999px; padding: 5px 11px; font-size: 0.78rem; font-weight: 700; }
+    .td-upnext-time svg { opacity: 0.9; }
+    .td-upnext-tag { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(255,255,255,.6); }
+    .td-upnext h3 { font-size: 1.25rem; font-weight: 800; line-height: 1.15; margin: 0; }
+    .td-upnext-addr { font-size: 0.84rem; color: rgba(255,255,255,.78); margin-top: 4px; }
+    .td-upnext-gen { font-size: 0.78rem; color: rgba(255,255,255,.62); margin-top: 9px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .td-upnext-gen .dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,.4); }
+    .td-upnext-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 15px; }
+    .td-upnext-btn { font-family: var(--font); font-weight: 700; font-size: 0.84rem; border: 0; border-radius: var(--radius-sm); padding: 11px; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; text-decoration: none; transition: transform .14s var(--ease-spring); }
+    .td-upnext-btn:active { transform: scale(.965); }
+    .td-upnext-btn-nav { background: #fff; color: var(--navy-900); grid-column: 1 / -1; }
+    .td-upnext-btn-soft { background: rgba(255,255,255,.13); color: #fff; border: 1px solid rgba(255,255,255,.2); }
+
+    .td-empty { text-align: center; color: var(--ink-2); padding: 34px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 26px; }
+    .td-empty-icon { opacity: 0.5; margin-bottom: 8px; }
+
+    /* Today / needs-attention cards */
+    .td-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 14px; margin-bottom: 10px; box-shadow: var(--shadow-1); display: flex; align-items: center; gap: 13px; cursor: pointer; transition: transform .14s var(--ease-spring), box-shadow .14s; }
+    .td-card:active { transform: scale(.99); }
+    .td-card.td-warncard { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+    .td-card-pin { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
+    .td-card.td-warncard .td-card-pin { background: var(--warn-bg); color: var(--warn); }
+    .td-card-mid { flex: 1; min-width: 0; }
+    .td-card-cust { font-weight: 700; font-size: 0.95rem; color: var(--ink); }
+    .td-card-meta { font-size: 0.8rem; color: var(--ink-2); margin-top: 2px; }
+    .td-card-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; }
+    .td-card-chev { color: var(--ink-3); flex-shrink: 0; }
+    button.badge { border: 0; cursor: pointer; font-family: inherit; }
+
+    /* Upcoming condensed rows */
+    .td-divider { height: 1px; background: var(--line); border: 0; margin: 8px 2px 0; }
+    .td-urow { display: flex; align-items: center; gap: 12px; padding: 11px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .td-urow:last-child { border-bottom: 0; }
+    .td-urow-d { width: 42px; text-align: center; flex-shrink: 0; }
+    .td-urow-dow { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; color: var(--ink-2); letter-spacing: 0.04em; }
+    .td-urow-day { font-size: 1.15rem; font-weight: 800; line-height: 1; color: var(--ink); }
+    .td-urow-mid { flex: 1; min-width: 0; }
+    .td-urow-cust { font-weight: 600; font-size: 0.88rem; color: var(--ink); }
+    .td-urow-meta { font-size: 0.76rem; color: var(--ink-2); margin-top: 1px; }
+
+    /* Recently completed (de-emphasized, collapsed) */
+    .td-done-note { text-align: center; font-size: 0.8rem; color: var(--ink-2); margin: 6px 2px 0; padding: 10px; cursor: pointer; }
+    .td-done-note b { color: var(--ok); }
+
+    /* Detail modal (full-screen on phones) — unchanged */
     .tvd-overlay { position: fixed; inset: 0; z-index: 1400; background: rgba(0,0,0,0.45); display: none; align-items: flex-start; justify-content: center; padding: 0; overflow-y: auto; }
     .tvd-overlay.open { display: flex; }
     .tvd-panel { background: var(--bg); width: 100%; max-width: 640px; min-height: 100vh; }
@@ -72,10 +126,45 @@
   <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <main class="dashboard-main">
-    <div class="tv-wrap">
-      <h1 class="tv-h">My Visits</h1>
-      <p class="tv-sub" id="tv-sub">Your assigned generator service visits.</p>
-      <div id="tv-list"><p class="tv-sub">Loading…</p></div>
+    <div class="td-wrap">
+      <!-- Hero: greeting + weather (shared hub-hero-* styling from app.css /
+           BatesWeather from weather.js — same IDs as home.html's hero). -->
+      <section class="hub-hero" id="hub-hero">
+        <div class="hub-hero-text">
+          <div class="hub-hero-meta">
+            <span class="hub-hero-eyebrow" id="hero-date">&nbsp;</span>
+            <span class="hub-hero-weather" id="hero-weather" hidden role="button" tabindex="0">
+              <span class="hub-hero-weather-icon" id="hero-weather-icon"></span>
+              <span class="hub-hero-weather-temp" id="hero-weather-temp"></span>
+              <span class="hub-hero-weather-loc" id="hero-weather-loc"></span>
+            </span>
+          </div>
+          <h1 class="hub-hero-title">
+            <span id="hero-greet">Good morning</span><span class="hub-hero-comma">,</span>
+            <span class="hub-hero-name" id="hero-name">there</span>
+          </h1>
+          <p class="hub-hero-sub" id="hero-sub">Loading your day&hellip;</p>
+        </div>
+      </section>
+
+      <div class="td-safety">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <div><strong>Stay safe</strong> <span>&mdash; verify zero energy before you touch it.</span></div>
+      </div>
+
+      <!-- Stat strip -->
+      <section class="td-stats">
+        <div class="td-stat"><div class="td-stat-n" id="td-stat-today">&ndash;</div><div class="td-stat-l">Today</div></div>
+        <div class="td-stat"><div class="td-stat-n td-warnc" id="td-stat-overdue">&ndash;</div><div class="td-stat-l">Overdue</div></div>
+        <div class="td-stat"><div class="td-stat-n td-okc" id="td-stat-done">&ndash;</div><div class="td-stat-l">Done / wk</div></div>
+      </section>
+
+      <!-- Populated by tech.js -->
+      <div id="td-upnext-wrap"></div>
+      <div id="td-later-wrap"></div>
+      <div id="td-attention-wrap"></div>
+      <div id="td-upcoming-wrap"></div>
+      <div id="td-done-wrap"></div>
     </div>
   </main>
 
@@ -94,6 +183,7 @@
   <script src="icons.js"></script>
   <script src="ui-dialogs.js"></script>
   <script src="arrival-windows.js"></script>
+  <script src="weather.js"></script>
   <script src="tech.js"></script>
 </body>
 </html>
