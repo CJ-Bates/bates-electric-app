@@ -27,6 +27,10 @@ const ALLOWLIST = {
     '/subscriptions/:id/resend-welcome',
   ],
   'visits.js': ['/visits/:id/complete', '/visits/:id/schedule'],
+  // Leads are prospect tracking the whole office works: no money moved, no
+  // Stripe objects created, no existing customer's data exposed by id
+  // (convert only records a subscription id on the lead row).
+  'leads.js': ['/leads', '/leads/:id', '/leads/:id/convert'],
 };
 
 const ROUTE_RE = /router\.(post|patch|put|delete)\(\s*(['"])([^'"]+)\2/;

@@ -312,6 +312,37 @@
       .acc-viewtab { flex: 1 1 0; justify-content: center; }
     }
 
+    /* ============ Leads view (Growth Engine WP1) ============
+       Pipeline of prospective customers. Stage colors reuse the shared badge
+       tokens; the card left-border keys off the stage class (s-*). */
+    .leads-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .leads-intro { color: var(--ink-2); font-size: 0.9rem; max-width: 640px; margin: 0; }
+    .lead-card { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--lc, var(--line)); border-radius: var(--radius); box-shadow: var(--shadow-1); padding: 14px 16px; margin-bottom: 10px; }
+    .lead-card.s-new { --lc: var(--info); }
+    .lead-card.s-contacted { --lc: var(--neutral); }
+    .lead-card.s-signup_sent { --lc: var(--warn); }
+    .lead-card.s-converted { --lc: var(--ok); }
+    .lead-card.s-lost { --lc: var(--danger); }
+    .lead-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .lead-name { font-weight: 700; font-size: 0.98rem; color: var(--ink); }
+    .lead-meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 0.85rem; margin-top: 6px; }
+    .lead-meta a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .lead-meta a:hover { text-decoration: underline; }
+    .lead-gen { color: var(--ink-2); font-size: 0.85rem; margin-top: 4px; }
+    .lead-note { background: var(--surface-2); border-radius: 6px; padding: 8px 10px; font-size: 0.84rem; color: var(--ink-2); margin-top: 8px; white-space: pre-wrap; }
+    .lead-from { color: var(--ink-3); font-size: 0.78rem; margin-top: 8px; }
+    .lead-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    /* "New leads" count on the Leads section tab (stamped by leads.js).
+       Same pill treatment as the filter counts on the Customers tabs. */
+    .section-tab .tab-count { background: var(--accent); color: var(--ink-inverse); border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 700; padding: 1px 7px; margin-left: 6px; }
+    .section-tab.active .tab-count { background: rgba(255, 255, 255, 0.22); }
+    .section-tab .tab-count[hidden] { display: none; }
+    @media (max-width: 640px) {
+      .leads-head { flex-direction: column; align-items: stretch; }
+      .leads-head .btn { width: 100%; justify-content: center; min-height: 44px; }
+      .lead-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+    }
+
     /* ---- Payout print breakdown (Brenda's paper/PDF copy) ----
        #print-root is filled on demand by accounting.js and never shows on
        screen. When the body carries .printing, print media hides the app and
@@ -674,6 +705,58 @@
       </div>
     </section>
 
+    <!-- ============ LEADS (Growth Engine WP1) ============
+         Lazy-loaded: generator-care.js calls BatesLeads.init() the first
+         time this section is activated (leads.js primes the tab count at
+         page load). Every future lead channel — field enrollment, referrals,
+         campaigns — lands in this pipeline. -->
+    <section id="leads-view" hidden>
+      <div class="leads-head">
+        <p class="leads-intro">
+          Prospective Generator Care customers, worked left to right: New &rarr; Contacted &rarr; Signup sent &rarr; Converted. Field enrollments, referrals, and campaign responses will land here automatically once those channels launch.
+        </p>
+        <button type="button" id="lead-add-btn" class="btn btn-primary btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add lead
+        </button>
+      </div>
+
+      <div class="gc-tabs" id="lead-tabs">
+        <button class="filter lead-tab active" data-stage="all">All <span class="count" id="lead-count-all">0</span></button>
+        <button class="filter lead-tab" data-stage="new">New <span class="count" id="lead-count-new">0</span></button>
+        <button class="filter lead-tab" data-stage="contacted">Contacted <span class="count" id="lead-count-contacted">0</span></button>
+        <button class="filter lead-tab" data-stage="signup_sent">Signup sent <span class="count" id="lead-count-signup_sent">0</span></button>
+        <button class="filter lead-tab" data-stage="converted">Converted <span class="count" id="lead-count-converted">0</span></button>
+        <button class="filter lead-tab" data-stage="lost">Lost <span class="count" id="lead-count-lost">0</span></button>
+      </div>
+
+      <section class="dashboard-filters">
+        <div class="filter-group">
+          <label for="lead-search">Search</label>
+          <input type="text" id="lead-search" placeholder="Name, email, phone, city..." />
+        </div>
+      </section>
+
+      <div id="leads-loading" aria-hidden="true">
+        <div class="lead-card">
+          <span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span>
+          <span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span>
+        </div>
+        <div class="lead-card">
+          <span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span>
+          <span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span>
+        </div>
+      </div>
+
+      <div id="lead-list"></div>
+
+      <div id="leads-empty" class="gc-att-empty" hidden>
+        <div class="gc-att-empty-ico"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg></div>
+        <div class="big" id="leads-empty-title">No leads yet</div>
+        <div id="leads-empty-sub"></div>
+      </div>
+    </section>
+
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
     <details id="gc-admin-tools" style="margin-top: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);">
@@ -739,6 +822,7 @@
   <script src="icons.js"></script>
   <script src="metrics.js"></script>
   <script src="accounting.js"></script>
+  <script src="leads.js"></script>
   <script src="generator-care.js"></script>
 </body>
 </html>

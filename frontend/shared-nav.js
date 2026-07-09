@@ -497,6 +497,7 @@
     const ICONS = {
       'gc-attention': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.5a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 14.5 6 8.5"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></svg>',
       'gc-customers': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+      'gc-leads': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>',
       'metrics': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>',
       'accounting': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
     };
@@ -515,12 +516,13 @@
     const tabs = [
       { label: 'Needs Attention', href: '/generator-care#attention',  match: 'gc-attention' },
       { label: 'Customers',       href: '/generator-care#customers', match: 'gc-customers' },
+      { label: 'Leads',           href: '/generator-care#leads',     match: 'gc-leads' },
       { label: 'Metrics',         href: '/generator-care#metrics',   match: 'metrics' },
       { label: 'Accounting',      href: '/generator-care#accounting', match: 'accounting' },
     ].filter((t) => t.match !== 'accounting' || canSeeAccounting);
     const path = window.location.pathname;
     const onGenCare = path.indexOf('generator-care') !== -1;
-    const HASH_TO_MATCH = { customers: 'gc-customers', metrics: 'metrics', accounting: 'accounting' };
+    const HASH_TO_MATCH = { customers: 'gc-customers', leads: 'gc-leads', metrics: 'metrics', accounting: 'accounting' };
     const gcView = HASH_TO_MATCH[window.location.hash.slice(1)] || 'gc-attention';
     mount.innerHTML = tabs.map((t) => {
       const active = onGenCare && t.match === gcView;
