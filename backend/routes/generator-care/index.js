@@ -17,6 +17,7 @@ router.use(requireAuth, requireRole('office'));
 // (e.g. '/subscriptions/:id/change-plan'). No two routes share a method +
 // pattern, so mount order cannot change which handler matches.
 router.use(require('./subscriptions'));
+router.use(require('./leads'));
 router.use(require('./visits'));
 router.use(require('./addons'));
 router.use(require('./charges'));

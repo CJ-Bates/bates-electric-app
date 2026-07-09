@@ -48,6 +48,7 @@
   // re-fetching on every later tab switch (only the header Refresh button does).
   let metricsLoaded = false;
   let accountingLoaded = false;
+  let leadsLoaded = false;
   let chartJsPromise = null;
 
   const techName = (id) => {
@@ -2000,12 +2001,12 @@
   // BatesMetrics/BatesAccounting modules). The shared section switcher
   // renders all four as top-level tabs (shared-nav.js); hash changes swap
   // views without a reload.
-  const HASH_VIEWS = ['attention', 'customers', 'metrics', 'accounting'];
+  const HASH_VIEWS = ['attention', 'customers', 'leads', 'metrics', 'accounting'];
   function currentHashView() {
     const h = location.hash.slice(1);
     return HASH_VIEWS.includes(h) ? h : 'attention';
   }
-  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', metrics: 'metrics', accounting: 'accounting' };
+  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', leads: 'gc-leads', metrics: 'metrics', accounting: 'accounting' };
 
   // Chart.js is only needed by Metrics and costs ~200KB, so it's fetched from
   // the CDN on first activation of that tab rather than unconditionally in
@@ -2028,6 +2029,7 @@
   function showView(view) {
     document.getElementById('attention-view').hidden = view !== 'attention';
     document.getElementById('customers-view').hidden = view !== 'customers';
+    document.getElementById('leads-view').hidden = view !== 'leads';
     document.getElementById('metrics-view').hidden = view !== 'metrics';
     document.getElementById('accounting-view').hidden = view !== 'accounting';
     // Chart.js's canvases keep whatever size they last measured while
@@ -2068,6 +2070,10 @@
       accountingLoaded = true;
       window.BatesAccounting.init();
     }
+    if (view === 'leads' && !leadsLoaded) {
+      leadsLoaded = true;
+      window.BatesLeads.init();
+    }
   }
   window.addEventListener('hashchange', () => showView(currentHashView()));
 
@@ -2076,12 +2082,16 @@
   // so re-render it once /me lands.
   checkRole().then(() => renderAttention());
   loadTechs();
+  // One early leads fetch so the "new leads" count shows on the section tab
+  // without the tab being opened; BatesLeads.init() reuses the same data.
+  if (window.BatesLeads) window.BatesLeads.prime();
   showView(currentHashView());
 
   document.getElementById('refresh-btn').addEventListener('click', () => {
     const view = currentHashView();
     if (view === 'metrics') { if (window.BatesMetrics) window.BatesMetrics.refresh(); return; }
     if (view === 'accounting') { if (window.BatesAccounting) window.BatesAccounting.refresh(); return; }
+    if (view === 'leads') { if (window.BatesLeads) window.BatesLeads.refresh(); return; }
     loadSubscriptions();
     loadBillingSnapshot();
   });
