@@ -59,6 +59,12 @@ const BUILDERS = [
     cardBrand: 'visa', cardLast4: '5041', description: 'Exterior Wash',
     originalReceiptNumber: 'INV-0042', isPartial: true,
   })],
+  ['buildEnrollmentInviteEmail', (state) => emails.buildEnrollmentInviteEmail({
+    name: CUSTOMER.name, contactType: 'Person',
+    signupUrl: 'https://generator.bates-electric.com/?lead=123e4567',
+    unsubscribeUrl: 'https://bates-electric-app.onrender.com/generator-care/unsubscribe?token=tok',
+    companyState: state,
+  })],
 ];
 
 test('every customer-facing builder brands FL as S.E. Bates Electric', () => {

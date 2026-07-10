@@ -10,9 +10,10 @@
 // subscription id on the lead). Same coarse-gate basis as the
 // work-order-created/visit-schedule baseline in ../README.md.
 
+const crypto = require('crypto');
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
-const { sendEmail, buildSignupLinkEmail } = require('../../lib/emails');
+const { sendEmail, buildSignupLinkEmail, buildEnrollmentInviteEmail, BRAND } = require('../../lib/emails');
 const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
@@ -22,6 +23,21 @@ const router = express.Router();
 const SIGNUP_BASE_URL =
   (process.env.GENERATOR_SIGNUP_URL || 'https://generator.bates-electric.com').replace(/\/+$/, '');
 
+// This backend's own public origin — the unsubscribe link in the invite email
+// points here (the route is served by this app, not the Netlify frontend).
+const API_PUBLIC_BASE_URL =
+  (process.env.GENERATOR_API_PUBLIC_URL || 'https://bates-electric-app.onrender.com').replace(/\/+$/, '');
+
+// WP4 bulk-send tuning. Default batch 40 (the weekly drip size Amy clicks),
+// hard cap 100 per call so a fat-fingered batch size can't blast a whole
+// cohort. The throttle spaces sends so we don't hammer Brevo; tests zero it.
+const INVITE_DEFAULT_BATCH = 40;
+const INVITE_MAX_BATCH = 100;
+const INVITE_THROTTLE_MS = process.env.GENERATOR_INVITE_THROTTLE_MS != null
+  ? Number(process.env.GENERATOR_INVITE_THROTTLE_MS)
+  : 200;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const LEAD_SOURCES = ['field', 'referral', 'campaign', 'manual'];
 const LEAD_STATUSES = ['new', 'contacted', 'signup_sent', 'converted', 'lost'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -29,12 +45,15 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 // Every column the office UI shows — leads have no non-lead fields to leak,
 // but selecting an explicit list keeps that true if the table grows.
 // (import_batch stays server-side: it's an undo tag, nothing the UI shows.)
+// (unsubscribe_token stays server-side too: it's the secret in the
+// unsubscribe URL, nothing the UI needs. email_opt_out IS listed — the Leads
+// tab counts a cohort's emailable leads from it.)
 const LEAD_COLUMNS = [
   'id', 'source', 'status',
   'customer_name', 'customer_email', 'customer_phone',
   'install_address', 'install_city', 'install_state', 'install_zip',
   'generator_info', 'maintenance_month', 'contact_type',
-  'referred_by_user_id', 'referred_by_label', 'notes',
+  'referred_by_user_id', 'referred_by_label', 'notes', 'email_opt_out',
   'converted_subscription_id', 'created_at', 'updated_at',
 ].join(', ');
 
@@ -264,6 +283,121 @@ router.post('/leads/:id/send-signup', async (req, res) => {
     res.json({ ok: true, url, emailed, email_error: emailError, lead: updated || lead });
   } catch (err) {
     console.error('[generator-care] send-signup error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/leads/send-invites  { maintenance_month, batch_size? }
+// Growth Engine WP4: the batched enrollment-invite drip. Sends the campaign
+// invite email (buildEnrollmentInviteEmail) to the next `batch_size` eligible
+// leads in a maintenance-month cohort and advances each to signup_sent, so a
+// repeat click naturally walks through the cohort — it can never re-send.
+//
+// Eligible = in the month cohort, has an email, not opted out, and status
+// still new/contacted (signup_sent/converted/lost are done). Oldest-first for
+// a stable walk order. Each send gets the lead's ?lead= signup link and its
+// own unsubscribe token (generated + persisted on first send). A per-lead
+// failure is logged and that lead is left un-advanced so the next click
+// retries it — one bad address never aborts the batch.
+//
+// No granular requirePermission, same basis as the rest of this file: emails
+// prospects a public signup URL — no money moved, no Stripe object created,
+// no existing customer's data touched. The batch cap bounds the blast radius.
+router.post('/leads/send-invites', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const month = trimmed(body.maintenance_month);
+    if (!MONTHS.includes(month)) {
+      return res.status(400).json({ error: `maintenance_month must be one of: ${MONTHS.join(', ')}` });
+    }
+    let batchSize = INVITE_DEFAULT_BATCH;
+    if (body.batch_size !== undefined) {
+      batchSize = Number(body.batch_size);
+      if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > INVITE_MAX_BATCH) {
+        return res.status(400).json({ error: `batch_size must be a whole number between 1 and ${INVITE_MAX_BATCH}.` });
+      }
+    }
+
+    // The whole eligible remainder of the cohort, oldest-first (a month cohort
+    // is ~150 leads, far under PostgREST's 1000-row cap). Selecting it all —
+    // not just the batch — is what lets us report remaining_in_cohort.
+    const { data: rows, error } = await supabaseAdmin
+      .from('generator_leads')
+      .select('id, customer_name, customer_email, install_state, contact_type, unsubscribe_token')
+      .eq('maintenance_month', month)
+      .eq('email_opt_out', false)
+      .in('status', ['new', 'contacted'])
+      .not('customer_email', 'is', null)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (error) throw error;
+    // Belt-and-suspenders on top of the not-null filter: an empty-string email
+    // would "send" to nobody and burn a batch slot.
+    const eligible = (rows || []).filter((l) => trimmed(l.customer_email));
+    const batch = eligible.slice(0, batchSize);
+
+    let sent = 0;
+    let failed = 0;
+    for (const lead of batch) {
+      // Throttle between sends (not before the first) so Brevo sees a drip.
+      if (sent + failed > 0 && INVITE_THROTTLE_MS > 0) await sleep(INVITE_THROTTLE_MS);
+
+      try {
+        // Unsubscribe token: persist BEFORE sending so the link in the email
+        // always matches the DB (a send with an unsaved token would be dead).
+        let token = trimmed(lead.unsubscribe_token);
+        if (!token) {
+          token = crypto.randomBytes(24).toString('base64url');
+          const { error: tokErr } = await supabaseAdmin
+            .from('generator_leads')
+            .update({ unsubscribe_token: token })
+            .eq('id', lead.id);
+          if (tokErr) throw tokErr;
+        }
+
+        const { subject, html, text } = buildEnrollmentInviteEmail({
+          name: lead.customer_name,
+          contactType: lead.contact_type,
+          signupUrl: `${SIGNUP_BASE_URL}/?lead=${lead.id}`,
+          unsubscribeUrl: `${API_PUBLIC_BASE_URL}/generator-care/unsubscribe?token=${encodeURIComponent(token)}`,
+          companyState: lead.install_state,
+        });
+        const result = await sendEmail({
+          to: lead.customer_email,
+          subject,
+          html,
+          text,
+          logTag: '[enrollment-invite]',
+          companyState: lead.install_state,
+          // "Just reply — Amy will take care of you": replies land in the
+          // monitored generators@ mailbox, not the no-reply sender.
+          replyTo: BRAND.email,
+        });
+        if (!result || !result.sent) {
+          throw new Error(`invite send failed for lead ${lead.id} to ${lead.customer_email}: ${(result && result.reason) || 'unknown'}`);
+        }
+
+        // Advance AFTER a confirmed send. If this write fails the invite went
+        // out but the lead stays new/contacted — a re-click would re-send to
+        // this one address, which the error report lets the office head off.
+        const { error: updErr } = await supabaseAdmin
+          .from('generator_leads')
+          .update({ status: 'signup_sent', updated_at: new Date().toISOString() })
+          .eq('id', lead.id);
+        if (updErr) throw updErr;
+        sent++;
+      } catch (err) {
+        failed++;
+        console.error('[generator-care] send-invites lead error:', err && err.message);
+        reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+      }
+    }
+
+    // Failed leads were not advanced, so they're still in the remainder.
+    res.json({ sent, failed, remaining_in_cohort: eligible.length - sent });
+  } catch (err) {
+    console.error('[generator-care] send-invites error:', err && err.message);
     reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }

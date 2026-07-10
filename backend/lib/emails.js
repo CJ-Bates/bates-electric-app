@@ -86,7 +86,10 @@ const FONT_STACK = `system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto
 // Sends an email via Brevo. Returns { sent: boolean, reason?: string }.
 // Never throws -- webhook callers must not surface failures as 500s
 // (Stripe would retry on 500).
-async function sendEmail({ to, subject, html, text, logTag, companyState }) {
+// replyTo (optional): where a customer's reply lands. The enrollment-invite
+// drip sets it to the monitored generators@ mailbox ("just reply — Amy will
+// take care of you"); transactional sends leave it unset (no-reply sender).
+async function sendEmail({ to, subject, html, text, logTag, companyState, replyTo }) {
   const tag = logTag || '[email]';
   if (!to || (Array.isArray(to) && to.length === 0)) {
     console.log(`${tag} no recipient, skipping`);
@@ -104,6 +107,7 @@ async function sendEmail({ to, subject, html, text, logTag, companyState }) {
     subject,
     html,
     text,
+    ...(replyTo ? { replyTo } : {}),
   });
   if (result.sent) {
     const recipients = Array.isArray(to) ? to.join(', ') : to;
@@ -220,13 +224,19 @@ function renderHeader(brand) {
 }
 
 // Footer band: company name + phone, restrained. Contact details never change.
-function renderFooter(brand) {
+// footerFine (optional HTML): an extra fine-print block under the standard
+// footer lines — the enrollment invite uses it for the legally required
+// physical mailing address + unsubscribe link on bulk email.
+function renderFooter(brand, footerFine) {
   const company = (brand && brand.company) || BRAND.name;
   return (
     `<tr><td align="center" style="background:${BRAND.bgFooter};padding:22px 28px;border-top:1px solid ${BRAND.borderLight};">` +
       `<div style="font-family:${FONT_STACK};font-size:13px;color:${BRAND.textBody};font-weight:600;">${escHtml(company)}, Inc.</div>` +
       `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Questions? Call <a href="tel:${BRAND.phone.replace(/[^0-9+]/g, '')}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.phone)}</a> or email <a href="mailto:${BRAND.email}" style="color:${BRAND.textMuted};text-decoration:none;">${escHtml(BRAND.email)}</a></div>` +
       `<div style="font-family:${FONT_STACK};font-size:12px;color:${BRAND.textMuted};margin-top:4px;">Manage your plan: <a href="${DASHBOARD_URL}" style="color:${BRAND.textMuted};text-decoration:underline;">${DASHBOARD_DISPLAY}</a></div>` +
+      (footerFine
+        ? `<div style="font-family:${FONT_STACK};font-size:11px;color:${BRAND.textFine};margin-top:12px;line-height:1.6;">${footerFine}</div>`
+        : '') +
     `</td></tr>`
   );
 }
@@ -238,10 +248,14 @@ function renderFooter(brand) {
 //   ctaText  -- optional button label
 //   ctaUrl   -- optional button URL
 //   signoff  -- optional HTML below the body (defaults to "-- The Bates Electric team")
+//   preheader -- optional preview text: hidden in the rendered email but shown
+//                by inbox list views next to the subject (marketing-style sends)
+//   footerFine -- optional fine-print HTML appended to the footer band (see
+//                 renderFooter; the invite's address + unsubscribe line)
 //
 // All caller-provided strings inserted as HTML -- caller must escape any
 // user-supplied values (use escHtml).
-function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff, companyState }) {
+function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff, companyState, preheader, footerFine }) {
   const brand = brandFor(companyState);
   const introHtml = intro
     ? `<p style="margin:0 0 14px;font-family:${FONT_STACK};line-height:1.6;color:${BRAND.textBody};font-size:15px;">${intro}</p>`
@@ -259,6 +273,12 @@ function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff, co
     `<title>${escHtml(brand.company)} &mdash; ${escHtml(BRAND.tagline)}</title>` +
     `</head>` +
     `<body style="margin:0;padding:0;background:${BRAND.bgPage};font-family:${FONT_STACK};color:${BRAND.navy};-webkit-font-smoothing:antialiased;">` +
+
+    // Preheader: first text in <body>, so inbox previews show it; invisible in
+    // the opened email (zero-size, hidden, color matched to the page bg).
+    (preheader
+      ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${BRAND.bgPage};">${escHtml(preheader)}</div>`
+      : '') +
 
     // Outer page padding
     `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="background:${BRAND.bgPage};">` +
@@ -278,7 +298,7 @@ function renderBrandedEmail({ heading, intro, body, ctaText, ctaUrl, signoff, co
       signoffHtml +
     `</td></tr>` +
 
-    renderFooter(brand) +
+    renderFooter(brand, footerFine) +
 
     `</table>` +
     `</td></tr></table>` +
@@ -840,7 +860,7 @@ function buildSignupLinkEmail({ name, signupUrl, companyState }) {
 
   const body =
     `<p style="${P}">Thanks for your interest in Generator Care &mdash; our maintenance plan that keeps your standby generator ready for the next outage, with scheduled service visits and a full inspection every time.</p>` +
-    `<p style="${P_LAST}">Use the button below to pick your plan and complete signup online. It takes just a few minutes, and we&rsquo;ll reach out right after to schedule your first visit.</p>`;
+    `<p style="${P_LAST}">Use the button below to pick your plan and complete signup online. It takes just a few minutes, and we&rsquo;ll be in touch shortly to schedule your first visit.</p>`;
 
   const signoff =
     `<p style="${P}margin-top:24px;">Questions before you sign up? Give us a call at <strong>${BRAND.phone}</strong> &mdash; we&rsquo;re happy to help you pick the right plan.</p>` +
@@ -868,6 +888,111 @@ function buildSignupLinkEmail({ name, signupUrl, companyState }) {
     `-- ${company}`;
 
   return { subject: `Complete your ${company} Generator Care signup`, html, text };
+}
+
+// --- 12. Enrollment invite (Growth Engine WP4 — the campaign drip) -----------
+
+// Greeting per the maintenance book's contact_type:
+//   Person   -> first name ("Mark Osbourne" -> "Mark")
+//   Couple   -> the "and" name without the surname ("Jim and Lisa Liotta" ->
+//               "Jim and Lisa"); a Couple name with no and/& falls back to the
+//               first word, one that's ALL connector-adjacent (e.g. a
+//               mis-typed business "Becker Iron & Metal") ends up whole —
+//               friendly beats clever here.
+//   Business / unknown / no name -> null (the template greets "Hello,").
+function inviteGreeting({ name, contactType }) {
+  const n = String(name || '').trim().replace(/\s+/g, ' ');
+  const type = String(contactType || '').trim().toLowerCase();
+  if (!n || type === 'business') return null;
+  const words = n.split(' ');
+  if (type === 'couple') {
+    const i = words.findIndex((w) => /^(and|&)$/i.test(w));
+    // Keep everything through the word after the connector: "Mary Ann and Bob
+    // Smith" -> "Mary Ann and Bob". No connector -> first-name fallback.
+    return i > 0 ? words.slice(0, i + 2).join(' ') : words[0];
+  }
+  if (type === 'person') return words[0];
+  // Untyped (manual/field leads): a full name reads stiff, first name is safe.
+  return words[0];
+}
+
+// The bulk "Send invites" email to existing maintenance-book customers
+// (POST /leads/send-invites). Finalized campaign copy — benefits-first, one
+// pricing line, the lead's pre-tagged ?lead= signup link, reply-to-Amy line.
+// Bulk email, so the footer carries the unsubscribe link + physical mailing
+// address (CAN-SPAM). FL-aware like every other template.
+function buildEnrollmentInviteEmail({ name, contactType, signupUrl, unsubscribeUrl, companyState }) {
+  const company = companyName(companyState);
+  // "local Bates techs" in the approved copy; FL must not say bare "Bates"
+  // (settlement), so the short form swaps too.
+  const shortName = isFlorida(companyState) ? 'S.E. Bates' : 'Bates';
+  const greeting = inviteGreeting({ name, contactType });
+  const intro = greeting ? `Hi ${escHtml(greeting)},` : 'Hello,';
+  const introText = greeting ? `Hi ${greeting},` : 'Hello,';
+
+  const LI = `margin:0 0 12px;font-family:${FONT_STACK};line-height:1.6;color:${BRAND.textBody};font-size:15px;`;
+  const body =
+    `<p style="${P}">Owning a standby generator shouldn&rsquo;t mean keeping a mental note of when it was last serviced, when it&rsquo;s due again, or playing phone tag to book a visit. With <strong>Generator Care</strong>, you don&rsquo;t have to think about any of it &mdash; we handle it all for you.</p>` +
+    `<p style="${P}">Here&rsquo;s what changes for you:</p>` +
+    `<ul style="margin:0 0 14px;padding-left:20px;">` +
+      `<li style="${LI}"><strong>We keep track of everything.</strong> Your generator stays on a maintenance schedule automatically. No more wondering when it was last serviced or whether you&rsquo;re due &mdash; we remember, so you don&rsquo;t have to.</li>` +
+      `<li style="${LI}"><strong>You&rsquo;re always in the loop.</strong> Your own online dashboard shows your full maintenance history, photos from each visit, and what&rsquo;s coming up next &mdash; anytime, from your phone or laptop.</li>` +
+      `<li style="${LI}"><strong>You stay in control.</strong> Want a different day or time for a visit? Adjust it right from your dashboard &mdash; no phone calls, no waiting on hold.</li>` +
+      `<li style="${LI}"><strong>Same trusted team.</strong> The same local ${escHtml(shortName)} techs who already care for your generator, now on a schedule you never have to manage.</li>` +
+    `</ul>` +
+    `<p style="${P}">The result: your generator is always ready for the next storm, you always know exactly where things stand, and it asks almost nothing of you. That&rsquo;s real peace of mind.</p>` +
+    `<p style="${P_LAST}">And it&rsquo;s simple to start &mdash; two plans, <strong>Annual</strong> (one visit a year) or <strong>Semi-Annual</strong> (two), starting at <strong>$395/year</strong>. Every visit covers a full inspection, fresh oil and filter, a new air filter and spark plugs, and a battery check &mdash; the same thorough work you already trust, just handled for you from here on. (Optional extras, like a simulated outage test, are available anytime.)</p>`;
+
+  const signoff =
+    `<p style="${P}margin-top:28px;">You already count on ${escHtml(company)} for your generator &mdash; family-owned since 1992, 4.8&#9733; from over 1,400 reviews. Generator Care just makes it effortless.</p>` +
+    `<p style="${P}">Questions? Just reply to this email &mdash; Amy on our generator team will take care of you.</p>` +
+    `<p style="margin:28px 0 0;color:${BRAND.textMuted};font-size:14px;line-height:1.6;">&mdash; The ${escHtml(company)} Generator Care Team</p>`;
+
+  const footerFine =
+    `${escHtml(company)}, Inc. &middot; PO Box 100, Imperial, MO 63052<br>` +
+    `Don&rsquo;t want these emails? <a href="${unsubscribeUrl}" style="color:${BRAND.textFine};text-decoration:underline;">Unsubscribe</a>`;
+
+  const html = renderBrandedEmail({
+    heading: 'Generator maintenance, handled for you',
+    intro,
+    body,
+    ctaText: 'Enroll in Generator Care',
+    ctaUrl: signupUrl,
+    signoff,
+    companyState,
+    preheader: 'We keep your generator maintained and on schedule — you just check in whenever you like.',
+    footerFine,
+  });
+
+  const text =
+    `${introText}\n\n` +
+    `Owning a standby generator shouldn't mean keeping a mental note of when it was last serviced, ` +
+    `when it's due again, or playing phone tag to book a visit. With Generator Care, you don't have ` +
+    `to think about any of it -- we handle it all for you.\n\n` +
+    `Here's what changes for you:\n\n` +
+    `  * We keep track of everything. Your generator stays on a maintenance schedule automatically. ` +
+    `No more wondering when it was last serviced or whether you're due -- we remember, so you don't have to.\n` +
+    `  * You're always in the loop. Your own online dashboard shows your full maintenance history, ` +
+    `photos from each visit, and what's coming up next -- anytime, from your phone or laptop.\n` +
+    `  * You stay in control. Want a different day or time for a visit? Adjust it right from your ` +
+    `dashboard -- no phone calls, no waiting on hold.\n` +
+    `  * Same trusted team. The same local ${shortName} techs who already care for your generator, now on ` +
+    `a schedule you never have to manage.\n\n` +
+    `The result: your generator is always ready for the next storm, you always know exactly where ` +
+    `things stand, and it asks almost nothing of you. That's real peace of mind.\n\n` +
+    `And it's simple to start -- two plans, Annual (one visit a year) or Semi-Annual (two), starting ` +
+    `at $395/year. Every visit covers a full inspection, fresh oil and filter, a new air filter and ` +
+    `spark plugs, and a battery check -- the same thorough work you already trust, just handled for ` +
+    `you from here on. (Optional extras, like a simulated outage test, are available anytime.)\n\n` +
+    `Enroll in Generator Care:\n${signupUrl}\n\n` +
+    `You already count on ${company} for your generator -- family-owned since 1992, 4.8 stars from ` +
+    `over 1,400 reviews. Generator Care just makes it effortless.\n\n` +
+    `Questions? Just reply to this email -- Amy on our generator team will take care of you.\n\n` +
+    `-- The ${company} Generator Care Team\n\n` +
+    `${company}, Inc. | PO Box 100, Imperial, MO 63052\n` +
+    `Don't want these emails? Unsubscribe: ${unsubscribeUrl}`;
+
+  return { subject: 'Your generator, maintained and tracked — without the hassle', html, text };
 }
 
 // ============================================================================
@@ -903,6 +1028,8 @@ module.exports = {
   buildReceiptEmail,
   buildRefundReceiptEmail,
   buildSignupLinkEmail,
+  buildEnrollmentInviteEmail,
+  inviteGreeting,
 
   // Florida DBA helpers (re-exported for convenience)
   isFlorida,

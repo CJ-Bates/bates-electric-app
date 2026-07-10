@@ -341,9 +341,14 @@
     .lead-month-quick { display: flex; gap: 8px; flex-wrap: wrap; }
     .lead-month-quick .filter { border-color: var(--line); }
     .lead-month-quick .filter.active { border-color: var(--accent); }
-    .lead-month-summary { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; font-size: 0.9rem; }
+    .lead-month-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; font-size: 0.9rem; }
     .lead-month-summary .month { font-weight: 700; color: var(--ink); }
     .lead-month-summary .detail { color: var(--ink-2); }
+    /* WP4: batched "Send invites" control on the cohort header */
+    .lead-send-group { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .lead-send-group label { font-size: 0.78rem; color: var(--ink-2); }
+    .lead-send-group input[type="number"] { width: 64px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--ink); }
+    .lead-send-hint { font-size: 0.8rem; color: var(--ink-2); }
     /* "New leads" count on the Leads section tab (stamped by leads.js).
        Same pill treatment as the filter counts on the Customers tabs. */
     .section-tab .tab-count { background: var(--accent); color: var(--ink-inverse); border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 700; padding: 1px 7px; margin-left: 6px; }

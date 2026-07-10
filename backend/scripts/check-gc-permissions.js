@@ -29,9 +29,15 @@ const ALLOWLIST = {
   'visits.js': ['/visits/:id/complete', '/visits/:id/schedule'],
   // Leads are prospect tracking the whole office works: no money moved, no
   // Stripe objects created, no existing customer's data exposed by id
-  // (convert only records a subscription id on the lead row; send-signup only
-  // emails the prospect a public signup URL).
-  'leads.js': ['/leads', '/leads/:id', '/leads/:id/convert', '/leads/:id/send-signup'],
+  // (convert only records a subscription id on the lead row; send-signup and
+  // send-invites only email prospects a public signup URL — send-invites is
+  // additionally hard-capped at 100 sends per call and skips opted-out or
+  // already-invited leads by query).
+  // NOTE: GET /generator-care/unsubscribe (routes/generator-care-public.js,
+  // outside this directory) is intentionally UNAUTHENTICATED — it's the link
+  // in a customer's inbox. It is token-only and can only set
+  // email_opt_out=true; see that file's header comment.
+  'leads.js': ['/leads', '/leads/:id', '/leads/:id/convert', '/leads/:id/send-signup', '/leads/send-invites'],
 };
 
 const ROUTE_RE = /router\.(post|patch|put|delete)\(\s*(['"])([^'"]+)\2/;

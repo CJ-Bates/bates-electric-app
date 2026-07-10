@@ -10,6 +10,7 @@ const generatorWebhookRouter = require('./routes/generator-webhook');
 const generatorCareRouter = require('./routes/generator-care');
 const generatorTechRouter = require('./routes/generator-tech');
 const generatorCareCronRouter = require('./routes/generator-care-cron');
+const generatorCarePublicRouter = require('./routes/generator-care-public');
 const customerRouter = require('./routes/customer');
 const membersRouter = require('./routes/members');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
@@ -81,6 +82,12 @@ app.get('/config', (req, res) => {
 app.get('/contacts-directory', requireAuth, (req, res) => {
   res.json({ directory: CONTACTS_DIRECTORY });
 });
+
+// Public (no-auth) Generator Care routes — the email unsubscribe link (WP4).
+// Deliberately outside the /api/generator-care office router: the URL lives
+// in a customer's inbox and must work with no session. Token-only lookups,
+// opt-out-only writes; see routes/generator-care-public.js.
+app.use('/generator-care', generatorCarePublicRouter);
 
 app.use('/auth', authRoutes);
 // GET /me lives on the auth router but is commonly called without the prefix;

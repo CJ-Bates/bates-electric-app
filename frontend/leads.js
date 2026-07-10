@@ -57,6 +57,8 @@
   let activeStage = 'all';
   let activeMonth = 'all'; // 'all' or a 3-letter month
   let searchQuery = '';
+  let batchSize = 40;      // WP4 "Send invites" batch size (1..100)
+  let sendingInvites = false; // a batch POST is in flight
 
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
@@ -186,10 +188,18 @@
     return activeMonth === 'all' || l.maintenance_month === activeMonth;
   }
 
-  // Cohort summary bar: "August — 120 leads, 40 invited". Only meaningful
-  // when a single month is selected; "invited" = already sent a signup link
-  // or converted, so Amy can see how far through the cohort she is (WP4's
-  // batched invites will work off the remainder).
+  // WP4: a lead the batched drip can still email — has an address, hasn't
+  // unsubscribed, and hasn't already been invited (signup_sent) or finished
+  // (converted/lost). Mirrors the send-invites route's eligibility query.
+  const isEmailable = (l) =>
+    !!l.customer_email && !l.email_opt_out && (l.status === 'new' || l.status === 'contacted');
+
+  // Cohort summary bar: "August — 136 leads · 92 emailable · 12 invited",
+  // plus the WP4 "Send invites" control (batch-size input + send button).
+  // Only meaningful when a single month is selected. "invited" = already sent
+  // a signup link or converted; "emailable" = what the next batches work off.
+  // Rebuilt on every render, so the controls use delegated listeners bound
+  // once in init() and the input's value round-trips through `batchSize`.
   function renderMonthSummary(cohort) {
     const el = $('lead-month-summary');
     if (!el) return;
@@ -199,10 +209,65 @@
       return;
     }
     const invited = cohort.filter((l) => l.status === 'signup_sent' || l.status === 'converted').length;
+    const emailable = cohort.filter(isEmailable).length;
     const leadsWord = cohort.length === 1 ? 'lead' : 'leads';
+    const none = emailable === 0;
+    const sendLabel = sendingInvites
+      ? 'Sending&hellip;'
+      : `Send next ${Math.min(batchSize, emailable) || batchSize}`;
     el.innerHTML = `<span class="month">${escapeHtml(MONTH_NAMES[activeMonth] || activeMonth)}</span>`
-      + `<span class="detail">${cohort.length} ${leadsWord}, ${invited} invited</span>`;
+      + `<span class="detail">${cohort.length} ${leadsWord} &middot; ${emailable} emailable &middot; ${invited} invited</span>`
+      + `<span class="lead-send-group">`
+      + (none
+        ? `<span class="lead-send-hint">Everyone emailable in this cohort has been invited.</span>`
+        : `<label for="lead-batch-size">Batch</label>`
+          + `<input type="number" id="lead-batch-size" min="1" max="100" inputmode="numeric" value="${batchSize}">`)
+      + `<button type="button" id="lead-send-invites-btn" class="btn btn-primary btn-sm"${none || sendingInvites ? ' disabled' : ''}>${sendLabel}</button>`
+      + `</span>`;
     el.hidden = false;
+  }
+
+  // WP4: send the enrollment invite to the next batch of the selected month's
+  // emailable leads. The server re-derives eligibility (never re-sends, never
+  // emails opted-out leads) — this confirm just spells out what will happen.
+  async function sendInvites() {
+    if (sendingInvites || activeMonth === 'all') return;
+    // Full month cohort — NOT search-filtered — matching what the server
+    // selects from, so the confirm's numbers are exactly what will happen.
+    const cohort = leads.filter(matchesMonth);
+    const emailable = cohort.filter(isEmailable).length;
+    if (!emailable) return;
+
+    const n = Math.min(Math.max(1, Math.floor(batchSize) || 1), 100, emailable);
+    batchSize = Math.min(Math.max(1, Math.floor(batchSize) || 1), 100);
+    const monthName = MONTH_NAMES[activeMonth] || activeMonth;
+    const ok = await openConfirm({
+      title: 'Send invites?',
+      message: `Send the enrollment invite to the next ${n} of ${emailable} emailable ${monthName} customers? They'll move to Signup sent.`,
+      confirmText: `Send ${n} invite${n === 1 ? '' : 's'}`,
+    });
+    if (!ok) return;
+
+    sendingInvites = true;
+    render();
+    try {
+      const data = await api('/leads/send-invites', {
+        method: 'POST',
+        body: JSON.stringify({ maintenance_month: activeMonth, batch_size: n }),
+      });
+      const bits = [`Sent ${data.sent} invite${data.sent === 1 ? '' : 's'}`];
+      if (data.failed) bits.push(`${data.failed} failed (will retry next batch)`);
+      bits.push(`${data.remaining_in_cohort} left in ${monthName}`);
+      showStatus(`${bits.join(' · ')}.`, data.failed ? 'error' : 'success');
+    } catch (err) {
+      showStatus(`Send failed: ${err.message}`, 'error');
+    } finally {
+      sendingInvites = false;
+      // Refetch so the cohort counts + stages reflect what the server did and
+      // the next batch's numbers are honest.
+      await loadLeads();
+      render();
+    }
   }
 
   function render() {
@@ -214,9 +279,12 @@
     if (!haveData) return;
 
     // Pill counts always reflect the search+month-filtered set, so with a
-    // month selected they read as that cohort's stage breakdown.
+    // month selected they read as that cohort's stage breakdown. The cohort
+    // summary bar deliberately ignores the search box: its counts (and the
+    // Send-invites batch math) must match the FULL month cohort the server
+    // sends to, or the confirm dialog would promise the wrong numbers.
+    renderMonthSummary(leads.filter(matchesMonth));
     const searched = leads.filter(matchesSearch).filter(matchesMonth);
-    renderMonthSummary(searched);
     $('lead-count-all').textContent = String(searched.length);
     for (const s of STAGE_ORDER) {
       const el = $(`lead-count-${s}`);
@@ -437,6 +505,18 @@
     $('lead-list').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-action]');
       if (btn) onAction(btn.dataset.action, btn.dataset.id);
+    });
+    // WP4 send-invites controls live inside the cohort summary, which is
+    // rebuilt every render — delegate from the container (bound once here).
+    $('lead-month-summary').addEventListener('click', (e) => {
+      if (e.target.closest('#lead-send-invites-btn')) sendInvites();
+    });
+    $('lead-month-summary').addEventListener('input', (e) => {
+      if (e.target.id !== 'lead-batch-size') return;
+      const v = Math.floor(Number(e.target.value));
+      if (Number.isFinite(v) && v >= 1) batchSize = Math.min(v, 100);
+      const btn = $('lead-send-invites-btn');
+      if (btn && !sendingInvites) btn.textContent = `Send next ${batchSize}`;
     });
 
     if (haveData) render();
