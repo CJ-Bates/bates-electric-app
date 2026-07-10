@@ -828,6 +828,48 @@ function buildRefundReceiptEmail({ customer, companyState, amountCents, refundDa
   return { subject: `Your refund from ${company}`, html, text };
 }
 
+// --- 11. Signup link (Growth Engine WP2) --------------------------------------
+
+// Sent by the office "send signup link" action (POST /leads/:id/send-signup).
+// The URL carries ?lead=<id> so the signup self-attributes back to the lead
+// when the customer completes checkout. FL-aware like every other template
+// (companyState = the lead's install_state when the office captured one).
+function buildSignupLinkEmail({ name, signupUrl, companyState }) {
+  const safeName = name || 'there';
+  const company = companyName(companyState);
+
+  const body =
+    `<p style="${P}">Thanks for your interest in Generator Care &mdash; our maintenance plan that keeps your standby generator ready for the next outage, with scheduled service visits and a full inspection every time.</p>` +
+    `<p style="${P_LAST}">Use the button below to pick your plan and complete signup online. It takes just a few minutes, and we&rsquo;ll reach out right after to schedule your first visit.</p>`;
+
+  const signoff =
+    `<p style="${P}margin-top:24px;">Questions before you sign up? Give us a call at <strong>${BRAND.phone}</strong> &mdash; we&rsquo;re happy to help you pick the right plan.</p>` +
+    defaultSignoff(company);
+
+  const html = renderBrandedEmail({
+    heading: 'Complete your Generator Care signup',
+    intro: `Hi ${escHtml(safeName)},`,
+    body,
+    ctaText: 'Complete my signup',
+    ctaUrl: signupUrl,
+    signoff,
+    companyState,
+  });
+
+  const text =
+    `Hi ${safeName},\n\n` +
+    `Thanks for your interest in ${company} Generator Care -- our maintenance plan that keeps ` +
+    `your standby generator ready for the next outage, with scheduled service visits and a ` +
+    `full inspection every time.\n\n` +
+    `Pick your plan and complete signup online here (it takes just a few minutes):\n` +
+    `${signupUrl}\n\n` +
+    `Questions before you sign up? Give us a call at ${BRAND.phone} -- we're happy to help ` +
+    `you pick the right plan.\n\n` +
+    `-- ${company}`;
+
+  return { subject: `Complete your ${company} Generator Care signup`, html, text };
+}
+
 // ============================================================================
 // Module exports
 // ============================================================================
@@ -860,6 +902,7 @@ module.exports = {
   buildCancellationEmail,
   buildReceiptEmail,
   buildRefundReceiptEmail,
+  buildSignupLinkEmail,
 
   // Florida DBA helpers (re-exported for convenience)
   isFlorida,

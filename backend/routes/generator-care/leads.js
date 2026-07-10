@@ -12,9 +12,15 @@
 
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
+const { sendEmail, buildSignupLinkEmail } = require('../../lib/emails');
 const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
+
+// The public signup site (bates-generator repo). Env-overridable so a staging
+// deploy can point somewhere else; the default is the live Netlify site.
+const SIGNUP_BASE_URL =
+  (process.env.GENERATOR_SIGNUP_URL || 'https://generator.bates-electric.com').replace(/\/+$/, '');
 
 const LEAD_SOURCES = ['field', 'referral', 'campaign', 'manual'];
 const LEAD_STATUSES = ['new', 'contacted', 'signup_sent', 'converted', 'lost'];
@@ -172,6 +178,74 @@ router.patch('/leads/:id', async (req, res) => {
     res.json({ ok: true, lead: data });
   } catch (err) {
     console.error('[generator-care] update lead error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/leads/:id/send-signup — build this lead's
+// pre-tagged signup URL (?lead=<id>, which the signup site forwards into
+// Stripe subscription metadata so the webhook can auto-convert the lead).
+// If the lead has an email on file, also send the branded "complete your
+// signup" email (FL-aware); otherwise just return the link for the office to
+// copy into a text/call. Either way the lead advances to signup_sent.
+// No granular requirePermission, same basis as the rest of this file: sends
+// a public signup URL to a prospect — no money moved, no Stripe object
+// created, no existing customer's data touched.
+router.post('/leads/:id/send-signup', async (req, res) => {
+  try {
+    const { data: lead, error } = await supabaseAdmin
+      .from('generator_leads')
+      .select(LEAD_COLUMNS)
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!lead) return res.status(404).json({ error: 'lead not found' });
+    if (lead.status === 'converted') {
+      return res.status(400).json({ error: 'This lead already converted \u2014 no signup link needed.' });
+    }
+
+    const url = `${SIGNUP_BASE_URL}/?lead=${lead.id}`;
+
+    // Email when we can; a failed send still returns the link so the office
+    // isn't blocked on a mail hiccup — they can copy it and send it themselves.
+    let emailed = false;
+    let emailError = null;
+    if (lead.customer_email) {
+      const { subject, html, text } = buildSignupLinkEmail({
+        name: lead.customer_name,
+        signupUrl: url,
+        companyState: lead.install_state,
+      });
+      const result = await sendEmail({
+        to: lead.customer_email,
+        subject,
+        html,
+        text,
+        logTag: '[signup-link-email]',
+        companyState: lead.install_state,
+      });
+      emailed = !!(result && result.sent);
+      if (!emailed) {
+        emailError = 'The email could not be sent \u2014 copy the link and send it yourself.';
+        reportError(
+          new Error(`signup-link email send failed for lead ${lead.id} to ${lead.customer_email}: ${(result && result.reason) || 'unknown'}`),
+          { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }
+        ).catch(() => {});
+      }
+    }
+
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_leads')
+      .update({ status: 'signup_sent', updated_at: new Date().toISOString() })
+      .eq('id', lead.id)
+      .select(LEAD_COLUMNS)
+      .maybeSingle();
+    if (updErr) throw updErr;
+
+    res.json({ ok: true, url, emailed, email_error: emailError, lead: updated || lead });
+  } catch (err) {
+    console.error('[generator-care] send-signup error:', err && err.message);
     reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
