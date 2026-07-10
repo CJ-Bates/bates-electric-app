@@ -116,10 +116,14 @@ test('sends the listed eligible leads; every ineligible id is skipped with a rea
   // Only the eligible two got mail, in the order the caller listed them.
   assert.deepEqual(brevoCalls.map((c) => c.to), ['a@example.com', 'b@example.com']);
 
-  // Sent leads advanced; skipped ones untouched.
+  // Sent leads advanced + invited_at stamped (WP4.2: it drives the derived
+  // "Needs follow-up" flag); skipped ones untouched.
   assert.equal(store.find((l) => l.id === L1).status, 'signup_sent');
+  assert.ok(store.find((l) => l.id === L1).invited_at, 'batch send must stamp invited_at');
   assert.equal(store.find((l) => l.id === L2).status, 'signup_sent');
+  assert.ok(store.find((l) => l.id === L2).invited_at);
   assert.equal(store.find((l) => l.id === L4).status, 'new');
+  assert.equal(store.find((l) => l.id === L4).invited_at, undefined, 'skipped leads never get an invited_at');
   assert.equal(store.find((l) => l.id === L9).status, 'lost');
 
   // Each send: reply-to Amy's monitored mailbox, the lead's own ?lead= link,
@@ -183,9 +187,10 @@ test('existing unsubscribe token is reused, not regenerated', async () => {
   assert.equal(res.body.sent, 1);
   assert.equal(store.find((l) => l.id === L1).unsubscribe_token, 'tok-existing');
   assert.ok(brevoCalls[0].html.includes('unsubscribe?token=tok-existing'));
-  // The only write for L1 is the status advance — no token rewrite.
+  // The only write for L1 is the status advance (+ the WP4.2 invited_at
+  // stamp) — no token rewrite.
   assert.deepEqual(updates.filter((u) => u.id === L1).map((u) => Object.keys(u.patch).sort()),
-    [['status', 'updated_at']]);
+    [['invited_at', 'status', 'updated_at']]);
 });
 
 test('FL lead -> S.E. Bates branding in sender name and body', async () => {

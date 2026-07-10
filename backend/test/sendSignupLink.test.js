@@ -83,10 +83,14 @@ test('email path: sends the branded email, returns the pre-tagged URL, advances 
   assert.ok(brevoCalls[0].html.includes(EXPECTED_URL), 'html body must contain the ?lead= URL');
   assert.ok(brevoCalls[0].text.includes(EXPECTED_URL), 'text body must contain the ?lead= URL');
 
-  // Status write: signup_sent on THIS lead, nothing else touched.
+  // Status write: signup_sent + the WP4.2 invited_at stamp (drives the
+  // "Needs follow-up" flag; a re-send resets the clock) on THIS lead,
+  // nothing else touched.
   assert.equal(seen.update.status, 'signup_sent');
   assert.ok(seen.update.updated_at);
-  assert.deepEqual(Object.keys(seen.update).sort(), ['status', 'updated_at']);
+  assert.ok(seen.update.invited_at, 'send-signup must stamp invited_at');
+  assert.equal(seen.update.invited_at, seen.update.updated_at);
+  assert.deepEqual(Object.keys(seen.update).sort(), ['invited_at', 'status', 'updated_at']);
   assert.deepEqual(seen.updateEq, ['id', LEAD_ID]);
 });
 
