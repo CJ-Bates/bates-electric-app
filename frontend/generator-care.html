@@ -332,6 +332,18 @@
     .lead-note { background: var(--surface-2); border-radius: 6px; padding: 8px 10px; font-size: 0.84rem; color: var(--ink-2); margin-top: 8px; white-space: pre-wrap; }
     .lead-from { color: var(--ink-3); font-size: 0.78rem; margin-top: 8px; }
     .lead-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    /* WP3: month filter + cohort summary. The select mirrors .filter-group
+       input (app.css); the label span mirrors .filter-group label, which only
+       targets the label element. */
+    .filter-group select { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px; background: var(--surface); color: var(--ink); }
+    .filter-group select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+    .filter-group-label { font-size: 11px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+    .lead-month-quick { display: flex; gap: 8px; flex-wrap: wrap; }
+    .lead-month-quick .filter { border-color: var(--line); }
+    .lead-month-quick .filter.active { border-color: var(--accent); }
+    .lead-month-summary { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; font-size: 0.9rem; }
+    .lead-month-summary .month { font-weight: 700; color: var(--ink); }
+    .lead-month-summary .detail { color: var(--ink-2); }
     /* "New leads" count on the Leads section tab (stamped by leads.js).
        Same pill treatment as the filter counts on the Customers tabs. */
     .section-tab .tab-count { background: var(--accent); color: var(--ink-inverse); border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 700; padding: 1px 7px; margin-left: 6px; }
@@ -735,7 +747,36 @@
           <label for="lead-search">Search</label>
           <input type="text" id="lead-search" placeholder="Name, email, phone, city..." />
         </div>
+        <div class="filter-group">
+          <label for="lead-month">Maintenance month</label>
+          <select id="lead-month">
+            <option value="all">All months</option>
+            <option value="Jan">January</option>
+            <option value="Feb">February</option>
+            <option value="Mar">March</option>
+            <option value="Apr">April</option>
+            <option value="May">May</option>
+            <option value="Jun">June</option>
+            <option value="Jul">July</option>
+            <option value="Aug">August</option>
+            <option value="Sep">September</option>
+            <option value="Oct">October</option>
+            <option value="Nov">November</option>
+            <option value="Dec">December</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <span class="filter-group-label" id="lead-due-label">Quick filter</span>
+          <div class="lead-month-quick" role="group" aria-labelledby="lead-due-label">
+            <button type="button" class="filter" id="lead-due-this">Due this month</button>
+            <button type="button" class="filter" id="lead-due-next">Due next month</button>
+          </div>
+        </div>
       </section>
+
+      <!-- Cohort summary for the selected month: "August — 120 leads, 40
+           invited". Filled by leads.js; hidden while the filter is All. -->
+      <div id="lead-month-summary" class="lead-month-summary" hidden></div>
 
       <div id="leads-loading" aria-hidden="true">
         <div class="lead-card">

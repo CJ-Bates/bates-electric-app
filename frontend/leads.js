@@ -38,12 +38,24 @@
     manual:   { label: 'Manual',   chip: 'chip-neutral' },
   };
 
+  // WP3: the maintenance-book import tags campaign leads with the 3-letter
+  // month their maintenance is due; the tab works them as monthly cohorts.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONTH_NAMES = {
+    Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
+    May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
+    Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December',
+  };
+  const thisMonth = () => MONTHS[new Date().getMonth()];
+  const nextMonth = () => MONTHS[(new Date().getMonth() + 1) % 12];
+
   // State
   let leads = [];          // full list from GET /leads, newest first
   let haveData = false;    // first fetch has landed
   let initialized = false; // init() ran (view markup is live)
   let inflight = null;     // de-dupes prime() vs first init() fetch
   let activeStage = 'all';
+  let activeMonth = 'all'; // 'all' or a 3-letter month
   let searchQuery = '';
 
   // ---- Helpers ----
@@ -160,6 +172,7 @@
         <span class="lead-name">${escapeHtml(l.customer_name || l.customer_email || l.customer_phone || 'Unnamed lead')}</span>
         <span class="badge ${stage.badge}">${escapeHtml(stage.label)}</span>
         <span class="chip${source.chip ? ' ' + source.chip : ''}">${escapeHtml(source.label)}</span>
+        ${l.maintenance_month ? `<span class="chip">Due ${escapeHtml(l.maintenance_month)}</span>` : ''}
       </div>
       ${contactBits.length ? `<div class="lead-meta">${contactBits.join('')}</div>` : ''}
       ${l.generator_info ? `<div class="lead-gen">${escapeHtml(l.generator_info)}</div>` : ''}
@@ -167,6 +180,29 @@
       <div class="lead-from">${l.referred_by_label ? `From: ${escapeHtml(l.referred_by_label)} &middot; ` : ''}Added ${fmtDate(l.created_at)}</div>
       <div class="lead-actions">${actions.join('')}</div>
     </div>`;
+  }
+
+  function matchesMonth(l) {
+    return activeMonth === 'all' || l.maintenance_month === activeMonth;
+  }
+
+  // Cohort summary bar: "August — 120 leads, 40 invited". Only meaningful
+  // when a single month is selected; "invited" = already sent a signup link
+  // or converted, so Amy can see how far through the cohort she is (WP4's
+  // batched invites will work off the remainder).
+  function renderMonthSummary(cohort) {
+    const el = $('lead-month-summary');
+    if (!el) return;
+    if (activeMonth === 'all') {
+      el.hidden = true;
+      el.innerHTML = '';
+      return;
+    }
+    const invited = cohort.filter((l) => l.status === 'signup_sent' || l.status === 'converted').length;
+    const leadsWord = cohort.length === 1 ? 'lead' : 'leads';
+    el.innerHTML = `<span class="month">${escapeHtml(MONTH_NAMES[activeMonth] || activeMonth)}</span>`
+      + `<span class="detail">${cohort.length} ${leadsWord}, ${invited} invited</span>`;
+    el.hidden = false;
   }
 
   function render() {
@@ -177,8 +213,10 @@
     loadingEl.hidden = haveData;
     if (!haveData) return;
 
-    // Pill counts always reflect the search-filtered set.
-    const searched = leads.filter(matchesSearch);
+    // Pill counts always reflect the search+month-filtered set, so with a
+    // month selected they read as that cohort's stage breakdown.
+    const searched = leads.filter(matchesSearch).filter(matchesMonth);
+    renderMonthSummary(searched);
     $('lead-count-all').textContent = String(searched.length);
     for (const s of STAGE_ORDER) {
       const el = $(`lead-count-${s}`);
@@ -193,7 +231,7 @@
       $('leads-empty-title').textContent = virgin ? 'No leads yet' : 'No matching leads';
       $('leads-empty-sub').innerHTML = virgin
         ? 'Every prospective Generator Care customer lands here &mdash; field enrollments, referrals, and campaign responses once those channels launch. Use <strong>Add lead</strong> to log one the office hears about today, then work it left to right: New &rarr; Contacted &rarr; Signup sent &rarr; Converted.'
-        : 'Try a different stage or search.';
+        : 'Try a different stage, month, or search.';
       listEl.innerHTML = '';
       return;
     }
@@ -363,6 +401,19 @@
     if (!haveData) loadLeads();
   }
 
+  // Single entry point for month changes (dropdown or quick chip) so the
+  // dropdown value and the chips' active states never disagree.
+  function setMonth(m) {
+    activeMonth = m;
+    const sel = $('lead-month');
+    if (sel) sel.value = m;
+    const chipThis = $('lead-due-this');
+    const chipNext = $('lead-due-next');
+    if (chipThis) chipThis.classList.toggle('active', m === thisMonth());
+    if (chipNext) chipNext.classList.toggle('active', m === nextMonth());
+    render();
+  }
+
   function init() {
     initialized = true;
 
@@ -371,6 +422,10 @@
       searchQuery = e.target.value.trim();
       render();
     });
+    $('lead-month').addEventListener('change', (e) => setMonth(e.target.value));
+    // Quick chips toggle: click again to go back to All months.
+    $('lead-due-this').addEventListener('click', () => setMonth(activeMonth === thisMonth() ? 'all' : thisMonth()));
+    $('lead-due-next').addEventListener('click', () => setMonth(activeMonth === nextMonth() ? 'all' : nextMonth()));
     document.querySelectorAll('.lead-tab').forEach((btn) => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.lead-tab').forEach((b) => b.classList.remove('active'));

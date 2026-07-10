@@ -24,14 +24,17 @@ const SIGNUP_BASE_URL =
 
 const LEAD_SOURCES = ['field', 'referral', 'campaign', 'manual'];
 const LEAD_STATUSES = ['new', 'contacted', 'signup_sent', 'converted', 'lost'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Every column the office UI shows — leads have no non-lead fields to leak,
 // but selecting an explicit list keeps that true if the table grows.
+// (import_batch stays server-side: it's an undo tag, nothing the UI shows.)
 const LEAD_COLUMNS = [
   'id', 'source', 'status',
   'customer_name', 'customer_email', 'customer_phone',
   'install_address', 'install_city', 'install_state', 'install_zip',
-  'generator_info', 'referred_by_user_id', 'referred_by_label', 'notes',
+  'generator_info', 'maintenance_month', 'contact_type',
+  'referred_by_user_id', 'referred_by_label', 'notes',
   'converted_subscription_id', 'created_at', 'updated_at',
 ].join(', ');
 
@@ -46,37 +49,52 @@ const EDITABLE_FIELDS = [
 
 const trimmed = (v) => (typeof v === 'string' ? v.trim() : '');
 
-// GET /api/generator-care/leads — newest first. Optional ?status= / ?source=
-// filters and ?q= name/email search. referred_by_label carries provenance,
-// so there's nothing to join.
+// GET /api/generator-care/leads — newest first. Optional ?status= / ?source= /
+// ?maintenance_month= filters and ?q= name/email search. referred_by_label
+// carries provenance, so there's nothing to join.
 router.get('/leads', async (req, res) => {
   try {
-    const { status, source, q } = req.query || {};
+    const { status, source, maintenance_month: month, q } = req.query || {};
     if (status && !LEAD_STATUSES.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${LEAD_STATUSES.join(', ')}` });
     }
     if (source && !LEAD_SOURCES.includes(source)) {
       return res.status(400).json({ error: `source must be one of: ${LEAD_SOURCES.join(', ')}` });
     }
-
-    let query = supabaseAdmin
-      .from('generator_leads')
-      .select(LEAD_COLUMNS)
-      .order('created_at', { ascending: false });
-    if (status) query = query.eq('status', status);
-    if (source) query = query.eq('source', source);
-    if (q) {
-      // PostgREST .or() parses commas/parens as syntax — strip them from the
-      // needle rather than 400ing on names like "Smith, John".
-      const needle = String(q).replace(/[,()]/g, ' ').trim();
-      if (needle) {
-        query = query.or(`customer_name.ilike.%${needle}%,customer_email.ilike.%${needle}%`);
-      }
+    if (month && !MONTHS.includes(month)) {
+      return res.status(400).json({ error: `maintenance_month must be one of: ${MONTHS.join(', ')}` });
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-    res.json({ leads: data || [] });
+    // The maintenance-book import (WP3) put the pipeline past PostgREST's
+    // 1000-row response cap, so page through rather than silently truncating
+    // — the Leads tab counts cohorts over the full set.
+    const PAGE = 1000;
+    const leads = [];
+    for (let from = 0; ; from += PAGE) {
+      let query = supabaseAdmin
+        .from('generator_leads')
+        .select(LEAD_COLUMNS)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true }) // created_at ties (bulk import) need a total order or pages could overlap
+        .range(from, from + PAGE - 1);
+      if (status) query = query.eq('status', status);
+      if (source) query = query.eq('source', source);
+      if (month) query = query.eq('maintenance_month', month);
+      if (q) {
+        // PostgREST .or() parses commas/parens as syntax — strip them from the
+        // needle rather than 400ing on names like "Smith, John".
+        const needle = String(q).replace(/[,()]/g, ' ').trim();
+        if (needle) {
+          query = query.or(`customer_name.ilike.%${needle}%,customer_email.ilike.%${needle}%`);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      leads.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    res.json({ leads });
   } catch (err) {
     console.error('[generator-care] list leads error:', err && err.message);
     reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
