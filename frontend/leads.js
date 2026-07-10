@@ -142,6 +142,11 @@
     if (l.status === 'signup_sent') {
       actions.push(`<button type="button" class="btn btn-primary btn-sm" data-action="convert" data-id="${escapeHtml(l.id)}">Mark converted</button>`);
     }
+    // WP2: the convertible path — email (or hand over) a pre-tagged signup
+    // link; a signup through it flips this lead to Converted automatically.
+    if (l.status !== 'converted' && l.status !== 'lost') {
+      actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="send-signup" data-id="${escapeHtml(l.id)}">${l.status === 'signup_sent' ? 'Resend signup link' : 'Send signup link'}</button>`);
+    }
     actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="note" data-id="${escapeHtml(l.id)}">${l.notes ? 'Edit note' : 'Add note'}</button>`);
     if (l.status !== 'converted' && l.status !== 'lost') {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="lost" data-id="${escapeHtml(l.id)}">Mark lost</button>`);
@@ -257,6 +262,22 @@
       if (ok) await patchLead(id, { status: 'lost' }, `${who} marked lost.`);
     } else if (action === 'reopen') {
       await patchLead(id, { status: 'new' }, `${who} reopened.`);
+    } else if (action === 'send-signup') {
+      const ok = await openConfirm({
+        title: l.status === 'signup_sent' ? 'Resend signup link?' : 'Send signup link?',
+        message: l.customer_email
+          ? `Emails ${l.customer_email} their pre-tagged signup link \u2014 a signup through it marks this lead Converted automatically. You also get the link to copy.`
+          : `${who} has no email on file, so nothing is emailed \u2014 you get the pre-tagged link to copy into a text or call. The lead moves to Signup sent.`,
+        confirmText: l.customer_email ? 'Send email' : 'Get link',
+      });
+      if (!ok) return;
+      try {
+        const data = await api(`/leads/${id}/send-signup`, { method: 'POST', body: JSON.stringify({}) });
+        if (data.lead) updateLocal(data.lead);
+        await offerCopyLink(data);
+      } catch (err) {
+        showStatus(`Failed: ${err.message}`, 'error');
+      }
     } else if (action === 'note') {
       const vals = await openPrompt({
         title: l.notes ? 'Edit note' : 'Add note',
@@ -266,6 +287,30 @@
       });
       if (vals === null) return;
       await patchLead(id, { notes: vals.notes }, 'Note saved.');
+    }
+  }
+
+  // Post-send dialog: confirms what happened (emailed vs copy-only) and offers
+  // the pre-tagged URL with a Copy button. The URL sits in a regular input so
+  // it stays selectable if the clipboard API is unavailable.
+  async function offerCopyLink(data) {
+    const emailedTo = data.lead && data.lead.customer_email;
+    const message = data.emailed
+      ? `Emailed to ${emailedTo}. You can also copy the link to send it another way.`
+      : (data.email_error || 'Copy the link and text it to the customer \u2014 a signup through it marks this lead Converted automatically.');
+    const vals = await openPrompt({
+      title: data.emailed ? 'Signup link sent' : 'Signup link ready',
+      message,
+      fields: [{ name: 'url', label: 'Signup link', value: data.url }],
+      confirmText: 'Copy link',
+      cancelText: 'Done',
+    });
+    if (vals === null) return;
+    try {
+      await navigator.clipboard.writeText(data.url);
+      showStatus('Link copied.', 'success');
+    } catch (_) {
+      showStatus('Copy failed \u2014 select the link text and copy it manually.', 'error');
     }
   }
 

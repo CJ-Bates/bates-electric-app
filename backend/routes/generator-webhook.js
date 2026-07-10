@@ -322,6 +322,20 @@ async function handleSubscriptionCreated(subscription) {
     ).catch(() => {});
   }
 
+  // 7. Lead attribution (Growth Engine WP2). If this signup came through an
+  // office-sent link (?lead=<id> forwarded into subscription metadata by the
+  // signup site), flip that lead to Converted and link it to this subscription.
+  // Additive + non-throwing: an attribution failure must never disturb the
+  // receipts/customer/subscription work above (Stripe retries on 500s).
+  try {
+    await attributeLeadConversion(subscription, sub.id);
+  } catch (e) {
+    reportError(
+      new Error(`lead attribution failed for subscription ${subscription.id} (lead_id ${meta.lead_id}): ${(e && e.message) || e}`),
+      webhookErrCtx
+    ).catch(() => {});
+  }
+
   // Welcome email (non-blocking — failures shouldn't break the webhook).
   sendWelcomeEmail({
     customer,
@@ -335,6 +349,43 @@ async function handleSubscriptionCreated(subscription) {
   }).catch((e) => console.error('[welcome-email] unexpected:', e && e.message));
 
   console.log(`[generator-webhook] created subscription ${sub.id} for customer ${customer.id}`);
+}
+
+// Growth Engine WP2: mark the originating lead converted when a signup carries
+// a lead_id in its Stripe subscription metadata (put there by the signup site
+// from an office-sent ?lead= link). Idempotent by construction: the update
+// only matches a generator_leads row that isn't already converted, so a
+// re-delivered subscription.created event (or a lead_id that's missing/already
+// converted) is a no-op rather than a double-write or an error. Organic
+// signups have no lead_id and return immediately.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function attributeLeadConversion(subscription, subscriptionRowId) {
+  const leadId = subscription.metadata && subscription.metadata.lead_id;
+  if (!leadId) return;
+  if (!UUID_RE.test(String(leadId).trim())) {
+    // The signup site validates this too; a non-UUID here is someone poking the
+    // checkout endpoint directly. Skip quietly — never a Postgres cast error.
+    console.log(`[generator-webhook] ignoring non-UUID lead_id on subscription ${subscription.id}`);
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('generator_leads')
+    .update({
+      status: 'converted',
+      converted_subscription_id: subscriptionRowId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', String(leadId).trim())
+    .neq('status', 'converted')
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(`lead conversion update: ${error.message}`);
+  if (data) {
+    console.log(`[generator-webhook] lead ${data.id} converted -> subscription ${subscriptionRowId}`);
+  } else {
+    console.log(`[generator-webhook] lead_id ${leadId} not attributed (missing or already converted)`);
+  }
 }
 
 
@@ -898,3 +949,6 @@ async function sendCancellationEmail({ customer }) {
 }
 
 module.exports = router;
+// Test seam only (offline unit tests with Stripe/Supabase mocked) — server.js
+// mounts the router; nothing at runtime reaches in through _test.
+module.exports._test = { handleSubscriptionCreated, attributeLeadConversion };

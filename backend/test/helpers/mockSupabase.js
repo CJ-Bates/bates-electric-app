@@ -10,7 +10,7 @@
 
 const { supabaseAdmin } = require('../../lib/supabase');
 
-const CHAIN_METHODS = ['select', 'update', 'insert', 'delete', 'eq', 'neq', 'in', 'is', 'ilike', 'order', 'limit'];
+const CHAIN_METHODS = ['select', 'update', 'insert', 'upsert', 'delete', 'eq', 'neq', 'in', 'is', 'ilike', 'order', 'limit'];
 
 function makeQueryBuilder(resolve) {
   const chain = [];

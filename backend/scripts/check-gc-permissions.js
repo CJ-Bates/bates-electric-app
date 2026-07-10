@@ -29,8 +29,9 @@ const ALLOWLIST = {
   'visits.js': ['/visits/:id/complete', '/visits/:id/schedule'],
   // Leads are prospect tracking the whole office works: no money moved, no
   // Stripe objects created, no existing customer's data exposed by id
-  // (convert only records a subscription id on the lead row).
-  'leads.js': ['/leads', '/leads/:id', '/leads/:id/convert'],
+  // (convert only records a subscription id on the lead row; send-signup only
+  // emails the prospect a public signup URL).
+  'leads.js': ['/leads', '/leads/:id', '/leads/:id/convert', '/leads/:id/send-signup'],
 };
 
 const ROUTE_RE = /router\.(post|patch|put|delete)\(\s*(['"])([^'"]+)\2/;
