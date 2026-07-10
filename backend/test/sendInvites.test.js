@@ -1,11 +1,12 @@
-// POST /leads/send-invites (Growth Engine WP4) — offline route tests via the
-// real shipped handler. The batched drip must: pick only emailable leads
-// (email on file, not opted out, not already invited), walk oldest-first and
-// cap at batch_size, never re-send on a re-click (sent leads flip to
-// signup_sent and fall out of the eligibility query), persist an unsubscribe
-// token before sending, brand FL leads as S.E. Bates, and survive a per-lead
-// send failure without aborting the batch. Also covers the pure
-// buildEnrollmentInviteEmail greeting/compliance rules.
+// POST /leads/send-invites (Growth Engine WP4, id-list shape from WP4.1) —
+// offline route tests via the real shipped handler. The send is driven by an
+// explicit lead_ids selection, and the server must re-validate every id
+// (email on file, not opted out, still new/contacted) and SKIP failures with
+// a reason rather than trusting the client list — a stale selection can never
+// re-invite or email an opted-out lead. Also: cap at 100 ids, de-dupe doubled
+// ids, persist an unsubscribe token before sending, brand FL leads as
+// S.E. Bates, and survive a per-lead send failure without aborting the batch.
+// Plus the pure buildEnrollmentInviteEmail greeting/compliance rules.
 require('./helpers/env');
 // Zero the inter-send throttle so a batch of fixtures doesn't slow the suite.
 process.env.GENERATOR_INVITE_THROTTLE_MS = '0';
@@ -79,30 +80,36 @@ test.afterEach(() => {
   if (restoreSupabase) { restoreSupabase(); restoreSupabase = undefined; }
 });
 
-test('sends only emailable/not-opted-out/not-invited leads, oldest first, capped at batch_size', async () => {
+test('sends the listed eligible leads; every ineligible id is skipped with a reason, not sent', async () => {
   const { store, resolver } = makeStore(augustFixtures());
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
   const res = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 2 } }), res);
+  // A stale/hostile selection: two eligible leads plus every ineligible
+  // flavor (no email, opted out, already invited, converted, lost via L9,
+  // unknown id). The server must sort them itself.
+  store.push({ id: 'L9', status: 'lost', maintenance_month: 'Aug', customer_name: 'Gone', contact_type: 'Person', customer_email: 'g@example.com', email_opt_out: false, unsubscribe_token: null, created_at: '2026-01-04T00:00:00Z' });
+  await handler(makeReq({ body: { lead_ids: ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L9', 'NOPE'] } }), res);
 
   assert.equal(res.statusCode, 200);
-  // Eligible = L1, L2, L8 (3); batch of 2 takes the two oldest.
-  assert.deepEqual(res.body, { sent: 2, failed: 0, remaining_in_cohort: 1 });
+  assert.equal(res.body.sent, 2);
+  assert.equal(res.body.failed, 0);
+  assert.deepEqual(res.body.skipped, [
+    { id: 'L3', reason: 'no email' },
+    { id: 'L4', reason: 'opted out' },
+    { id: 'L5', reason: 'already invited' },
+    { id: 'L6', reason: 'already invited' },
+    { id: 'L9', reason: 'marked lost' },
+    { id: 'NOPE', reason: 'not found' },
+  ]);
+  // Only the eligible two got mail, in the order the caller listed them.
   assert.deepEqual(brevoCalls.map((c) => c.to), ['a@example.com', 'b@example.com']);
 
-  // Excluded leads never get mail: no email / opted out / already invited /
-  // converted / other month.
-  const recipients = brevoCalls.map((c) => c.to);
-  for (const never of ['c@example.com', 'd@example.com', 'e@example.com', 'sep@example.com']) {
-    assert.ok(!recipients.includes(never), `${never} must not be emailed`);
-  }
-
-  // Sent leads advanced; the rest untouched.
+  // Sent leads advanced; skipped ones untouched.
   assert.equal(store.find((l) => l.id === 'L1').status, 'signup_sent');
   assert.equal(store.find((l) => l.id === 'L2').status, 'signup_sent');
-  assert.equal(store.find((l) => l.id === 'L8').status, 'new');
   assert.equal(store.find((l) => l.id === 'L4').status, 'new');
+  assert.equal(store.find((l) => l.id === 'L9').status, 'lost');
 
   // Each send: reply-to Amy's monitored mailbox, the lead's own ?lead= link,
   // and a live unsubscribe link carrying the token that was persisted.
@@ -117,23 +124,40 @@ test('sends only emailable/not-opted-out/not-invited leads, oldest first, capped
   assert.ok(brevoCalls[1].html.includes('Hi Jim and Lisa,'));
 });
 
-test('re-click sends the NEXT batch — already-invited leads are never re-sent', async () => {
+test('re-sending the same selection never re-sends — sent leads come back skipped', async () => {
   const { resolver } = makeStore(augustFixtures());
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
   const first = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 2 } }), first);
+  await handler(makeReq({ body: { lead_ids: ['L1', 'L2'] } }), first);
   const second = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 2 } }), second);
-  const third = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 2 } }), third);
+  await handler(makeReq({ body: { lead_ids: ['L1', 'L2', 'L8'] } }), second);
 
-  assert.deepEqual(second.body, { sent: 1, failed: 0, remaining_in_cohort: 0 });
-  assert.deepEqual(third.body, { sent: 0, failed: 0, remaining_in_cohort: 0 });
-  // Across all three clicks each address got exactly one email.
+  assert.deepEqual(first.body, { sent: 2, skipped: [], failed: 0 });
+  // The stale re-send only reaches the one still-eligible lead.
+  assert.deepEqual(second.body, {
+    sent: 1,
+    skipped: [
+      { id: 'L1', reason: 'already invited' },
+      { id: 'L2', reason: 'already invited' },
+    ],
+    failed: 0,
+  });
+  // Across both clicks each address got exactly one email.
   assert.deepEqual(brevoCalls.map((c) => c.to), ['a@example.com', 'b@example.com', 'f@example.com']);
   // Business greeting is the neutral "Hello,".
   assert.ok(brevoCalls[2].html.includes('Hello,'));
+});
+
+test('a doubled id in the list is de-duped — one email, not two', async () => {
+  const { resolver } = makeStore(augustFixtures());
+  restoreSupabase = installMockSupabase({ generator_leads: resolver });
+
+  const res = makeRes();
+  await handler(makeReq({ body: { lead_ids: ['L1', 'L1', 'L1'] } }), res);
+
+  assert.deepEqual(res.body, { sent: 1, skipped: [], failed: 0 });
+  assert.deepEqual(brevoCalls.map((c) => c.to), ['a@example.com']);
 });
 
 test('existing unsubscribe token is reused, not regenerated', async () => {
@@ -143,7 +167,7 @@ test('existing unsubscribe token is reused, not regenerated', async () => {
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
   const res = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 1 } }), res);
+  await handler(makeReq({ body: { lead_ids: ['L1'] } }), res);
 
   assert.equal(res.body.sent, 1);
   assert.equal(store.find((l) => l.id === 'L1').unsubscribe_token, 'tok-existing');
@@ -160,7 +184,7 @@ test('FL lead -> S.E. Bates branding in sender name and body', async () => {
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
   const res = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 1 } }), res);
+  await handler(makeReq({ body: { lead_ids: ['L1'] } }), res);
 
   assert.equal(res.body.sent, 1);
   assert.equal(brevoCalls[0].senderName, 'S.E. Bates Electric Generator Care');
@@ -175,27 +199,29 @@ test('a per-send failure is logged, left un-advanced, and never aborts the batch
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
   const res = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug', batch_size: 3 } }), res);
+  await handler(makeReq({ body: { lead_ids: ['L1', 'L2', 'L8'] } }), res);
 
   assert.equal(res.statusCode, 200);
-  // L1 + L8 sent; L2 failed and stays contacted so the next click retries it.
-  assert.deepEqual(res.body, { sent: 2, failed: 1, remaining_in_cohort: 1 });
+  // L1 + L8 sent; L2 failed and stays contacted so a re-send retries it.
+  assert.deepEqual(res.body, { sent: 2, skipped: [], failed: 1 });
   assert.equal(store.find((l) => l.id === 'L2').status, 'contacted');
   assert.equal(store.find((l) => l.id === 'L1').status, 'signup_sent');
   assert.equal(store.find((l) => l.id === 'L8').status, 'signup_sent');
 });
 
-test('guards: bad month and out-of-range batch_size -> 400, nothing sent', async () => {
+test('guards: missing/empty/oversized/malformed lead_ids -> 400, nothing sent', async () => {
   const { updates, resolver } = makeStore(augustFixtures());
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
   for (const body of [
-    { maintenance_month: 'August' },
-    { maintenance_month: '' },
-    { maintenance_month: 'Aug', batch_size: 0 },
-    { maintenance_month: 'Aug', batch_size: 101 },
-    { maintenance_month: 'Aug', batch_size: 2.5 },
-    { maintenance_month: 'Aug', batch_size: 'many' },
+    {},
+    { lead_ids: [] },
+    { lead_ids: 'L1' },
+    { lead_ids: { 0: 'L1' } },
+    { lead_ids: Array.from({ length: 101 }, (_, i) => `L${i}`) },
+    { lead_ids: ['L1', 42] },
+    { lead_ids: ['L1', ''] },
+    { lead_ids: ['L1', null] },
   ]) {
     const res = makeRes();
     await handler(makeReq({ body }), res);
@@ -205,14 +231,20 @@ test('guards: bad month and out-of-range batch_size -> 400, nothing sent', async
   assert.equal(updates.length, 0);
 });
 
-test('batch_size omitted -> default 40 clears a small cohort in one click', async () => {
+test('exactly 100 ids is allowed — the cap is a limit, not off-by-one', async () => {
   const { resolver } = makeStore(augustFixtures());
   restoreSupabase = installMockSupabase({ generator_leads: resolver });
 
+  // 100 ids: one real eligible lead padded with unknowns. It must process,
+  // not 400.
+  const ids = ['L1', ...Array.from({ length: 99 }, (_, i) => `X${i}`)];
   const res = makeRes();
-  await handler(makeReq({ body: { maintenance_month: 'Aug' } }), res);
+  await handler(makeReq({ body: { lead_ids: ids } }), res);
 
-  assert.deepEqual(res.body, { sent: 3, failed: 0, remaining_in_cohort: 0 });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.sent, 1);
+  assert.equal(res.body.skipped.length, 99);
+  assert.ok(res.body.skipped.every((s) => s.reason === 'not found'));
 });
 
 // ---- Pure builder: greeting + bulk-email compliance ----
