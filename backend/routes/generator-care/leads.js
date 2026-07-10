@@ -28,11 +28,19 @@ const SIGNUP_BASE_URL =
 const API_PUBLIC_BASE_URL =
   (process.env.GENERATOR_API_PUBLIC_URL || 'https://bates-electric-app.onrender.com').replace(/\/+$/, '');
 
-// WP4 bulk-send tuning. Default batch 40 (the weekly drip size Amy clicks),
-// hard cap 100 per call so a fat-fingered batch size can't blast a whole
-// cohort. The throttle spaces sends so we don't hammer Brevo; tests zero it.
-const INVITE_DEFAULT_BATCH = 40;
+// WP4 bulk-send tuning. Hard cap 100 leads per call so no single click can
+// blast a whole cohort. MIRRORED as SEND_CAP in frontend/leads.js (separate
+// deploys, no bundler) — edit BOTH together or the UI will offer selections
+// the server rejects. The throttle spaces sends so we don't hammer Brevo;
+// tests zero it.
 const INVITE_MAX_BATCH = 100;
+
+// generator_leads.id is a uuid column — an id that can't cast to uuid would
+// make the .in() lookup throw (22P02) and 500 the whole request, so ids are
+// shape-checked here first and bad ones become per-id "not found" skips.
+// Lowercased before matching: Postgres compares uuids case-insensitively,
+// but the Map keyed on DB output (lowercase) would miss an uppercase form.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const INVITE_THROTTLE_MS = process.env.GENERATOR_INVITE_THROTTLE_MS != null
   ? Number(process.env.GENERATOR_INVITE_THROTTLE_MS)
   : 200;
@@ -288,54 +296,70 @@ router.post('/leads/:id/send-signup', async (req, res) => {
   }
 });
 
-// POST /api/generator-care/leads/send-invites  { maintenance_month, batch_size? }
-// Growth Engine WP4: the batched enrollment-invite drip. Sends the campaign
-// invite email (buildEnrollmentInviteEmail) to the next `batch_size` eligible
-// leads in a maintenance-month cohort and advances each to signup_sent, so a
-// repeat click naturally walks through the cohort — it can never re-send.
+// POST /api/generator-care/leads/send-invites  { lead_ids: [uuid, ...] }
+// Growth Engine WP4 (reshaped by WP4.1): the enrollment-invite send. The
+// office picks the recipients in the Leads tab, reviews the exact list in a
+// confirm dialog, and posts those ids — the send is never blind. Each sent
+// lead gets the campaign invite email (buildEnrollmentInviteEmail) and
+// advances to signup_sent.
 //
-// Eligible = in the month cohort, has an email, not opted out, and status
-// still new/contacted (signup_sent/converted/lost are done). Oldest-first for
-// a stable walk order. Each send gets the lead's ?lead= signup link and its
-// own unsubscribe token (generated + persisted on first send). A per-lead
-// failure is logged and that lead is left un-advanced so the next click
-// retries it — one bad address never aborts the batch.
+// The client list is a courtesy; the server is the gate. Every id is
+// re-validated here before anything is sent: it must exist, have an email on
+// file, not be opted out, and still be status new/contacted (signup_sent/
+// converted/lost are done). An id that fails a check is SKIPPED with a
+// reason — not an error — so a stale selection can never re-invite someone
+// or email an opted-out lead. Each send gets the lead's ?lead= signup link
+// and its own unsubscribe token (generated + persisted on first send). A
+// per-lead send failure is logged and that lead is left un-advanced so a
+// re-send can retry it — one bad address never aborts the batch.
 //
 // No granular requirePermission, same basis as the rest of this file: emails
 // prospects a public signup URL — no money moved, no Stripe object created,
-// no existing customer's data touched. The batch cap bounds the blast radius.
+// no existing customer's data touched. The 100-id cap bounds the blast radius.
 router.post('/leads/send-invites', async (req, res) => {
   try {
     const body = req.body || {};
-    const month = trimmed(body.maintenance_month);
-    if (!MONTHS.includes(month)) {
-      return res.status(400).json({ error: `maintenance_month must be one of: ${MONTHS.join(', ')}` });
+    const ids = body.lead_ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'lead_ids must be a non-empty array of lead ids.' });
     }
-    let batchSize = INVITE_DEFAULT_BATCH;
-    if (body.batch_size !== undefined) {
-      batchSize = Number(body.batch_size);
-      if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > INVITE_MAX_BATCH) {
-        return res.status(400).json({ error: `batch_size must be a whole number between 1 and ${INVITE_MAX_BATCH}.` });
-      }
+    if (ids.some((id) => typeof id !== 'string' || !id.trim())) {
+      return res.status(400).json({ error: 'Every lead id must be a non-empty string.' });
+    }
+    // De-dupe (lowercased — see UUID_RE) while keeping the caller's order —
+    // a doubled id must never mean a doubled email. The cap applies to the
+    // de-duped count: it bounds emails sent, not list length.
+    const uniqueIds = [...new Set(ids.map((id) => id.trim().toLowerCase()))];
+    if (uniqueIds.length > INVITE_MAX_BATCH) {
+      return res.status(400).json({ error: `Send at most ${INVITE_MAX_BATCH} invites per batch.` });
     }
 
-    // The whole eligible remainder of the cohort, oldest-first (a month cohort
-    // is ~150 leads, far under PostgREST's 1000-row cap). Selecting it all —
-    // not just the batch — is what lets us report remaining_in_cohort.
-    const { data: rows, error } = await supabaseAdmin
-      .from('generator_leads')
-      .select('id, customer_name, customer_email, install_state, contact_type, unsubscribe_token')
-      .eq('maintenance_month', month)
-      .eq('email_opt_out', false)
-      .in('status', ['new', 'contacted'])
-      .not('customer_email', 'is', null)
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true });
-    if (error) throw error;
-    // Belt-and-suspenders on top of the not-null filter: an empty-string email
-    // would "send" to nobody and burn a batch slot.
-    const eligible = (rows || []).filter((l) => trimmed(l.customer_email));
-    const batch = eligible.slice(0, batchSize);
+    // Only well-formed uuids go in the query; the rest fall out of the byId
+    // lookup below as "not found" skips.
+    const lookupIds = uniqueIds.filter((id) => UUID_RE.test(id));
+    let rows = [];
+    if (lookupIds.length) {
+      const { data, error } = await supabaseAdmin
+        .from('generator_leads')
+        .select('id, status, email_opt_out, customer_name, customer_email, install_state, contact_type, unsubscribe_token')
+        .in('id', lookupIds);
+      if (error) throw error;
+      rows = data || [];
+    }
+    const byId = new Map(rows.map((r) => [String(r.id).toLowerCase(), r]));
+
+    // Server-side eligibility per id — never trust the client list.
+    const skipped = [];
+    const batch = [];
+    for (const id of uniqueIds) {
+      const lead = byId.get(id);
+      if (!lead) skipped.push({ id, reason: 'not found' });
+      else if (!trimmed(lead.customer_email)) skipped.push({ id, reason: 'no email' });
+      else if (lead.email_opt_out) skipped.push({ id, reason: 'opted out' });
+      else if (lead.status !== 'new' && lead.status !== 'contacted') {
+        skipped.push({ id, reason: lead.status === 'lost' ? 'marked lost' : 'already invited' });
+      } else batch.push(lead);
+    }
 
     let sent = 0;
     let failed = 0;
@@ -394,8 +418,8 @@ router.post('/leads/send-invites', async (req, res) => {
       }
     }
 
-    // Failed leads were not advanced, so they're still in the remainder.
-    res.json({ sent, failed, remaining_in_cohort: eligible.length - sent });
+    // Failed leads were not advanced, so re-selecting them retries the send.
+    res.json({ sent, skipped, failed });
   } catch (err) {
     console.error('[generator-care] send-invites error:', err && err.message);
     reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});

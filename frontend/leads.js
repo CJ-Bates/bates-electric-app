@@ -57,8 +57,17 @@
   let activeStage = 'all';
   let activeMonth = 'all'; // 'all' or a 3-letter month
   let searchQuery = '';
-  let batchSize = 40;      // WP4 "Send invites" batch size (1..100)
+  let batchSize = 40;      // WP4.1 "Select next N" helper size (1..100)
   let sendingInvites = false; // a batch POST is in flight
+  // WP4.1: the invite selection — lead ids checked in the cohort view. The
+  // server caps a send at 100, so selection is capped there too. SEND_CAP
+  // MIRRORS INVITE_MAX_BATCH in backend/routes/generator-care/leads.js
+  // (separate deploys, no bundler) — edit BOTH together or the UI will offer
+  // selections the server rejects.
+  let selected = new Set();
+  const SEND_CAP = 100;
+  const warnSendCap = () =>
+    showStatus(`A send is capped at ${SEND_CAP} \u2014 send these first, then select more.`, 'warning');
 
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
@@ -169,9 +178,24 @@
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="reopen" data-id="${escapeHtml(l.id)}">Reopen</button>`);
     }
 
+    // WP4.1: in the month-cohort view every emailable lead gets a checkbox
+    // (the invite selection); ineligible ones show why they can't be included.
+    const who = l.customer_name || l.customer_email || l.customer_phone || 'Unnamed lead';
+    let selectHtml = '';
+    if (activeMonth !== 'all') {
+      if (isEmailable(l)) {
+        selectHtml = `<input type="checkbox" class="lead-check" data-check="${escapeHtml(l.id)}"`
+          + ` aria-label="Include ${escapeHtml(who)} in the invite send"${selected.has(l.id) ? ' checked' : ''}>`;
+      } else if (l.status !== 'lost') {
+        // Lost cards skip the chip — their badge already says it.
+        const reason = ineligibleReason(l);
+        if (reason) selectHtml = `<span class="lead-inel">${escapeHtml(reason)}</span>`;
+      }
+    }
+
     return `<div class="lead-card s-${escapeHtml(l.status)}">
       <div class="lead-top">
-        <span class="lead-name">${escapeHtml(l.customer_name || l.customer_email || l.customer_phone || 'Unnamed lead')}</span>
+        ${selectHtml}<span class="lead-name">${escapeHtml(who)}</span>
         <span class="badge ${stage.badge}">${escapeHtml(stage.label)}</span>
         <span class="chip${source.chip ? ' ' + source.chip : ''}">${escapeHtml(source.label)}</span>
         ${l.maintenance_month ? `<span class="chip">Due ${escapeHtml(l.maintenance_month)}</span>` : ''}
@@ -188,18 +212,48 @@
     return activeMonth === 'all' || l.maintenance_month === activeMonth;
   }
 
-  // WP4: a lead the batched drip can still email — has an address, hasn't
-  // unsubscribed, and hasn't already been invited (signup_sent) or finished
-  // (converted/lost). Mirrors the send-invites route's eligibility query.
-  const isEmailable = (l) =>
-    !!l.customer_email && !l.email_opt_out && (l.status === 'new' || l.status === 'contacted');
+  // WP4: why a lead can't be emailed by the invite send, or null if it can.
+  // The single frontend copy of the eligibility rule — check order and
+  // wording mirror the send-invites route's per-id checks, so the chips and
+  // preview say exactly what the server would report.
+  const ineligibleReason = (l) => {
+    if (!l.customer_email) return 'no email';
+    if (l.email_opt_out) return 'opted out';
+    if (l.status === 'signup_sent' || l.status === 'converted') return 'already invited';
+    if (l.status === 'lost') return 'marked lost';
+    return null;
+  };
+  const isEmailable = (l) => !ineligibleReason(l);
+
+  // The selection's send order mirrors the server-side drip convention:
+  // oldest lead first, id as the tiebreaker.
+  const oldestFirst = (a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || ''))
+    || String(a.id).localeCompare(String(b.id));
+
+  // Drop selected ids that no longer point at an emailable lead in the
+  // current month cohort (sent leads flip to signup_sent on refetch, the
+  // month filter changed, an edit removed the email...). Run before every
+  // render so a checked box always means "will be in the send".
+  function pruneSelection() {
+    if (!selected.size) return;
+    if (activeMonth === 'all') { selected = new Set(); return; }
+    const keep = new Set();
+    for (const l of leads) {
+      if (selected.has(l.id) && matchesMonth(l) && isEmailable(l)) keep.add(l.id);
+    }
+    selected = keep;
+  }
 
   // Cohort summary bar: "August — 136 leads · 92 emailable · 12 invited",
-  // plus the WP4 "Send invites" control (batch-size input + send button).
-  // Only meaningful when a single month is selected. "invited" = already sent
-  // a signup link or converted; "emailable" = what the next batches work off.
-  // Rebuilt on every render, so the controls use delegated listeners bound
-  // once in init() and the input's value round-trips through `batchSize`.
+  // plus the WP4.1 selection controls: a "Select next N" helper (checks the
+  // next N emailable leads, oldest-first — the old blind batch, now visible),
+  // Clear, a live "12 selected" count, and "Send to selected (12)" which
+  // opens the recipient-list preview. Only meaningful when a single month is
+  // selected. "invited" = already sent a signup link or converted;
+  // "emailable" = who can still be checked. Rebuilt on every render, so the
+  // controls use delegated listeners bound once in init() and the input's
+  // value round-trips through `batchSize`.
   function renderMonthSummary(cohort) {
     const el = $('lead-month-summary');
     if (!el) return;
@@ -212,40 +266,116 @@
     const emailable = cohort.filter(isEmailable).length;
     const leadsWord = cohort.length === 1 ? 'lead' : 'leads';
     const none = emailable === 0;
+    const n = selected.size;
     const sendLabel = sendingInvites
       ? 'Sending&hellip;'
-      : `Send next ${Math.min(batchSize, emailable) || batchSize}`;
+      : `Send to selected (${n})`;
     el.innerHTML = `<span class="month">${escapeHtml(MONTH_NAMES[activeMonth] || activeMonth)}</span>`
       + `<span class="detail">${cohort.length} ${leadsWord} &middot; ${emailable} emailable &middot; ${invited} invited</span>`
       + `<span class="lead-send-group">`
       + (none
         ? `<span class="lead-send-hint">Everyone emailable in this cohort has been invited.</span>`
-        : `<label for="lead-batch-size">Batch</label>`
-          + `<input type="number" id="lead-batch-size" min="1" max="100" inputmode="numeric" value="${batchSize}">`)
-      + `<button type="button" id="lead-send-invites-btn" class="btn btn-primary btn-sm"${none || sendingInvites ? ' disabled' : ''}>${sendLabel}</button>`
+        : `<label for="lead-batch-size">Next</label>`
+          + `<input type="number" id="lead-batch-size" min="1" max="${SEND_CAP}" inputmode="numeric" value="${batchSize}">`
+          + `<button type="button" id="lead-select-next-btn" class="btn btn-secondary btn-sm"${sendingInvites ? ' disabled' : ''}>Select next ${batchSize}</button>`
+          + `<button type="button" id="lead-clear-sel-btn" class="btn btn-secondary btn-sm"${!n || sendingInvites ? ' disabled' : ''}>Clear</button>`
+          + `<span class="lead-sel-count">${n} selected</span>`)
+      + `<button type="button" id="lead-send-invites-btn" class="btn btn-primary btn-sm"${!n || sendingInvites ? ' disabled' : ''}>${sendLabel}</button>`
       + `</span>`;
     el.hidden = false;
   }
 
-  // WP4: send the enrollment invite to the next batch of the selected month's
-  // emailable leads. The server re-derives eligibility (never re-sends, never
-  // emails opted-out leads) — this confirm just spells out what will happen.
-  async function sendInvites() {
+  // "Select next N": check the next `batchSize` emailable leads of the FULL
+  // month cohort, oldest-first, skipping ones already checked — the WP4
+  // batch convenience, but the result is visible and editable before any
+  // email goes out. Capped so the selection never exceeds what one send
+  // accepts.
+  function selectNext() {
     if (sendingInvites || activeMonth === 'all') return;
-    // Full month cohort — NOT search-filtered — matching what the server
-    // selects from, so the confirm's numbers are exactly what will happen.
-    const cohort = leads.filter(matchesMonth);
-    const emailable = cohort.filter(isEmailable).length;
-    if (!emailable) return;
+    const eligible = leads.filter(matchesMonth).filter(isEmailable).sort(oldestFirst);
+    let room = Math.min(batchSize, SEND_CAP - selected.size);
+    if (room <= 0) {
+      warnSendCap();
+      return;
+    }
+    let added = 0;
+    for (const l of eligible) {
+      if (room <= 0) break;
+      if (selected.has(l.id)) continue;
+      selected.add(l.id);
+      room--;
+      added++;
+    }
+    if (!added) showStatus('Everyone emailable is already selected.', 'info');
+    render();
+  }
 
-    const n = Math.min(Math.max(1, Math.floor(batchSize) || 1), 100, emailable);
-    batchSize = Math.min(Math.max(1, Math.floor(batchSize) || 1), 100);
-    const monthName = MONTH_NAMES[activeMonth] || activeMonth;
-    const ok = await openConfirm({
-      title: 'Send invites?',
-      message: `Send the enrollment invite to the next ${n} of ${emailable} emailable ${monthName} customers? They'll move to Signup sent.`,
-      confirmText: `Send ${n} invite${n === 1 ? '' : 's'}`,
+  // WP4.1 preview dialog: the exact recipient list, one `Name — email` row
+  // each, scrollable, with any now-ineligible picks greyed out in a "will be
+  // skipped" group. Bespoke because the shared openConfirm escapes its
+  // message (no list markup) — same gc-rd-* dialog chrome + behavior.
+  function openSendPreview({ recipients, stale, monthName }) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay';
+      const n = recipients.length;
+      const row = (l, why) =>
+        `<div class="lead-preview-row${why ? ' skipped' : ''}">`
+        + `<span class="name">${escapeHtml(l.customer_name || 'Unnamed lead')}</span>`
+        + `<span class="email">${escapeHtml(l.customer_email || 'no email')}</span>`
+        + (why ? `<span class="why">${escapeHtml(why)}</span>` : '')
+        + `</div>`;
+      const staleHtml = stale.length
+        ? `<div class="lead-preview-skip-h">Will be skipped (${stale.length})</div>`
+          + stale.map((l) => row(l, ineligibleReason(l) || 'no longer eligible')).join('')
+        : '';
+      overlay.innerHTML = `
+        <div class="gc-rd-panel" role="dialog" aria-modal="true" aria-label="Send invites?">
+          <h3 class="gc-rd-title">Send invites?</h3>
+          <div class="gc-rd-sub">You're about to email ${n === 1 ? 'this' : `these ${n}`} ${escapeHtml(monthName)} customer${n === 1 ? '' : 's'}. They'll move to Signup sent.</div>
+          <div class="lead-preview-list">${recipients.map((l) => row(l)).join('')}${staleHtml}</div>
+          <div class="gc-rd-actions">
+            <button type="button" class="btn btn-secondary gc-rd-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary gc-rd-submit">Send ${n} invite${n === 1 ? '' : 's'}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const submitEl = overlay.querySelector('.gc-rd-submit');
+      function close(result) { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(result); }
+      // Unlike openConfirm, NO document-level Enter-confirms: this dialog
+      // guards a bulk email send, and a global Enter would fire it even with
+      // focus on Cancel. The focused button handles Enter natively (Send has
+      // initial focus, so plain Enter still confirms).
+      function onKey(e) { if (e.key === 'Escape') close(false); }
+      document.addEventListener('keydown', onKey);
+      overlay.querySelector('.gc-rd-cancel').addEventListener('click', () => close(false));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+      submitEl.addEventListener('click', () => close(true));
+      setTimeout(() => submitEl.focus(), 30);
     });
+  }
+
+  // WP4.1: send the enrollment invite to exactly the checked leads, after a
+  // preview that lists every recipient. The server re-validates each id
+  // (never re-sends, never emails opted-out leads) — this preview is a
+  // courtesy; the server is the gate.
+  async function sendInvites() {
+    if (sendingInvites || activeMonth === 'all' || !selected.size) return;
+    const monthName = MONTH_NAMES[activeMonth] || activeMonth;
+    // Resolve the selection against the freshest local data, oldest-first —
+    // the same order the server walks. Anything that went ineligible since
+    // it was checked lands in the greyed "will be skipped" group.
+    const picks = leads.filter((l) => selected.has(l.id)).sort(oldestFirst);
+    const recipients = picks.filter(isEmailable);
+    const stale = picks.filter((l) => !isEmailable(l));
+    if (!recipients.length) {
+      showStatus('The selected leads are no longer emailable \u2014 refresh and reselect.', 'warning');
+      pruneSelection();
+      render();
+      return;
+    }
+
+    const ok = await openSendPreview({ recipients, stale, monthName });
     if (!ok) return;
 
     sendingInvites = true;
@@ -253,18 +383,25 @@
     try {
       const data = await api('/leads/send-invites', {
         method: 'POST',
-        body: JSON.stringify({ maintenance_month: activeMonth, batch_size: n }),
+        body: JSON.stringify({ lead_ids: recipients.map((l) => l.id) }),
       });
       const bits = [`Sent ${data.sent} invite${data.sent === 1 ? '' : 's'}`];
-      if (data.failed) bits.push(`${data.failed} failed (will retry next batch)`);
-      bits.push(`${data.remaining_in_cohort} left in ${monthName}`);
+      const skippedCount = (data.skipped || []).length;
+      if (skippedCount) bits.push(`${skippedCount} skipped`);
+      if (data.failed) bits.push(`${data.failed} failed \u2014 still emailable, select again to retry`);
       showStatus(`${bits.join(' · ')}.`, data.failed ? 'error' : 'success');
+      // Drop only the leads this send attempted — boxes checked while the
+      // POST was in flight are the NEXT selection and must survive.
+      for (const l of recipients) selected.delete(l.id);
     } catch (err) {
       showStatus(`Send failed: ${err.message}`, 'error');
     } finally {
       sendingInvites = false;
-      // Refetch so the cohort counts + stages reflect what the server did and
-      // the next batch's numbers are honest.
+      // Refetch so the cohort counts + stages reflect what the server did:
+      // sent leads move to Signup sent and drop out of "emailable". A fetch
+      // already in flight (e.g. the header Refresh) predates the status
+      // writes — wait it out, then fetch fresh so the render is honest.
+      if (inflight) await inflight;
       await loadLeads();
       render();
     }
@@ -280,9 +417,10 @@
 
     // Pill counts always reflect the search+month-filtered set, so with a
     // month selected they read as that cohort's stage breakdown. The cohort
-    // summary bar deliberately ignores the search box: its counts (and the
-    // Send-invites batch math) must match the FULL month cohort the server
-    // sends to, or the confirm dialog would promise the wrong numbers.
+    // summary bar deliberately ignores the search box: its counts must match
+    // the FULL month cohort, or the selection math would lie. The selection
+    // is pruned first so every count and checkbox reflects reality.
+    pruneSelection();
     renderMonthSummary(leads.filter(matchesMonth));
     const searched = leads.filter(matchesSearch).filter(matchesMonth);
     $('lead-count-all').textContent = String(searched.length);
@@ -470,8 +608,10 @@
   }
 
   // Single entry point for month changes (dropdown or quick chip) so the
-  // dropdown value and the chips' active states never disagree.
+  // dropdown value and the chips' active states never disagree. A month
+  // switch drops the invite selection — it belongs to one cohort.
   function setMonth(m) {
+    if (m !== activeMonth) selected = new Set();
     activeMonth = m;
     const sel = $('lead-month');
     if (sel) sel.value = m;
@@ -506,17 +646,42 @@
       const btn = e.target.closest('button[data-action]');
       if (btn) onAction(btn.dataset.action, btn.dataset.id);
     });
-    // WP4 send-invites controls live inside the cohort summary, which is
-    // rebuilt every render — delegate from the container (bound once here).
+    // WP4.1: lead checkboxes are re-rendered with their cards — delegate the
+    // change from the list container (bound once here).
+    $('lead-list').addEventListener('change', (e) => {
+      const box = e.target.closest('input.lead-check[data-check]');
+      if (!box) return;
+      const id = box.dataset.check;
+      if (box.checked) {
+        if (selected.size >= SEND_CAP) {
+          box.checked = false;
+          warnSendCap();
+          return;
+        }
+        selected.add(id);
+      } else {
+        selected.delete(id);
+      }
+      // Only the summary bar's counts change — re-rendering the whole list
+      // here would blow away the checkbox the user just clicked.
+      renderMonthSummary(leads.filter(matchesMonth));
+    });
+    // The selection controls live inside the cohort summary, which is rebuilt
+    // every render — delegate from the container (bound once here).
     $('lead-month-summary').addEventListener('click', (e) => {
       if (e.target.closest('#lead-send-invites-btn')) sendInvites();
+      else if (e.target.closest('#lead-select-next-btn')) selectNext();
+      else if (e.target.closest('#lead-clear-sel-btn')) {
+        selected = new Set();
+        render();
+      }
     });
     $('lead-month-summary').addEventListener('input', (e) => {
       if (e.target.id !== 'lead-batch-size') return;
       const v = Math.floor(Number(e.target.value));
-      if (Number.isFinite(v) && v >= 1) batchSize = Math.min(v, 100);
-      const btn = $('lead-send-invites-btn');
-      if (btn && !sendingInvites) btn.textContent = `Send next ${batchSize}`;
+      if (Number.isFinite(v) && v >= 1) batchSize = Math.min(v, SEND_CAP);
+      const btn = $('lead-select-next-btn');
+      if (btn && !sendingInvites) btn.textContent = `Select next ${batchSize}`;
     });
 
     if (haveData) render();
