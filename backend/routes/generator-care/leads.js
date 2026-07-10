@@ -29,9 +29,18 @@ const API_PUBLIC_BASE_URL =
   (process.env.GENERATOR_API_PUBLIC_URL || 'https://bates-electric-app.onrender.com').replace(/\/+$/, '');
 
 // WP4 bulk-send tuning. Hard cap 100 leads per call so no single click can
-// blast a whole cohort. The throttle spaces sends so we don't hammer Brevo;
+// blast a whole cohort. MIRRORED as SEND_CAP in frontend/leads.js (separate
+// deploys, no bundler) — edit BOTH together or the UI will offer selections
+// the server rejects. The throttle spaces sends so we don't hammer Brevo;
 // tests zero it.
 const INVITE_MAX_BATCH = 100;
+
+// generator_leads.id is a uuid column — an id that can't cast to uuid would
+// make the .in() lookup throw (22P02) and 500 the whole request, so ids are
+// shape-checked here first and bad ones become per-id "not found" skips.
+// Lowercased before matching: Postgres compares uuids case-insensitively,
+// but the Map keyed on DB output (lowercase) would miss an uppercase form.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const INVITE_THROTTLE_MS = process.env.GENERATOR_INVITE_THROTTLE_MS != null
   ? Number(process.env.GENERATOR_INVITE_THROTTLE_MS)
   : 200;
@@ -314,22 +323,30 @@ router.post('/leads/send-invites', async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'lead_ids must be a non-empty array of lead ids.' });
     }
-    if (ids.length > INVITE_MAX_BATCH) {
-      return res.status(400).json({ error: `Send at most ${INVITE_MAX_BATCH} invites per batch.` });
-    }
     if (ids.some((id) => typeof id !== 'string' || !id.trim())) {
       return res.status(400).json({ error: 'Every lead id must be a non-empty string.' });
     }
-    // De-dupe while keeping the caller's order (the UI sends oldest-first) —
-    // a doubled id must never mean a doubled email.
-    const uniqueIds = [...new Set(ids.map((id) => id.trim()))];
+    // De-dupe (lowercased — see UUID_RE) while keeping the caller's order —
+    // a doubled id must never mean a doubled email. The cap applies to the
+    // de-duped count: it bounds emails sent, not list length.
+    const uniqueIds = [...new Set(ids.map((id) => id.trim().toLowerCase()))];
+    if (uniqueIds.length > INVITE_MAX_BATCH) {
+      return res.status(400).json({ error: `Send at most ${INVITE_MAX_BATCH} invites per batch.` });
+    }
 
-    const { data: rows, error } = await supabaseAdmin
-      .from('generator_leads')
-      .select('id, status, email_opt_out, customer_name, customer_email, install_state, contact_type, unsubscribe_token')
-      .in('id', uniqueIds);
-    if (error) throw error;
-    const byId = new Map((rows || []).map((r) => [r.id, r]));
+    // Only well-formed uuids go in the query; the rest fall out of the byId
+    // lookup below as "not found" skips.
+    const lookupIds = uniqueIds.filter((id) => UUID_RE.test(id));
+    let rows = [];
+    if (lookupIds.length) {
+      const { data, error } = await supabaseAdmin
+        .from('generator_leads')
+        .select('id, status, email_opt_out, customer_name, customer_email, install_state, contact_type, unsubscribe_token')
+        .in('id', lookupIds);
+      if (error) throw error;
+      rows = data || [];
+    }
+    const byId = new Map(rows.map((r) => [String(r.id).toLowerCase(), r]));
 
     // Server-side eligibility per id — never trust the client list.
     const skipped = [];

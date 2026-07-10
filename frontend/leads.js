@@ -60,9 +60,14 @@
   let batchSize = 40;      // WP4.1 "Select next N" helper size (1..100)
   let sendingInvites = false; // a batch POST is in flight
   // WP4.1: the invite selection — lead ids checked in the cohort view. The
-  // server caps a send at 100, so selection is capped there too.
+  // server caps a send at 100, so selection is capped there too. SEND_CAP
+  // MIRRORS INVITE_MAX_BATCH in backend/routes/generator-care/leads.js
+  // (separate deploys, no bundler) — edit BOTH together or the UI will offer
+  // selections the server rejects.
   let selected = new Set();
   const SEND_CAP = 100;
+  const warnSendCap = () =>
+    showStatus(`A send is capped at ${SEND_CAP} \u2014 send these first, then select more.`, 'warning');
 
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
@@ -181,7 +186,8 @@
       if (isEmailable(l)) {
         selectHtml = `<input type="checkbox" class="lead-check" data-check="${escapeHtml(l.id)}"`
           + ` aria-label="Include ${escapeHtml(who)} in the invite send"${selected.has(l.id) ? ' checked' : ''}>`;
-      } else {
+      } else if (l.status !== 'lost') {
+        // Lost cards skip the chip — their badge already says it.
         const reason = ineligibleReason(l);
         if (reason) selectHtml = `<span class="lead-inel">${escapeHtml(reason)}</span>`;
       }
@@ -206,20 +212,18 @@
     return activeMonth === 'all' || l.maintenance_month === activeMonth;
   }
 
-  // WP4: a lead the invite send can still email — has an address, hasn't
-  // unsubscribed, and hasn't already been invited (signup_sent) or finished
-  // (converted/lost). Mirrors the send-invites route's per-id checks.
-  const isEmailable = (l) =>
-    !!l.customer_email && !l.email_opt_out && (l.status === 'new' || l.status === 'contacted');
-
-  // Why a lead can't be checked, shown as a muted chip in its place. Lost
-  // leads return null — their badge already says it.
+  // WP4: why a lead can't be emailed by the invite send, or null if it can.
+  // The single frontend copy of the eligibility rule — check order and
+  // wording mirror the send-invites route's per-id checks, so the chips and
+  // preview say exactly what the server would report.
   const ineligibleReason = (l) => {
     if (!l.customer_email) return 'no email';
     if (l.email_opt_out) return 'opted out';
     if (l.status === 'signup_sent' || l.status === 'converted') return 'already invited';
+    if (l.status === 'lost') return 'marked lost';
     return null;
   };
+  const isEmailable = (l) => !ineligibleReason(l);
 
   // The selection's send order mirrors the server-side drip convention:
   // oldest lead first, id as the tiebreaker.
@@ -291,7 +295,7 @@
     const eligible = leads.filter(matchesMonth).filter(isEmailable).sort(oldestFirst);
     let room = Math.min(batchSize, SEND_CAP - selected.size);
     if (room <= 0) {
-      showStatus(`A send is capped at ${SEND_CAP} — send these first, then select more.`, 'warning');
+      warnSendCap();
       return;
     }
     let added = 0;
@@ -338,7 +342,11 @@
       document.body.appendChild(overlay);
       const submitEl = overlay.querySelector('.gc-rd-submit');
       function close(result) { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(result); }
-      function onKey(e) { if (e.key === 'Escape') close(false); else if (e.key === 'Enter') close(true); }
+      // Unlike openConfirm, NO document-level Enter-confirms: this dialog
+      // guards a bulk email send, and a global Enter would fire it even with
+      // focus on Cancel. The focused button handles Enter natively (Send has
+      // initial focus, so plain Enter still confirms).
+      function onKey(e) { if (e.key === 'Escape') close(false); }
       document.addEventListener('keydown', onKey);
       overlay.querySelector('.gc-rd-cancel').addEventListener('click', () => close(false));
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
@@ -361,7 +369,7 @@
     const recipients = picks.filter(isEmailable);
     const stale = picks.filter((l) => !isEmailable(l));
     if (!recipients.length) {
-      showStatus('The selected leads are no longer emailable — refresh and reselect.', 'warning');
+      showStatus('The selected leads are no longer emailable \u2014 refresh and reselect.', 'warning');
       pruneSelection();
       render();
       return;
@@ -380,15 +388,20 @@
       const bits = [`Sent ${data.sent} invite${data.sent === 1 ? '' : 's'}`];
       const skippedCount = (data.skipped || []).length;
       if (skippedCount) bits.push(`${skippedCount} skipped`);
-      if (data.failed) bits.push(`${data.failed} failed — still emailable, select again to retry`);
+      if (data.failed) bits.push(`${data.failed} failed \u2014 still emailable, select again to retry`);
       showStatus(`${bits.join(' · ')}.`, data.failed ? 'error' : 'success');
-      selected = new Set();
+      // Drop only the leads this send attempted — boxes checked while the
+      // POST was in flight are the NEXT selection and must survive.
+      for (const l of recipients) selected.delete(l.id);
     } catch (err) {
       showStatus(`Send failed: ${err.message}`, 'error');
     } finally {
       sendingInvites = false;
       // Refetch so the cohort counts + stages reflect what the server did:
-      // sent leads move to Signup sent and drop out of "emailable".
+      // sent leads move to Signup sent and drop out of "emailable". A fetch
+      // already in flight (e.g. the header Refresh) predates the status
+      // writes — wait it out, then fetch fresh so the render is honest.
+      if (inflight) await inflight;
       await loadLeads();
       render();
     }
@@ -642,7 +655,7 @@
       if (box.checked) {
         if (selected.size >= SEND_CAP) {
           box.checked = false;
-          showStatus(`A send is capped at ${SEND_CAP} — send these first, then select more.`, 'warning');
+          warnSendCap();
           return;
         }
         selected.add(id);
