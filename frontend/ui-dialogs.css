@@ -71,3 +71,12 @@ html.dark .gc-rd-overlay { background: rgba(0,0,0,0.45); }
 .gc-rd-card { font-size: var(--fs-sm); color: var(--ink-2); background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 11px; margin-bottom: 12px; }
 .gc-rd-note { font-size: var(--fs-xs); line-height: 1.5; color: var(--ink-2); margin: 0 0 16px; }
 .gc-rd-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+/* WP6: QR dialog (openQrDialog). The code always sits on a white card —
+   scanners need dark-on-light contrast, so no dark-mode variant on purpose
+   (the quiet zone is baked into the SVG's margin). */
+.gc-qr-box { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); width: min(100%, 300px); margin: 2px auto 12px; }
+.gc-qr-box svg { display: block; width: 100%; height: auto; }
+.gc-qr-note { font-size: var(--fs-sm); color: var(--ink-2); text-align: center; line-height: 1.45; margin: 0 0 14px; }
+.gc-qr-links { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.gc-qr-links .gc-qr-link { flex: 1; text-align: center; text-decoration: none; }

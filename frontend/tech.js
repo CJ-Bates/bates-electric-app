@@ -808,7 +808,97 @@
     }
   }
 
+  // ---- Field enrollment (Growth Engine WP6) ----
+  // A tech on any job enrolls a generator customer on the spot: capture the
+  // basics, POST /tech/enroll (creates a field-source lead attributed to this
+  // tech), then show the pre-tagged ?lead= signup URL as a QR the customer
+  // scans on their OWN phone. Signup through it auto-converts the lead (WP2's
+  // webhook attribution) — nothing else to do in the field.
+  // MIRRORS backend EMAIL_RE in routes/generator-tech.js (separate deploys,
+  // no bundler) — edit BOTH together.
+  const ENROLL_EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+  async function enrollCustomer() {
+    const vals = await openPrompt({
+      title: 'Enroll a customer',
+      message: 'Capture the basics \u2014 the QR code on the next screen takes them straight to signup.',
+      fields: [
+        { name: 'name', label: 'Customer name', required: true, placeholder: 'Jane Doe' },
+        { name: 'phone', label: 'Phone', type: 'tel', inputmode: 'tel', placeholder: '(314) 555-0123' },
+        { name: 'email', label: 'Email', type: 'email', placeholder: 'jane@example.com', hint: 'Optional \u2014 lets you email them the link too' },
+        { name: 'address', label: 'Street address', placeholder: 'Usually the job address' },
+        { name: 'city', label: 'City' },
+        { name: 'state', label: 'State', placeholder: 'MO', hint: '2-letter code' },
+        { name: 'zip', label: 'ZIP', inputmode: 'numeric' },
+        { name: 'generator', label: 'Generator make / model', placeholder: 'e.g. Generac 24kW' },
+        {
+          name: 'send', label: 'Signup link', type: 'select', value: 'qr',
+          options: [
+            { value: 'qr', label: 'Show QR only (they scan it now)' },
+            { value: 'email', label: 'Also email them the link' },
+          ],
+        },
+      ],
+      validate: (v) => {
+        const email = v.email.trim();
+        if (email && !ENROLL_EMAIL_RE.test(email)) return 'That email doesn\u2019t look right.';
+        if (v.send === 'email' && !email) return 'Enter their email to send the link.';
+        if (v.state.trim() && !/^[A-Za-z]{2}$/.test(v.state.trim())) return 'State should be the 2-letter code (e.g. MO).';
+        return '';
+      },
+      confirmText: 'Create signup QR',
+    });
+    if (vals === null) return;
+
+    const phone = vals.phone.trim();
+    const body = {
+      customer_name: vals.name.trim(),
+      customer_phone: phone,
+      customer_email: vals.email.trim(),
+      install_address: vals.address.trim(),
+      install_city: vals.city.trim(),
+      install_state: vals.state.trim().toUpperCase(),
+      install_zip: vals.zip.trim(),
+      generator_info: vals.generator.trim(),
+      send_email: vals.send === 'email',
+    };
+    let data;
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/enroll`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Could not enroll: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+    } catch (e) {
+      console.error('enroll failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+      return;
+    }
+
+    // Result sheet: the QR is the headline; the link rides along as copyable
+    // text plus a "text it to them" handoff that opens the tech's Messages.
+    const links = [];
+    const telDigits = phone.replace(/[^\d+]/g, '');
+    if (telDigits) {
+      const smsBody = `Complete your Generator Care signup here: ${data.signup_url}`;
+      links.push({ label: 'Text them the link', href: `sms:${telDigits}?&body=${encodeURIComponent(smsBody)}` });
+    }
+    let message = 'Have them scan this with their phone camera.';
+    if (data.emailed) message = `Emailed to ${body.customer_email} \u2014 or have them scan this with their phone camera.`;
+    else if (data.email_error) message = data.email_error;
+    await openQrDialog({
+      title: 'Ready to scan',
+      message,
+      url: data.signup_url,
+      note: 'They scan this, sign up in a few minutes, and you\u2019re done \u2014 it\u2019ll show as enrolled automatically.',
+      links,
+    });
+  }
+
   // ---- Init ----
+  document.getElementById('td-enroll-btn').addEventListener('click', enrollCustomer);
   document.getElementById('tvd-back').addEventListener('click', closeDetail);
   document.getElementById('tvd').addEventListener('click', (e) => {
     if (e.target === document.getElementById('tvd')) closeDetail();
