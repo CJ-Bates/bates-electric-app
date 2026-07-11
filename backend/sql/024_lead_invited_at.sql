@@ -24,11 +24,14 @@
 --               whenever a lead advances to signup_sent; a re-send re-stamps
 --               it, which deliberately resets the follow-up clock.
 --
--- The backfill gives already-invited leads a best-effort invited_at from
--- updated_at: for a signup_sent lead, updated_at was last touched by the
--- send that advanced it (sends are the only writers that move a lead to
--- signup_sent), so the flag works for the existing pipeline immediately
--- instead of only for leads invited after this deploy.
+-- The backfill gives already-invited leads a BEST-EFFORT invited_at from
+-- updated_at so the flag works for the existing pipeline immediately instead
+-- of only for leads invited after this deploy. Known imprecision, accepted:
+-- updated_at is also bumped by later note/contact edits and by an
+-- unsubscribe click, so an edited lead's backfilled clock starts at its last
+-- touch, not the send — the flag then fires LATE for that lead, never
+-- falsely early, and self-corrects on any re-send (both send paths and the
+-- manual "Mark signup sent" advance re-stamp invited_at from now on).
 
 alter table public.generator_leads
   add column if not exists invited_at timestamptz;

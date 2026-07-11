@@ -124,6 +124,38 @@ test('maintenance_month: valid saves, empty clears to null, junk -> 400', async 
   assert.equal(res.statusCode, 400);
 });
 
+test('non-string month/contact_type -> 400, never a silent clear', async () => {
+  const seen = {};
+  restoreSupabase = installMockSupabase(leadResolvers(makeLead(), seen));
+
+  for (const body of [{ maintenance_month: 9 }, { maintenance_month: null }, { contact_type: 42 }, { contact_type: null }]) {
+    const res = makeRes();
+    await patchHandler(makeReq({ params: { id: LEAD_ID }, body }), res);
+    assert.equal(res.statusCode, 400, `expected 400 for ${JSON.stringify(body)}`);
+  }
+  assert.equal(seen.update, undefined);
+});
+
+test('manual "Mark signup sent" (PATCH status) stamps invited_at — every signup_sent writer feeds the follow-up clock', async () => {
+  const seen = {};
+  const lead = makeLead({ status: 'contacted' });
+  restoreSupabase = installMockSupabase(leadResolvers(lead, seen));
+
+  const res = makeRes();
+  await patchHandler(makeReq({ params: { id: LEAD_ID }, body: { status: 'signup_sent' } }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(seen.update.status, 'signup_sent');
+  assert.ok(seen.update.invited_at, 'PATCH to signup_sent must stamp invited_at');
+  assert.equal(seen.update.invited_at, seen.update.updated_at);
+
+  // Any other status change never touches invited_at.
+  const res2 = makeRes();
+  await patchHandler(makeReq({ params: { id: LEAD_ID }, body: { status: 'contacted' } }), res2);
+  assert.equal(res2.statusCode, 200);
+  assert.equal(seen.update.invited_at, undefined, 'non-signup_sent status writes must not stamp invited_at');
+});
+
 test('contact_type: valid saves, junk -> 400', async () => {
   const seen = {};
   restoreSupabase = installMockSupabase(leadResolvers(makeLead(), seen));

@@ -892,6 +892,13 @@ function buildSignupLinkEmail({ name, signupUrl, companyState }) {
 
 // --- 12. Enrollment invite (Growth Engine WP4 — the campaign drip) -----------
 
+// The canonical contact_type values — shared by the leads route's PATCH
+// validation and the maintenance-book import (this module is their natural
+// home because inviteGreeting below is the code that interprets them).
+// MIRRORED as the hardcoded edit-dialog options in frontend/leads.js
+// (separate deploys, no bundler) — edit BOTH together.
+const CONTACT_TYPES = ['Person', 'Couple', 'Business'];
+
 // Greeting per the maintenance book's contact_type:
 //   Person   -> first name ("Mark Osbourne" -> "Mark")
 //   Couple   -> the "and" name without the surname ("Jim and Lisa Liotta" ->
@@ -1030,6 +1037,7 @@ module.exports = {
   buildSignupLinkEmail,
   buildEnrollmentInviteEmail,
   inviteGreeting,
+  CONTACT_TYPES,
 
   // Florida DBA helpers (re-exported for convenience)
   isFlorida,

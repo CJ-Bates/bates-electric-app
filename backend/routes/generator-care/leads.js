@@ -13,7 +13,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
-const { sendEmail, buildSignupLinkEmail, buildEnrollmentInviteEmail, BRAND } = require('../../lib/emails');
+const { sendEmail, buildSignupLinkEmail, buildEnrollmentInviteEmail, BRAND, CONTACT_TYPES } = require('../../lib/emails');
 const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
@@ -49,14 +49,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const LEAD_SOURCES = ['field', 'referral', 'campaign', 'manual'];
 // WP5 (pipeline metrics) note: when funnel counts are built, "active
 // pipeline" must EXCLUDE status='lost' (and deleted leads are hard-deleted
-// by DELETE /leads/:id, so they're already out).
+// by DELETE /leads/:id, so they're already out). If WP5 counts "needs
+// follow-up", the window lives as FOLLOW_UP_DAYS in frontend/leads.js —
+// share one number, don't restate 21.
 const LEAD_STATUSES = ['new', 'contacted', 'signup_sent', 'converted', 'lost'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-// Same three values the maintenance-book import accepts (its CONTACT_TYPES);
-// drives the invite greeting (inviteGreeting in lib/emails.js).
-const CONTACT_TYPES = ['Person', 'Couple', 'Business'];
-// Deliberately loose (same shape check the Add-lead form uses): enough to
+// CONTACT_TYPES comes from lib/emails.js — the one Node-side list, next to
+// inviteGreeting which interprets the values.
+// Deliberately loose (same shape check the Add/Edit dialogs use): enough to
 // catch "8015551234" typed into the email box, not to police RFC 5322.
+// MIRRORED as LEAD_EMAIL_RE in frontend/leads.js (separate deploys, no
+// bundler) — edit BOTH together.
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 // Every column the office UI shows — leads have no non-lead fields to leak,
@@ -228,16 +231,18 @@ router.patch('/leads/:id', async (req, res) => {
     }
     // WP4.2: month + contact type are enum-validated, clearable edits too —
     // the book import guessed some of these and the office fixes them by ear.
+    // Non-strings are rejected, not coerced: trimmed(9) === '' would silently
+    // CLEAR the field on a 200 instead of erroring.
     if (body.maintenance_month !== undefined) {
-      const month = trimmed(body.maintenance_month);
-      if (month && !MONTHS.includes(month)) {
+      const month = typeof body.maintenance_month === 'string' ? body.maintenance_month.trim() : null;
+      if (month === null || (month && !MONTHS.includes(month))) {
         return res.status(400).json({ error: `maintenance_month must be one of: ${MONTHS.join(', ')}` });
       }
       updates.maintenance_month = month || null;
     }
     if (body.contact_type !== undefined) {
-      const contactType = trimmed(body.contact_type);
-      if (contactType && !CONTACT_TYPES.includes(contactType)) {
+      const contactType = typeof body.contact_type === 'string' ? body.contact_type.trim() : null;
+      if (contactType === null || (contactType && !CONTACT_TYPES.includes(contactType))) {
         return res.status(400).json({ error: `contact_type must be one of: ${CONTACT_TYPES.join(', ')}` });
       }
       updates.contact_type = contactType || null;
@@ -246,6 +251,11 @@ router.patch('/leads/:id', async (req, res) => {
       return res.status(400).json({ error: 'Nothing to update.' });
     }
     updates.updated_at = new Date().toISOString();
+    // EVERY writer that moves a lead to signup_sent stamps invited_at — the
+    // "Needs follow-up" clock. This path is the office's manual "Mark signup
+    // sent" (a link handed over by text/phone), which is an invite too; the
+    // two send routes stamp it themselves.
+    if (updates.status === 'signup_sent') updates.invited_at = updates.updated_at;
 
     const { data, error } = await supabaseAdmin
       .from('generator_leads')

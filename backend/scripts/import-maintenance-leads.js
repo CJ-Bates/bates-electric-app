@@ -24,7 +24,7 @@ const { supabaseAdmin } = require('../lib/supabase');
 const CSV_PATH = path.join(__dirname, 'data', 'maintenance-leads.csv');
 const IMPORT_BATCH = 'gen-maint-2026-07';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const CONTACT_TYPES = ['Person', 'Couple', 'Business'];
+const { CONTACT_TYPES } = require('../lib/emails');
 const INSERT_CHUNK = 200;
 
 // ---- CSV parsing ----
