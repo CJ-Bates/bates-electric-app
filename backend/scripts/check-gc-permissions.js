@@ -42,6 +42,10 @@ const ALLOWLIST = {
   // outside this directory) is intentionally UNAUTHENTICATED — it's the link
   // in a customer's inbox. It is token-only and can only set
   // email_opt_out=true; see that file's header comment.
+  // NOTE: POST /tech/enroll (routes/generator-tech.js, outside this directory
+  // too) is tech-gated (requireAuth + requireRole('tech')) with no granular
+  // flag — WP6 field enrollment. Same basis as the leads routes: creates a
+  // prospect row + hands out a public signup URL, no money or customer data.
   'leads.js': ['/leads', '/leads/:id', '/leads/:id/convert', '/leads/:id/send-signup', '/leads/send-invites'],
 };
 

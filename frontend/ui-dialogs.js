@@ -130,8 +130,68 @@
     });
   }
 
+  // QR dialog (Growth Engine WP6): renders a signup URL as a big scannable
+  // code plus the same URL as copyable text, with optional extra link actions
+  // (e.g. an sms: handoff). The code sits on a WHITE card in both themes —
+  // scanners need dark-on-light contrast, so it deliberately ignores dark
+  // mode. Requires window.qrcode (qrcode.js, the vendored offline generator)
+  // — only pages that load that file may call this. Resolves when dismissed.
+  // Informational only, so Enter/Escape/backdrop all just dismiss it.
+  function openQrDialog({ title = 'Scan to sign up', message = '', url = '', note = '', links = [] } = {}) {
+    return new Promise((resolve) => {
+      let qrSvg = '';
+      try {
+        const qr = window.qrcode(0, 'M'); // auto version, M error correction
+        qr.addData(url);
+        qr.make();
+        // margin 16 at cellSize 4 = the 4-module quiet zone scanners expect.
+        qrSvg = qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true });
+      } catch (e) {
+        console.error('QR render failed', e); // dialog still offers the link
+      }
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay';
+      const linkBtns = links.map((l) =>
+        `<a class="btn btn-secondary gc-qr-link" href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a>`).join('');
+      overlay.innerHTML = `
+        <div class="gc-rd-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+          <h3 class="gc-rd-title">${escapeHtml(title)}</h3>
+          ${message ? `<div class="gc-rd-sub">${escapeHtml(message)}</div>` : ''}
+          ${qrSvg
+            ? `<div class="gc-qr-box">${qrSvg}</div>`
+            : `<div class="gc-rd-card">Couldn&rsquo;t draw the QR code &mdash; copy the link below instead.</div>`}
+          ${note ? `<p class="gc-qr-note">${escapeHtml(note)}</p>` : ''}
+          <label class="gc-rd-field"><span>Signup link</span><input type="text" readonly value="${escapeHtml(url)}"></label>
+          ${linkBtns ? `<div class="gc-qr-links">${linkBtns}</div>` : ''}
+          <div class="gc-rd-actions">
+            <button type="button" class="btn btn-secondary gc-qr-copy">Copy link</button>
+            <button type="button" class="btn btn-primary gc-rd-submit">Done</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const input = overlay.querySelector('input[readonly]');
+      input.addEventListener('focus', () => input.select());
+      function close() { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(); }
+      function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') close(); }
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      overlay.querySelector('.gc-rd-submit').addEventListener('click', close);
+      overlay.querySelector('.gc-qr-copy').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          showStatus('Link copied.', 'success');
+        } catch (e) {
+          input.focus(); // selects via the focus handler
+          showStatus('Copy failed - the link is selected, copy it manually.', 'error');
+        }
+      });
+      setTimeout(() => overlay.querySelector('.gc-rd-submit').focus(), 30);
+    });
+  }
+
   window.openConfirm = openConfirm;
   window.openPrompt = openPrompt;
+  window.openQrDialog = openQrDialog;
   window.showStatus = showStatus;
   window.BatesUI = { escapeHtml };
 })();

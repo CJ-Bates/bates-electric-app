@@ -12,8 +12,9 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { completeServiceVisit } = require('../lib/completeVisit');
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
-const { sendEmail } = require('../lib/emails');
+const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
 const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel } = require('../lib/generator-catalog');
+const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
 
@@ -24,6 +25,16 @@ const OFFICE_NOTIFY_TO = (process.env.GENERATOR_DIGEST_TO || 'cjbates@bates-elec
 
 const VISIT_PHOTOS_BUCKET = 'generator-visit-photos';
 const VISIT_PHOTO_URL_TTL_SECONDS = 60 * 60 * 8; // signed URLs last a field day
+
+// The public signup site (bates-generator repo) — same env override the
+// office send-signup route uses (routes/generator-care/leads.js).
+const SIGNUP_BASE_URL =
+  (process.env.GENERATOR_SIGNUP_URL || 'https://generator.bates-electric.com').replace(/\/+$/, '');
+
+// Same deliberately-loose shape check as the office leads routes (and their
+// frontend mirror LEAD_EMAIL_RE): catches a phone number typed into the email
+// box, doesn't police RFC 5322.
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 // Visit-photo storage objects are namespaced `<visit_id>/<filename>` (see the
 // frontend uploader + sql/010_tech_phase2.sql). The generator_visit_photos
@@ -223,7 +234,7 @@ router.post('/my-visits/:id/schedule', requirePermission('tech_reschedule'), asy
     const line = `Visit for ${customerName} moved from ${fromStr} to ${toStr} by ${techName}.`;
     sendEmail({
       to: OFFICE_NOTIFY_TO,
-      subject: `[Generator Care] Visit rescheduled by ${techName} — ${customerName}`,
+      subject: `[Generator Care] Visit rescheduled by ${techName} \u2014 ${customerName}`,
       html: `<p style="font-family:system-ui,sans-serif;font-size:14px;">${line}</p>`,
       text: line,
       logTag: '[tech-reschedule-email]',
@@ -299,7 +310,7 @@ router.delete('/my-visits/:id/photos/:photoId', async (req, res) => {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
     if (visit.status === 'completed') {
-      return res.status(400).json({ error: 'This visit is completed — photos are locked.' });
+      return res.status(400).json({ error: 'This visit is completed \u2014 photos are locked.' });
     }
 
     const { data: photo, error: pErr } = await supabaseAdmin
@@ -386,7 +397,7 @@ router.post('/my-visits/:id/addons/:addonId/perform', async (req, res) => {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
     if (visit.status === 'completed') {
-      return res.status(400).json({ error: 'This visit is completed — flag add-ons before completing.' });
+      return res.status(400).json({ error: 'This visit is completed \u2014 flag add-ons before completing.' });
     }
 
     const undo = !!(req.body && req.body.undo);
@@ -422,11 +433,126 @@ router.post('/my-visits/:id/addons/:addonId/perform', async (req, res) => {
       .select('id, addon_type, status, date_performed, performed_by')
       .maybeSingle();
     if (uErr) throw uErr;
-    if (!updated) return res.status(409).json({ error: 'Add-on changed underneath you — refresh and retry.' });
+    if (!updated) return res.status(409).json({ error: 'Add-on changed underneath you \u2014 refresh and retry.' });
 
     res.json({ ok: true, addon: techAddonShape(updated) });
   } catch (err) {
     console.error('[generator-tech] addon perform error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ============================================================================
+// GROWTH ENGINE WP6 — field enrollment: a tech on any job enrolls a generator
+// customer on the spot. Creates a `field`-source lead attributed to the tech
+// and returns the pre-tagged ?lead= signup URL, which the tech shows as a QR
+// the customer scans on their own phone. The signup site forwards the lead id
+// into Stripe metadata (WP2) and the webhook auto-converts the lead on signup
+// — no new attribution logic here.
+//
+// Tech-gated by the router.use above; no requirePermission flag, same basis
+// as the office leads routes: creates a prospect row and hands out a PUBLIC
+// signup URL — no money moves, no Stripe object is created, no existing
+// customer's data is touched. (The office scan in check-gc-permissions only
+// reads routes/generator-care/*; this route is noted in its ALLOWLIST comment.)
+// ============================================================================
+
+// Contact/detail fields a tech can capture in the driveway — a subset of the
+// office EDITABLE_FIELDS (routes/generator-care/leads.js). maintenance_month
+// stays null on purpose: field leads aren't part of the monthly campaign cohort.
+const ENROLL_FIELDS = [
+  'customer_name', 'customer_phone', 'customer_email',
+  'install_address', 'install_city', 'install_state', 'install_zip',
+  'generator_info',
+];
+
+// POST /api/generator-care/tech/enroll
+// Body: { customer_name (required), customer_phone?, customer_email?,
+//         install_address/city/state/zip?, generator_info?, send_email? }.
+// Returns { ok, lead_id, signup_url, emailed, email_error }. With
+// send_email:true (and an email on file) the existing FL-aware signup-link
+// email goes out too; a failed send still returns the URL — the QR is the
+// headline and must never be blocked on a mail hiccup.
+router.post('/enroll', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const row = { source: 'field', status: 'new' };
+    for (const f of ENROLL_FIELDS) {
+      const v = typeof body[f] === 'string' ? body[f].trim() : '';
+      if (v) row[f] = v; // trimmed empties -> column stays null
+    }
+    if (!row.customer_name) {
+      return res.status(400).json({ error: 'Customer name is required.' });
+    }
+    if (row.customer_email && !EMAIL_RE.test(row.customer_email)) {
+      return res.status(400).json({ error: 'That email address doesn\u2019t look right.' });
+    }
+
+    // Attribution: the machine link is the tech's profile id; the label is
+    // what the office lead card shows, so provenance survives even if the
+    // profile is later deactivated.
+    row.referred_by_user_id = req.user.id;
+    row.referred_by_label =
+      (req.profile && req.profile.full_name)
+      || (req.user.email ? req.user.email.split('@')[0] : 'tech');
+
+    const { data: lead, error } = await supabaseAdmin
+      .from('generator_leads')
+      .insert(row)
+      .select('id')
+      .single();
+    if (error) throw error;
+
+    const signupUrl = `${SIGNUP_BASE_URL}/?lead=${lead.id}`;
+
+    // Optional send — reuses the office's signup-link email (FL-aware via the
+    // captured install state). Failure is reported but never blocks the QR.
+    let emailed = false;
+    let emailError = null;
+    if (body.send_email && row.customer_email) {
+      try {
+        const { subject, html, text } = buildSignupLinkEmail({
+          name: row.customer_name,
+          signupUrl,
+          companyState: row.install_state,
+        });
+        const result = await sendEmail({
+          to: row.customer_email,
+          subject,
+          html,
+          text,
+          logTag: '[tech-enroll-signup-email]',
+          companyState: row.install_state,
+        });
+        emailed = !!(result && result.sent);
+        if (!emailed) throw new Error(`signup-link email send failed for lead ${lead.id} to ${row.customer_email}: ${(result && result.reason) || 'unknown'}`);
+      } catch (mailErr) {
+        emailError = 'The email didn\u2019t send \u2014 have them scan the QR instead.';
+        reportError(mailErr, { route: req.originalUrl, method: req.method, user: req.user && req.user.email }).catch(() => {});
+      }
+      // A CONFIRMED send is an invite like the office's — advance to
+      // signup_sent and stamp invited_at, the "Needs follow-up" clock (the
+      // WP4.2 invariant: every signup_sent writer stamps it). QR-only or a
+      // failed send leaves the lead `new` so the office pipeline shows it
+      // untouched.
+      if (emailed) {
+        const now = new Date().toISOString();
+        const { error: updErr } = await supabaseAdmin
+          .from('generator_leads')
+          .update({ status: 'signup_sent', invited_at: now, updated_at: now })
+          .eq('id', lead.id);
+        if (updErr) {
+          // The email went out; a failed stamp must not fail the enrollment.
+          console.error('[generator-tech] enroll advance error:', updErr.message);
+          reportError(updErr, { route: req.originalUrl, method: req.method, user: req.user && req.user.email }).catch(() => {});
+        }
+      }
+    }
+
+    res.json({ ok: true, lead_id: lead.id, signup_url: signupUrl, emailed, email_error: emailError });
+  } catch (err) {
+    console.error('[generator-tech] enroll error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.user && req.user.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });

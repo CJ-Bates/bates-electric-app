@@ -38,6 +38,14 @@
     manual:   { label: 'Manual',   chip: 'chip-neutral' },
   };
 
+  // WP6 "Show QR": the lead's pre-tagged signup URL, built client-side so no
+  // send/advance happens just to show a code. MIRRORS the default of
+  // SIGNUP_BASE_URL in backend/routes/generator-care/leads.js (separate
+  // deploys, no bundler) — edit BOTH together. (The backend's
+  // GENERATOR_SIGNUP_URL env override is a staging affordance; production is
+  // this URL.)
+  const SIGNUP_BASE = 'https://generator.bates-electric.com';
+
   // WP3: the maintenance-book import tags campaign leads with the 3-letter
   // month their maintenance is due; the tab works them as monthly cohorts.
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -191,6 +199,9 @@
     // link; a signup through it flips this lead to Converted automatically.
     if (l.status !== 'converted' && l.status !== 'lost') {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="send-signup" data-id="${escapeHtml(l.id)}">${l.status === 'signup_sent' ? 'Resend signup link' : 'Send signup link'}</button>`);
+      // WP6: an estimator in the field shows the same pre-tagged signup URL
+      // as a QR on their screen — no email, no stage change, just the code.
+      actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="show-qr" data-id="${escapeHtml(l.id)}">Show QR</button>`);
     }
     // WP4.2: edit fixes contact info the office learns by phone — adding an
     // email is what makes a lead emailable. Delete removes test/junk rows.
@@ -628,6 +639,16 @@
       } catch (err) {
         showStatus(`Failed: ${err.message}`, 'error');
       }
+    } else if (action === 'show-qr') {
+      // No API call and no stage change: showing the code is a handoff the
+      // customer completes themselves — conversion is recorded by the
+      // signup-site attribution (WP2), not by opening this dialog.
+      await openQrDialog({
+        title: 'Scan to sign up',
+        message: `${who} scans this with their phone camera and lands on their pre-tagged signup.`,
+        url: `${SIGNUP_BASE}/?lead=${l.id}`,
+        note: 'A signup through this code marks the lead Converted automatically.',
+      });
     } else if (action === 'note') {
       const vals = await openPrompt({
         title: l.notes ? 'Edit note' : 'Add note',
