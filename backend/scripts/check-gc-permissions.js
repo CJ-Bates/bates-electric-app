@@ -32,7 +32,12 @@ const ALLOWLIST = {
   // (convert only records a subscription id on the lead row; send-signup and
   // send-invites only email prospects a public signup URL — send-invites is
   // additionally hard-capped at 100 sends per call and skips opted-out or
-  // already-invited leads by query).
+  // already-invited leads by id re-validation).
+  // '/leads/:id' covers BOTH the PATCH edit and the WP4.2 DELETE hard delete
+  // (this scan matches by path, not method). Delete is deliberately
+  // office-wide too: it removes a prospect row — the worst case is losing a
+  // lead's notes/attribution record, never customer or money data — and it's
+  // how test/junk rows stay out of pipeline metrics.
   // NOTE: GET /generator-care/unsubscribe (routes/generator-care-public.js,
   // outside this directory) is intentionally UNAUTHENTICATED — it's the link
   // in a customer's inbox. It is token-only and can only set

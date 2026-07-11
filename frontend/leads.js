@@ -68,6 +68,28 @@
   const SEND_CAP = 100;
   const warnSendCap = () =>
     showStatus(`A send is capped at ${SEND_CAP} \u2014 send these first, then select more.`, 'warning');
+  // WP4.2 view toggles, cohort-scoped (reset on month change) and mutually
+  // exclusive — their intersection is provably empty (follow-ups are
+  // signup_sent, selected leads are new/contacted), so turning one on turns
+  // the other off. Both bypass the stage tabs for the same reason: the chip
+  // count is a cohort fact and must match the list it opens.
+  let showFollowUpOnly = false;
+  let showSelectedOnly = false;
+
+  // Loose email shape check for the Add/Edit dialogs. MIRRORS EMAIL_RE in
+  // backend/routes/generator-care/leads.js (separate deploys, no bundler) —
+  // edit BOTH together.
+  const LEAD_EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+  // WP4.2 "Needs follow-up": invited (signup_sent) this long ago with no
+  // signup — worth a nudge, NOT auto-lost (they're existing maintenance
+  // customers). Derived from invited_at; tune the window here.
+  const FOLLOW_UP_DAYS = 21;
+  const needsFollowUp = (l) => {
+    if (l.status !== 'signup_sent' || !l.invited_at) return false;
+    const t = new Date(l.invited_at).getTime();
+    return Number.isFinite(t) && Date.now() - t > FOLLOW_UP_DAYS * 24 * 60 * 60 * 1000;
+  };
 
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
@@ -170,6 +192,9 @@
     if (l.status !== 'converted' && l.status !== 'lost') {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="send-signup" data-id="${escapeHtml(l.id)}">${l.status === 'signup_sent' ? 'Resend signup link' : 'Send signup link'}</button>`);
     }
+    // WP4.2: edit fixes contact info the office learns by phone — adding an
+    // email is what makes a lead emailable. Delete removes test/junk rows.
+    actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="edit" data-id="${escapeHtml(l.id)}">Edit</button>`);
     actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="note" data-id="${escapeHtml(l.id)}">${l.notes ? 'Edit note' : 'Add note'}</button>`);
     if (l.status !== 'converted' && l.status !== 'lost') {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="lost" data-id="${escapeHtml(l.id)}">Mark lost</button>`);
@@ -177,6 +202,7 @@
     if (l.status === 'lost') {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="reopen" data-id="${escapeHtml(l.id)}">Reopen</button>`);
     }
+    actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="delete" data-id="${escapeHtml(l.id)}">Delete</button>`);
 
     // WP4.1: in the month-cohort view every emailable lead gets a checkbox
     // (the invite selection); ineligible ones show why they can't be included.
@@ -193,12 +219,13 @@
       }
     }
 
-    return `<div class="lead-card s-${escapeHtml(l.status)}">
+    return `<div class="lead-card s-${escapeHtml(l.status)}${selected.has(l.id) ? ' is-selected' : ''}">
       <div class="lead-top">
         ${selectHtml}<span class="lead-name">${escapeHtml(who)}</span>
         <span class="badge ${stage.badge}">${escapeHtml(stage.label)}</span>
         <span class="chip${source.chip ? ' ' + source.chip : ''}">${escapeHtml(source.label)}</span>
         ${l.maintenance_month ? `<span class="chip">Due ${escapeHtml(l.maintenance_month)}</span>` : ''}
+        ${needsFollowUp(l) ? `<span class="chip chip-warn">Needs follow-up</span>` : ''}
       </div>
       ${contactBits.length ? `<div class="lead-meta">${contactBits.join('')}</div>` : ''}
       ${l.generator_info ? `<div class="lead-gen">${escapeHtml(l.generator_info)}</div>` : ''}
@@ -258,29 +285,52 @@
     const el = $('lead-month-summary');
     if (!el) return;
     if (activeMonth === 'all') {
-      el.hidden = true;
-      el.innerHTML = '';
+      // WP4.2: instead of vanishing, the bar says why there are no send
+      // controls — the "why can't I select anything" moment.
+      el.innerHTML = `<span class="lead-send-hint">Pick a month to review and send invites.</span>`;
+      el.hidden = false;
+      return;
+    }
+    const monthName = escapeHtml(MONTH_NAMES[activeMonth] || activeMonth);
+    if (!cohort.length) {
+      // A 0-lead cohort gets a plain fact, not send controls (the
+      // "everyone has been invited" copy would be a lie here).
+      el.innerHTML = `<span class="month">${monthName}</span>`
+        + `<span class="detail">No leads in this cohort.</span>`;
+      el.hidden = false;
       return;
     }
     const invited = cohort.filter((l) => l.status === 'signup_sent' || l.status === 'converted').length;
     const emailable = cohort.filter(isEmailable).length;
+    const followUps = cohort.filter(needsFollowUp).length;
     const leadsWord = cohort.length === 1 ? 'lead' : 'leads';
     const none = emailable === 0;
     const n = selected.size;
     const sendLabel = sendingInvites
       ? 'Sending&hellip;'
       : `Send to selected (${n})`;
-    el.innerHTML = `<span class="month">${escapeHtml(MONTH_NAMES[activeMonth] || activeMonth)}</span>`
+    // WP4.2 quick filters: "Needs follow-up" (invited 21+ days, no signup)
+    // and "Show selected" (review the exact batch in the list itself).
+    // Rendered while their count is nonzero OR they're active (so an active
+    // chip can always be clicked back off).
+    const filterChip = (id, label, count, active) => ((count || active)
+      ? `<button type="button" id="${id}" class="filter${active ? ' active' : ''}">${label} <span class="count">${count}</span></button>`
+      : '');
+    const filterChips = filterChip('lead-followup-chip', 'Needs follow-up', followUps, showFollowUpOnly)
+      + filterChip('lead-show-sel-chip', 'Show selected', n, showSelectedOnly);
+    el.innerHTML = `<span class="month">${monthName}</span>`
       + `<span class="detail">${cohort.length} ${leadsWord} &middot; ${emailable} emailable &middot; ${invited} invited</span>`
+      + filterChips
       + `<span class="lead-send-group">`
       + (none
         ? `<span class="lead-send-hint">Everyone emailable in this cohort has been invited.</span>`
         : `<label for="lead-batch-size">Next</label>`
           + `<input type="number" id="lead-batch-size" min="1" max="${SEND_CAP}" inputmode="numeric" value="${batchSize}">`
-          + `<button type="button" id="lead-select-next-btn" class="btn btn-secondary btn-sm"${sendingInvites ? ' disabled' : ''}>Select next ${batchSize}</button>`
+          + `<button type="button" id="lead-select-next-btn" class="btn btn-secondary btn-sm"${sendingInvites ? ' disabled' : ''} title="Checks the next ${batchSize} due to be invited, oldest first">Select next ${batchSize}</button>`
           + `<button type="button" id="lead-clear-sel-btn" class="btn btn-secondary btn-sm"${!n || sendingInvites ? ' disabled' : ''}>Clear</button>`
           + `<span class="lead-sel-count">${n} selected</span>`)
       + `<button type="button" id="lead-send-invites-btn" class="btn btn-primary btn-sm"${!n || sendingInvites ? ' disabled' : ''}>${sendLabel}</button>`
+      + (none ? '' : `<span class="lead-send-note">Select next = the next ${batchSize} due to be invited, oldest first.</span>`)
       + `</span>`;
     el.hidden = false;
   }
@@ -292,6 +342,9 @@
   // accepts.
   function selectNext() {
     if (sendingInvites || activeMonth === 'all') return;
+    // Selecting starts a send workflow — drop the follow-up view so the
+    // newly checked cards are actually on screen, never checked invisibly.
+    showFollowUpOnly = false;
     const eligible = leads.filter(matchesMonth).filter(isEmailable).sort(oldestFirst);
     let room = Math.min(batchSize, SEND_CAP - selected.size);
     if (room <= 0) {
@@ -421,6 +474,9 @@
     // the FULL month cohort, or the selection math would lie. The selection
     // is pruned first so every count and checkbox reflects reality.
     pruneSelection();
+    // A pruned-empty selection has nothing to show — drop back to the list
+    // rather than an inexplicable empty view.
+    if (showSelectedOnly && !selected.size) showSelectedOnly = false;
     renderMonthSummary(leads.filter(matchesMonth));
     const searched = leads.filter(matchesSearch).filter(matchesMonth);
     $('lead-count-all').textContent = String(searched.length);
@@ -429,15 +485,33 @@
       if (el) el.textContent = String(searched.filter((l) => l.status === s).length);
     }
 
-    const visible = activeStage === 'all' ? searched : searched.filter((l) => l.status === activeStage);
+    // WP4.2 quick filters replace the stage filter while active (their
+    // populations are stage-specific, so composing with a stage tab would
+    // show an empty list under a chip with a nonzero count). Search still
+    // applies — the user typed it.
+    let visible;
+    if (showFollowUpOnly) visible = searched.filter(needsFollowUp);
+    else if (showSelectedOnly) visible = searched.filter((l) => selected.has(l.id));
+    else visible = activeStage === 'all' ? searched : searched.filter((l) => l.status === activeStage);
     emptyEl.hidden = visible.length > 0;
     // Two flavors of empty: a brand-new pipeline vs an empty filter result.
     if (!visible.length) {
       const virgin = leads.length === 0;
       $('leads-empty-title').textContent = virgin ? 'No leads yet' : 'No matching leads';
-      $('leads-empty-sub').innerHTML = virgin
+      let sub = virgin
         ? 'Every prospective Generator Care customer lands here &mdash; field enrollments, referrals, and campaign responses once those channels launch. Use <strong>Add lead</strong> to log one the office hears about today, then work it left to right: New &rarr; Contacted &rarr; Signup sent &rarr; Converted.'
         : 'Try a different stage, month, or search.';
+      // WP4.2: the tab defaults to a month cohort, so a search can find
+      // nothing here while the lead exists in another month — say so and
+      // offer the jump, or "not in this month" reads as "not in the book".
+      if (!virgin && searchQuery && activeMonth !== 'all') {
+        const elsewhere = leads.filter(matchesSearch).length;
+        if (elsewhere > 0) {
+          sub = `${elsewhere} match${elsewhere === 1 ? '' : 'es'} outside ${escapeHtml(MONTH_NAMES[activeMonth] || activeMonth)}. `
+            + '<button type="button" id="leads-empty-all-btn" class="btn btn-secondary btn-sm">Search all months</button>';
+        }
+      }
+      $('leads-empty-sub').innerHTML = sub;
       listEl.innerHTML = '';
       return;
     }
@@ -531,7 +605,109 @@
       });
       if (vals === null) return;
       await patchLead(id, { notes: vals.notes }, 'Note saved.');
+    } else if (action === 'edit') {
+      await editLead(l);
+    } else if (action === 'delete') {
+      // Deleting is allowed at every stage (it's how test/junk rows go away,
+      // including a converted TEST lead), but the confirm spells out what a
+      // converted/invited delete actually loses.
+      const extra = l.status === 'converted'
+        ? ' This lead CONVERTED \u2014 deleting it also removes that win from any future campaign metrics.'
+        : l.status === 'signup_sent'
+          ? ' Their invite is already out \u2014 a signup through it later won\u2019t be traced back to this campaign.'
+          : '';
+      const ok = await openConfirm({
+        title: 'Delete this lead?',
+        message: `${who} is removed from the pipeline permanently. This can\u2019t be undone.${extra}`,
+        confirmText: 'Delete lead',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api(`/leads/${id}`, { method: 'DELETE' });
+        leads = leads.filter((x) => x.id !== id);
+        selected.delete(id);
+        updateTabCount();
+        render();
+        showStatus(`${who} deleted.`, 'success');
+      } catch (err) {
+        showStatus(`Failed: ${err.message}`, 'error');
+      }
     }
+  }
+
+  // The seven contact/address fields Add and Edit share — ONE list, so the
+  // two dialogs can't drift (a field present in one but missing from the
+  // other would let data be entered that the other dialog never shows).
+  const leadContactFields = (l = {}) => [
+    { name: 'customer_name', label: 'Name', value: l.customer_name || '', placeholder: 'Jane Doe' },
+    { name: 'customer_phone', label: 'Phone', type: 'tel', inputmode: 'tel', value: l.customer_phone || '', placeholder: '(314) 555-0123' },
+    { name: 'customer_email', label: 'Email', type: 'email', value: l.customer_email || '', placeholder: 'jane@example.com' },
+    { name: 'install_address', label: 'Street address', value: l.install_address || '', placeholder: '123 Main St' },
+    { name: 'install_city', label: 'City', value: l.install_city || '' },
+    { name: 'install_state', label: 'State', value: l.install_state || '', placeholder: 'MO', hint: '2-letter code' },
+    { name: 'install_zip', label: 'ZIP', inputmode: 'numeric', value: l.install_zip || '' },
+  ];
+
+  // One validator for both dialogs. `original` lets Edit skip the email
+  // format check when a stored (possibly imported-junk) address is
+  // untouched — a phone fix must never be blocked by an email the office
+  // didn't enter. Add passes no original, so every email is checked.
+  const validateLeadContact = (original = {}) => (v) => {
+    if (!v.customer_name.trim() && !v.customer_email.trim() && !v.customer_phone.trim()) {
+      return 'Enter at least a name, email, or phone.';
+    }
+    const email = v.customer_email.trim();
+    if (email && email !== (original.customer_email || '') && !LEAD_EMAIL_RE.test(email)) {
+      return 'That email doesn\u2019t look right.';
+    }
+    if (v.install_state.trim() && !/^[A-Za-z]{2}$/.test(v.install_state.trim())) {
+      return 'State should be the 2-letter code (e.g. MO).';
+    }
+    return null;
+  };
+
+  // WP4.2: fix a lead's contact details as the office reaches people by
+  // phone. Adding an email is the payoff — the lead immediately becomes
+  // emailable (checkbox appears in the cohort view). Status is deliberately
+  // NOT here (the stage buttons own it), and notes keep their own dialog.
+  async function editLead(l) {
+    const dash = '\u2014';
+    const vals = await openPrompt({
+      title: 'Edit lead',
+      message: `Fix contact details for ${l.customer_name || 'this lead'} ${dash} adding an email makes them emailable for invites.`,
+      fields: [
+        ...leadContactFields(l),
+        {
+          name: 'maintenance_month', label: 'Maintenance month', type: 'select',
+          value: l.maintenance_month || '',
+          options: [{ value: '', label: dash }, ...MONTHS.map((m) => ({ value: m, label: MONTH_NAMES[m] }))],
+        },
+        {
+          // MIRRORS CONTACT_TYPES in backend/lib/emails.js — edit BOTH together.
+          name: 'contact_type', label: 'Contact type', type: 'select',
+          value: l.contact_type || '',
+          options: [{ value: '', label: dash }, { value: 'Person', label: 'Person' }, { value: 'Couple', label: 'Couple' }, { value: 'Business', label: 'Business' }],
+          hint: 'Sets the invite greeting (first name / couple / neutral)',
+        },
+      ],
+      validate: validateLeadContact(l),
+      confirmText: 'Save changes',
+    });
+    if (vals === null) return;
+    if (vals.install_state) vals.install_state = vals.install_state.toUpperCase();
+    // Send only what actually changed. A stored-but-untouched field (esp. a
+    // junk imported email the server would reject) must never ride along
+    // with an unrelated fix. '' still means "clear this field".
+    const changes = {};
+    for (const [k, v] of Object.entries(vals)) {
+      if (v.trim() !== String(l[k] || '')) changes[k] = v;
+    }
+    if (!Object.keys(changes).length) {
+      showStatus('Nothing changed.', 'info');
+      return;
+    }
+    await patchLead(l.id, changes, 'Lead updated.');
   }
 
   // Post-send dialog: confirms what happened (emailed vs copy-only) and offers
@@ -563,29 +739,12 @@
       title: 'Add lead',
       message: 'Log a prospective Generator Care customer. Name, email, or phone is enough to start.',
       fields: [
-        { name: 'customer_name', label: 'Name', placeholder: 'Jane Doe' },
-        { name: 'customer_phone', label: 'Phone', type: 'tel', inputmode: 'tel', placeholder: '(314) 555-0123' },
-        { name: 'customer_email', label: 'Email', type: 'email', placeholder: 'jane@example.com' },
-        { name: 'install_address', label: 'Street address', placeholder: '123 Main St' },
-        { name: 'install_city', label: 'City' },
-        { name: 'install_state', label: 'State', placeholder: 'MO', hint: '2-letter code' },
-        { name: 'install_zip', label: 'ZIP', inputmode: 'numeric' },
+        ...leadContactFields(),
         { name: 'generator_info', label: 'Generator info', type: 'textarea', placeholder: 'Make / model / anything the tech jotted down' },
         { name: 'referred_by_label', label: 'Who sent this?', placeholder: 'e.g. tech name, "Referral: John Smith"', hint: 'Shown on the lead so provenance never gets lost' },
         { name: 'notes', label: 'Notes', type: 'textarea' },
       ],
-      validate: (v) => {
-        if (!v.customer_name.trim() && !v.customer_email.trim() && !v.customer_phone.trim()) {
-          return 'Enter at least a name, email, or phone.';
-        }
-        if (v.customer_email.trim() && !/^\S+@\S+\.\S+$/.test(v.customer_email.trim())) {
-          return 'That email doesn\u2019t look right.';
-        }
-        if (v.install_state.trim() && !/^[A-Za-z]{2}$/.test(v.install_state.trim())) {
-          return 'State should be the 2-letter code (e.g. MO).';
-        }
-        return null;
-      },
+      validate: validateLeadContact(),
       confirmText: 'Add lead',
     });
     if (vals === null) return;
@@ -593,6 +752,10 @@
     try {
       const { lead } = await api('/leads', { method: 'POST', body: JSON.stringify({ ...vals, source: 'manual' }) });
       updateLocal(lead);
+      // A manual add has no maintenance month, so under the default month
+      // cohort the new card would be invisible and the save would look
+      // lost \u2014 jump to a view that shows it.
+      if (!matchesMonth(lead)) setMonth(lead.maintenance_month || 'all');
       showStatus('Lead added.', 'success');
     } catch (err) {
       showStatus(`Failed: ${err.message}`, 'error');
@@ -609,9 +772,14 @@
 
   // Single entry point for month changes (dropdown or quick chip) so the
   // dropdown value and the chips' active states never disagree. A month
-  // switch drops the invite selection — it belongs to one cohort.
+  // switch drops the invite selection and the cohort-scoped view toggles —
+  // they belong to one cohort.
   function setMonth(m) {
-    if (m !== activeMonth) selected = new Set();
+    if (m !== activeMonth) {
+      selected = new Set();
+      showFollowUpOnly = false;
+      showSelectedOnly = false;
+    }
     activeMonth = m;
     const sel = $('lead-month');
     if (sel) sel.value = m;
@@ -646,6 +814,10 @@
       const btn = e.target.closest('button[data-action]');
       if (btn) onAction(btn.dataset.action, btn.dataset.id);
     });
+    // WP4.2: "Search all months" escape hatch in the no-results state.
+    $('leads-empty').addEventListener('click', (e) => {
+      if (e.target.closest('#leads-empty-all-btn')) setMonth('all');
+    });
     // WP4.1: lead checkboxes are re-rendered with their cards — delegate the
     // change from the list container (bound once here).
     $('lead-list').addEventListener('change', (e) => {
@@ -662,6 +834,16 @@
       } else {
         selected.delete(id);
       }
+      // Under "Show selected" the visible list IS the selection — a full
+      // render drops the unchecked card so the list never lies about what
+      // will be sent (blowing away the clicked box is fine: it's leaving).
+      if (showSelectedOnly) {
+        render();
+        return;
+      }
+      // WP4.2: the card's selected styling follows the box in place.
+      const card = box.closest('.lead-card');
+      if (card) card.classList.toggle('is-selected', box.checked);
       // Only the summary bar's counts change — re-rendering the whole list
       // here would blow away the checkbox the user just clicked.
       renderMonthSummary(leads.filter(matchesMonth));
@@ -673,6 +855,15 @@
       else if (e.target.closest('#lead-select-next-btn')) selectNext();
       else if (e.target.closest('#lead-clear-sel-btn')) {
         selected = new Set();
+        showSelectedOnly = false;
+        render();
+      } else if (e.target.closest('#lead-followup-chip')) {
+        showFollowUpOnly = !showFollowUpOnly;
+        if (showFollowUpOnly) showSelectedOnly = false; // mutually exclusive
+        render();
+      } else if (e.target.closest('#lead-show-sel-chip')) {
+        showSelectedOnly = !showSelectedOnly;
+        if (showSelectedOnly) showFollowUpOnly = false; // mutually exclusive
         render();
       }
     });
@@ -684,8 +875,11 @@
       if (btn && !sendingInvites) btn.textContent = `Select next ${batchSize}`;
     });
 
-    if (haveData) render();
-    else loadLeads();
+    // WP4.2: land on the current month's cohort so the checkboxes and Send
+    // controls are immediately there — the "why can't I select anything"
+    // fix. setMonth renders; Amy can switch to All or any month freely.
+    setMonth(thisMonth());
+    if (!haveData) loadLeads();
   }
 
   window.BatesLeads = { init, prime, refresh: loadLeads };

@@ -350,6 +350,13 @@
     .lead-send-group input[type="number"] { width: 64px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--ink); }
     .lead-send-hint { font-size: 0.8rem; color: var(--ink-2); }
     .lead-sel-count { font-size: 0.85rem; font-weight: 600; color: var(--ink); }
+    /* WP4.2: checked cards must stand out while scrolling a ~130-card
+       cohort, not just tick a box */
+    .lead-card.is-selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent), var(--shadow-1); }
+    .lead-send-note { flex-basis: 100%; font-size: 0.75rem; color: var(--ink-3); }
+    /* WP4.2: prominent search — finding one lead among ~1,700 is the daily
+       task */
+    #lead-search { min-width: min(320px, 100%); }
     /* Per-card selection: checkbox on emailable leads, muted why-not chip on
        the rest */
     .lead-check { width: 18px; height: 18px; flex: none; accent-color: var(--accent); cursor: pointer; }

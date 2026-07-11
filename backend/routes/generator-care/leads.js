@@ -13,7 +13,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
-const { sendEmail, buildSignupLinkEmail, buildEnrollmentInviteEmail, BRAND } = require('../../lib/emails');
+const { sendEmail, buildSignupLinkEmail, buildEnrollmentInviteEmail, BRAND, CONTACT_TYPES } = require('../../lib/emails');
 const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
@@ -47,8 +47,20 @@ const INVITE_THROTTLE_MS = process.env.GENERATOR_INVITE_THROTTLE_MS != null
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const LEAD_SOURCES = ['field', 'referral', 'campaign', 'manual'];
+// WP5 (pipeline metrics) note: when funnel counts are built, "active
+// pipeline" must EXCLUDE status='lost' (and deleted leads are hard-deleted
+// by DELETE /leads/:id, so they're already out). If WP5 counts "needs
+// follow-up", the window lives as FOLLOW_UP_DAYS in frontend/leads.js —
+// share one number, don't restate 21.
 const LEAD_STATUSES = ['new', 'contacted', 'signup_sent', 'converted', 'lost'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// CONTACT_TYPES comes from lib/emails.js — the one Node-side list, next to
+// inviteGreeting which interprets the values.
+// Deliberately loose (same shape check the Add/Edit dialogs use): enough to
+// catch "8015551234" typed into the email box, not to police RFC 5322.
+// MIRRORED as LEAD_EMAIL_RE in frontend/leads.js (separate deploys, no
+// bundler) — edit BOTH together.
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 // Every column the office UI shows — leads have no non-lead fields to leak,
 // but selecting an explicit list keeps that true if the table grows.
@@ -62,7 +74,7 @@ const LEAD_COLUMNS = [
   'install_address', 'install_city', 'install_state', 'install_zip',
   'generator_info', 'maintenance_month', 'contact_type',
   'referred_by_user_id', 'referred_by_label', 'notes', 'email_opt_out',
-  'converted_subscription_id', 'created_at', 'updated_at',
+  'converted_subscription_id', 'invited_at', 'created_at', 'updated_at',
 ].join(', ');
 
 // Contact/detail fields the office can set on create and edit later. Status,
@@ -167,6 +179,9 @@ router.post('/leads', async (req, res) => {
       const v = trimmed(body[f]);
       if (v) row[f] = v;
     }
+    if (row.customer_email && !EMAIL_RE.test(row.customer_email)) {
+      return res.status(400).json({ error: 'That email address doesn\u2019t look right.' });
+    }
     // The machine link to a staff profile (tech/estimator/referrer) — set by
     // the later field/referral packages; the manual form doesn't send it.
     if (trimmed(body.referred_by_user_id)) row.referred_by_user_id = trimmed(body.referred_by_user_id);
@@ -190,7 +205,11 @@ router.post('/leads', async (req, res) => {
 });
 
 // PATCH /api/generator-care/leads/:id — advance the stage, edit notes, or fix
-// contact fields. Only sent fields change; unknown fields are ignored.
+// contact/detail fields (WP4.2: the office edits leads as it reaches people
+// by phone — adding an email is what makes a lead emailable and joins it to
+// the campaign). Only sent fields change; unknown fields are ignored.
+// status has its own validated path here; converted_subscription_id is only
+// ever written by the convert endpoint.
 router.patch('/leads/:id', async (req, res) => {
   try {
     const body = req.body || {};
@@ -207,10 +226,36 @@ router.patch('/leads/:id', async (req, res) => {
       // Editable fields may be cleared (-> null); absent fields stay untouched.
       if (body[f] !== undefined) updates[f] = trimmed(body[f]) || null;
     }
+    if (updates.customer_email && !EMAIL_RE.test(updates.customer_email)) {
+      return res.status(400).json({ error: 'That email address doesn\u2019t look right.' });
+    }
+    // WP4.2: month + contact type are enum-validated, clearable edits too —
+    // the book import guessed some of these and the office fixes them by ear.
+    // Non-strings are rejected, not coerced: trimmed(9) === '' would silently
+    // CLEAR the field on a 200 instead of erroring.
+    if (body.maintenance_month !== undefined) {
+      const month = typeof body.maintenance_month === 'string' ? body.maintenance_month.trim() : null;
+      if (month === null || (month && !MONTHS.includes(month))) {
+        return res.status(400).json({ error: `maintenance_month must be one of: ${MONTHS.join(', ')}` });
+      }
+      updates.maintenance_month = month || null;
+    }
+    if (body.contact_type !== undefined) {
+      const contactType = typeof body.contact_type === 'string' ? body.contact_type.trim() : null;
+      if (contactType === null || (contactType && !CONTACT_TYPES.includes(contactType))) {
+        return res.status(400).json({ error: `contact_type must be one of: ${CONTACT_TYPES.join(', ')}` });
+      }
+      updates.contact_type = contactType || null;
+    }
     if (!Object.keys(updates).length) {
       return res.status(400).json({ error: 'Nothing to update.' });
     }
     updates.updated_at = new Date().toISOString();
+    // EVERY writer that moves a lead to signup_sent stamps invited_at — the
+    // "Needs follow-up" clock. This path is the office's manual "Mark signup
+    // sent" (a link handed over by text/phone), which is an invite too; the
+    // two send routes stamp it themselves.
+    if (updates.status === 'signup_sent') updates.invited_at = updates.updated_at;
 
     const { data, error } = await supabaseAdmin
       .from('generator_leads')
@@ -223,6 +268,29 @@ router.patch('/leads/:id', async (req, res) => {
     res.json({ ok: true, lead: data });
   } catch (err) {
     console.error('[generator-care] update lead error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// DELETE /api/generator-care/leads/:id — hard delete (WP4.2). Leads are
+// prospect rows with no money or customer data hanging off them, so a real
+// delete is fine — and it's what keeps test/junk leads out of any future
+// pipeline metrics (see the WP5 note above LEAD_STATUSES). Office-gated
+// (inherited); same coarse-gate basis as the rest of this file.
+router.delete('/leads/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('generator_leads')
+      .delete()
+      .eq('id', req.params.id)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'lead not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[generator-care] delete lead error:', err && err.message);
     reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
@@ -280,9 +348,12 @@ router.post('/leads/:id/send-signup', async (req, res) => {
       }
     }
 
+    // invited_at drives the "Needs follow-up" flag; a re-send re-stamps it,
+    // deliberately resetting the follow-up clock (WP4.2).
+    const now = new Date().toISOString();
     const { data: updated, error: updErr } = await supabaseAdmin
       .from('generator_leads')
-      .update({ status: 'signup_sent', updated_at: new Date().toISOString() })
+      .update({ status: 'signup_sent', invited_at: now, updated_at: now })
       .eq('id', lead.id)
       .select(LEAD_COLUMNS)
       .maybeSingle();
@@ -405,9 +476,11 @@ router.post('/leads/send-invites', async (req, res) => {
         // Advance AFTER a confirmed send. If this write fails the invite went
         // out but the lead stays new/contacted — a re-click would re-send to
         // this one address, which the error report lets the office head off.
+        // invited_at drives the "Needs follow-up" flag (WP4.2).
+        const advancedAt = new Date().toISOString();
         const { error: updErr } = await supabaseAdmin
           .from('generator_leads')
-          .update({ status: 'signup_sent', updated_at: new Date().toISOString() })
+          .update({ status: 'signup_sent', invited_at: advancedAt, updated_at: advancedAt })
           .eq('id', lead.id);
         if (updErr) throw updErr;
         sent++;
