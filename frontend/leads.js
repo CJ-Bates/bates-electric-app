@@ -365,10 +365,9 @@
     // it (and the action bar) into view so the batch is immediately
     // reviewable instead of landing off-screen.
     if (added) {
+      // scroll-margin-top on the bar keeps it clear of the sticky topbar.
       const bar = $('lead-month-summary');
-      if (bar && typeof bar.scrollIntoView === 'function') {
-        bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+      if (bar) bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
 
@@ -538,19 +537,25 @@
       rest = visible.filter((l) => !selected.has(l.id));
     }
 
+    // One template for every group heading (same treatment as the Needs
+    // Attention queue). The Selected group's count says "N of M" when a
+    // search is hiding part of the batch — the send button sends all M, and
+    // two adjacent "selected" numbers must never silently disagree.
+    const groupHtml = (label, count, items) => (items.length
+      ? `<div class="gc-att-group-h">${label} <span class="count">${count}</span></div>`
+        + items.map(leadCardHtml).join('')
+      : '');
+    const floatedCount = floated.length === selected.size
+      ? String(floated.length)
+      : `${floated.length} of ${selected.size}`;
+
     if (activeStage === 'all') {
-      // Grouped by stage, working order — same group-heading treatment as the
-      // Needs Attention queue. The floated selection gets its own heading so
-      // it doesn't read as a stray stage group.
-      listEl.innerHTML = (floated.length
-        ? `<div class="gc-att-group-h">Selected <span class="count">${floated.length}</span></div>`
-          + floated.map(leadCardHtml).join('')
-        : '')
+      // Grouped by stage, working order. The floated selection gets its own
+      // heading so it doesn't read as a stray stage group.
+      listEl.innerHTML = groupHtml('Selected', floatedCount, floated)
         + STAGE_ORDER.map((s) => {
           const group = rest.filter((l) => l.status === s);
-          if (!group.length) return '';
-          return `<div class="gc-att-group-h">${escapeHtml(STAGES[s].label)} <span class="count">${group.length}</span></div>`
-            + group.map(leadCardHtml).join('');
+          return groupHtml(escapeHtml(STAGES[s].label), group.length, group);
         }).join('');
     } else {
       listEl.innerHTML = [...floated, ...rest].map(leadCardHtml).join('');
@@ -863,10 +868,14 @@
       }
       // WP4.3: a check/uncheck changes the card's LIST POSITION (checked
       // leads float to the top; unchecked drop back into place), so every
-      // toggle is a full render now — rebuilding the just-clicked box is
-      // fine, the click has already been processed. This also keeps the
-      // "Show selected" view honest (an unchecked card leaves it).
+      // toggle is a full render now. This also keeps the "Show selected"
+      // view honest (an unchecked card leaves it). The rebuild resets
+      // keyboard focus to <body>, so put it back on the same lead's box —
+      // a keyboard user working a batch must not re-Tab from the page top
+      // after every Space.
       render();
+      const rebuilt = document.querySelector(`input.lead-check[data-check="${id}"]`);
+      if (rebuilt) rebuilt.focus();
     });
     // The selection controls live inside the cohort summary, which is rebuilt
     // every render — delegate from the container (bound once here).
