@@ -191,38 +191,105 @@
       100% { box-shadow: 0 0 0 3px transparent; }
     }
 
-    /* ============ Metrics view (formerly metrics.html) ============ */
+    /* ============ Metrics view (WP5 redesign) ============
+       Layout + color per the approved "Metrics Redesign Mockup". Reads tokens
+       only (incl. the WP5 category accents money/info/amber/green/violet/coral
+       in tokens.css) so dark mode themes via the html.dark swap. Chart.js
+       draws the signup bars + the two mix donuts; the funnel, progress bars,
+       horizontal bars, and weekly drip are plain CSS. */
     .m-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 18px; }
     .m-control { display: flex; flex-direction: column; }
     .m-control label { font-size: 0.75rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-    .m-control input { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
-    .m-control input:focus { outline: none; border-color: var(--focus); }
+    .m-control input[type="date"] { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--ink); }
+    .m-control input[type="date"]:focus { outline: none; border-color: var(--focus); }
+    .m-toggle { flex-direction: row; align-items: center; gap: 8px; min-height: 38px; font-size: 0.85rem; color: var(--ink-2); cursor: pointer; user-select: none; }
+    .m-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 
-    /* Headline stat cards */
-    .m-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
-    .m-stat { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); border-top: 3px solid var(--accent); }
-    .m-stat .label { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-    .m-stat .value { font-size: 1.9rem; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
-    .m-stat .sub { font-size: 0.78rem; color: var(--ink-3); margin-top: 6px; }
-    .m-stat .sub .up { color: var(--ok); font-weight: 600; }
-    .m-stat .sub .down { color: var(--danger); font-weight: 600; }
-    .m-stat .sub .flat { color: var(--ink-3); font-weight: 600; }
-    #stat-new-sub svg{vertical-align:-2px}
+    /* Section labels */
+    .m-seclabel { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); margin: 26px 2px 12px; display: flex; align-items: center; gap: 9px; }
+    .m-seclabel .bar { width: 22px; height: 3px; border-radius: 2px; background: var(--accent); }
+    .m-seclabel .bar.money { background: var(--money); }
 
-    /* Chart panels */
-    .m-panels { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-    .m-panel { background: var(--surface); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow-1); min-width: 0; }
-    .m-panel.wide { grid-column: 1 / -1; }
-    .m-panel-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 700; margin: 0 0 4px; }
-    .m-panel-note { font-size: 0.76rem; color: var(--ink-3); margin: 0 0 12px; }
-    .m-canvas-wrap { position: relative; height: 260px; }
-    .m-canvas-wrap.tall { height: 300px; }
+    /* KPI cards: --c / --cbg carry each card's category accent */
+    .m-kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 13px; }
+    .m-kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 15px 14px; box-shadow: var(--shadow-1); position: relative; overflow: hidden; }
+    .m-kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
+    .m-kpi .ic { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--cbg); color: var(--c); margin-bottom: 10px; }
+    .m-kpi .lbl { font-size: 0.7rem; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.03em; }
+    .m-kpi .val { font-size: 1.6rem; font-weight: 800; line-height: 1.05; margin-top: 3px; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .m-kpi .val .unit { font-size: 0.8rem; color: var(--ink-3); font-weight: 600; }
+    .m-kpi.k-green .val { color: var(--green); }
+    .m-kpi .sub { font-size: 0.74rem; color: var(--ink-3); margin-top: 3px; }
+    .m-kpi .delta { font-size: 0.74rem; font-weight: 700; margin-top: 6px; display: inline-flex; align-items: center; gap: 3px; }
+    .m-kpi .delta svg { vertical-align: -2px; }
+    .m-kpi .delta.up { color: var(--green); }
+    .m-kpi .delta.down { color: var(--coral); }
+    .m-kpi .delta.flat { color: var(--ink-3); }
+
+    /* Card grid: the mockup's two-up / three-up rows */
+    .m-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .m-three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    .m-two + .m-two, .m-two + .m-three { margin-top: 14px; }
+    .m-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 17px 18px; box-shadow: var(--shadow-1); min-width: 0; }
+    .m-card h3 { font-size: 0.85rem; font-weight: 700; color: var(--ink); margin: 0 0 2px; }
+    .m-card h3 .h-stat { float: right; font-size: 0.74rem; color: var(--amber); font-weight: 700; }
+    .m-card .cap { font-size: 0.72rem; color: var(--ink-3); margin: 0 0 14px; }
+    .m-canvas-wrap { position: relative; height: 240px; }
     .m-empty-note { color: var(--ink-3); font-size: 0.85rem; padding: 28px 4px; text-align: center; }
 
-    @media (max-width: 760px) {
-      .m-panels { grid-template-columns: 1fr; }
-      .m-panel.wide { grid-column: auto; }
-      .m-stat .value { font-size: 1.6rem; }
+    /* Pipeline funnel: decreasing colored bars + drop-off notes */
+    .m-funnel { display: flex; flex-direction: column; gap: 9px; }
+    .m-fstage { display: flex; align-items: center; gap: 12px; }
+    .m-fbar { height: 34px; border-radius: 8px; display: flex; align-items: center; padding: 0 12px; color: #fff; font-weight: 700; font-size: 0.82rem; min-width: 56px; font-variant-numeric: tabular-nums; }
+    html.dark .m-fbar { color: var(--ink-inverse); }
+    .m-fmeta { font-size: 0.76rem; color: var(--ink-2); }
+    .m-fmeta b { color: var(--ink); }
+    .m-fdrop { font-size: 0.7rem; color: var(--ink-3); }
+
+    /* Campaign progress: stacked invited/converted track */
+    .m-prog .track { height: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; display: flex; }
+    .m-prog .fill { height: 100%; }
+    .m-prog .nums { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--ink-2); margin-top: 8px; gap: 8px; flex-wrap: wrap; }
+    .m-prog .nums b { color: var(--ink); }
+
+    /* Horizontal bars (cohorts, conversion by source, add-on attach) */
+    .m-hbars { display: flex; flex-direction: column; gap: 10px; }
+    .m-hbar { display: grid; grid-template-columns: 110px 1fr 46px; align-items: center; gap: 10px; font-size: 0.76rem; }
+    .m-hbar .track { height: 16px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+    .m-hbar .fill { height: 100%; border-radius: 6px; }
+    .m-hbar .pct { text-align: right; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .m-hbar .nm { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Weekly drip (invite velocity) */
+    .m-bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-top: 8px; }
+    .m-bars .b { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 4px; }
+    .m-xlab { display: flex; gap: 6px; margin-top: 6px; }
+    .m-xlab span { flex: 1; text-align: center; font-size: 0.6rem; color: var(--ink-3); white-space: nowrap; }
+
+    /* Retention / revenue-per-sub stat rows */
+    .m-statrow { display: flex; gap: 18px; margin-top: 6px; flex-wrap: wrap; }
+    .m-statrow .num { font-size: 1.5rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink); }
+    .m-statrow .num.green { color: var(--green); }
+    .m-statrow .num.coral { color: var(--coral); }
+    .m-statrow .num.money { color: var(--money); }
+    .m-statrow .cap { margin: 0; }
+
+    /* Plan & generator mix: two small donuts sharing one card, HTML legends */
+    .m-donuts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+    .m-donutwrap { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .m-donut-canvas { position: relative; width: 92px; height: 92px; flex-shrink: 0; }
+    .m-legend { font-size: 0.76rem; color: var(--ink-2); display: flex; flex-direction: column; gap: 7px; }
+    .m-legend .row { display: flex; align-items: center; gap: 8px; }
+    .m-legend .dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .m-legend b { color: var(--ink); }
+
+    @media (max-width: 900px) {
+      .m-kpis { grid-template-columns: repeat(2, 1fr); }
+      .m-two, .m-three { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .m-kpi .val { font-size: 1.4rem; }
+      .m-donuts { grid-template-columns: 1fr; }
     }
 
     /* ============ Accounting view (formerly accounting.html) ============
@@ -505,10 +572,12 @@
 
     <!-- ============ METRICS ============
          Lazy-loaded: generator-care.js only loads Chart.js + calls
-         BatesMetrics.init() the first time this section is activated. -->
+         BatesMetrics.init() the first time this section is activated.
+         WP5 layout per the approved Metrics Redesign Mockup: KPI row, the
+         Growth engine section (the leads pipeline), then Program & revenue. -->
     <section id="metrics-view" hidden>
       <p style="color:var(--ink-3);font-size:0.9rem;margin-bottom:18px;max-width:720px;">
-        How the Generator Care program is doing at a glance. The stat cards and plan/add-on charts reflect your <strong>current active book</strong>; signups, channel, and cancellations follow the date range below.
+        How the Generator Care program is doing at a glance. KPI cards, the growth-engine pipeline, and the plan/add-on mix reflect <strong>right now</strong>; signup trends follow the date range below. Pipeline numbers exclude lost and deleted leads.
       </p>
 
       <div class="m-controls">
@@ -521,89 +590,138 @@
           <input type="date" id="m-to-date" />
         </div>
         <button type="button" id="m-apply-btn" class="btn btn-primary btn-sm" style="height:38px;">Apply</button>
+        <label class="m-control m-toggle" for="m-hide-test">
+          <input type="checkbox" id="m-hide-test" checked />
+          <span>Hide early test activity</span>
+        </label>
       </div>
 
-      <!-- Skeleton mirrors #m-content's exact grid (.m-stats/.m-panels) so the
-           swap to real data doesn't reflow the page — same layout footprint,
-           just pulsing placeholders instead of numbers/charts. -->
+      <!-- Skeleton mirrors #m-content's grid (.m-kpis + two-up card rows) so
+           the swap to real data doesn't reflow the page — same layout
+           footprint, just pulsing placeholders instead of numbers/charts. -->
       <div id="m-loading" aria-hidden="true">
-        <div class="m-stats">
-          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
-          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
-          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
-          <div class="m-stat"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:90px;height:26px;margin-top:2px;"></span></div>
+        <div class="m-kpis">
+          <div class="m-kpi"><span class="gc-skeleton" style="display:block;width:34px;height:34px;border-radius:9px;margin-bottom:10px;"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="m-kpi"><span class="gc-skeleton" style="display:block;width:34px;height:34px;border-radius:9px;margin-bottom:10px;"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="m-kpi"><span class="gc-skeleton" style="display:block;width:34px;height:34px;border-radius:9px;margin-bottom:10px;"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="m-kpi"><span class="gc-skeleton" style="display:block;width:34px;height:34px;border-radius:9px;margin-bottom:10px;"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
+          <div class="m-kpi"><span class="gc-skeleton" style="display:block;width:34px;height:34px;border-radius:9px;margin-bottom:10px;"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><span class="gc-skeleton" style="display:block;width:70px;height:24px;margin-top:4px;"></span></div>
         </div>
-        <div class="m-panels">
-          <div class="m-panel wide"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><div class="m-canvas-wrap tall"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
-          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
-          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
-          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
-          <div class="m-panel"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
-          <div class="m-panel wide"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><div class="m-canvas-wrap"><span class="gc-skeleton" style="display:block;width:100%;height:100%;border-radius:8px;"></span></div></div>
+        <div class="m-two" style="margin-top:26px;">
+          <div class="m-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton" style="display:block;width:100%;height:180px;border-radius:8px;margin-top:12px;"></span></div>
+          <div class="m-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton" style="display:block;width:100%;height:180px;border-radius:8px;margin-top:12px;"></span></div>
+        </div>
+        <div class="m-two">
+          <div class="m-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton" style="display:block;width:100%;height:180px;border-radius:8px;margin-top:12px;"></span></div>
+          <div class="m-card"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton" style="display:block;width:100%;height:180px;border-radius:8px;margin-top:12px;"></span></div>
         </div>
       </div>
 
       <div id="m-content" hidden>
-        <!-- Headline stat cards -->
-        <div class="m-stats">
-          <div class="m-stat">
-            <div class="label">Active Subscriptions</div>
-            <div class="value" id="stat-active">0</div>
-            <div class="sub" id="stat-active-sub">&nbsp;</div>
+        <!-- KPI row (category-accented per the mockup) -->
+        <div class="m-kpis">
+          <div class="m-kpi" style="--c:var(--accent);--cbg:var(--info-bg);">
+            <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg></div>
+            <div class="lbl">Active subscribers</div>
+            <div class="val" id="kpi-active">0</div>
+            <div class="delta" id="kpi-active-delta">&nbsp;</div>
           </div>
-          <div class="m-stat">
-            <div class="label">New This Month</div>
-            <div class="value" id="stat-new">0</div>
-            <div class="sub" id="stat-new-sub">&nbsp;</div>
+          <div class="m-kpi" style="--c:var(--money);--cbg:var(--money-bg);">
+            <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+            <div class="lbl">Recurring revenue</div>
+            <div class="val" id="kpi-mrr">$0<span class="unit">/mo</span></div>
+            <div class="sub" id="kpi-mrr-sub">&nbsp;</div>
           </div>
-          <div class="m-stat">
-            <div class="label">Annual Recurring Revenue</div>
-            <div class="value" id="stat-arr">$0</div>
-            <div class="sub" id="stat-arr-sub">annualized, active subs</div>
+          <div class="m-kpi" style="--c:var(--info);--cbg:var(--info-bg);">
+            <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></div>
+            <div class="lbl">Lead &rarr; customer</div>
+            <div class="val" id="kpi-conv">0%</div>
+            <div class="sub" id="kpi-conv-sub">&nbsp;</div>
           </div>
-          <div class="m-stat">
-            <div class="label">Add-on Attach Rate</div>
-            <div class="value" id="stat-attach">0%</div>
-            <div class="sub" id="stat-attach-sub">of active subs have an add-on</div>
+          <div class="m-kpi" style="--c:var(--amber);--cbg:var(--amber-bg);">
+            <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
+            <div class="lbl">Invited this month</div>
+            <div class="val" id="kpi-invited">0</div>
+            <div class="sub" id="kpi-invited-sub">&nbsp;</div>
+          </div>
+          <div class="m-kpi k-green" style="--c:var(--green);--cbg:var(--green-bg);">
+            <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20M2 12h20"/></svg></div>
+            <div class="lbl">New revenue / mo</div>
+            <div class="val" id="kpi-newrev">$0</div>
+            <div class="sub" id="kpi-newrev-sub">&nbsp;</div>
           </div>
         </div>
 
-        <!-- Charts -->
-        <div class="m-panels">
-          <div class="m-panel wide">
-            <h2 class="m-panel-h">Signups Over Time</h2>
-            <p class="m-panel-note" id="signups-note">By month signed up</p>
-            <div class="m-canvas-wrap tall"><canvas id="chart-signups"></canvas></div>
+        <!-- Growth engine: the leads pipeline -->
+        <div class="m-seclabel"><span class="bar"></span> Growth engine</div>
+        <div class="m-two">
+          <div class="m-card">
+            <h3>Pipeline funnel</h3>
+            <p class="cap" id="funnel-cap">Where the leads are in the journey</p>
+            <div class="m-funnel" id="m-funnel"></div>
           </div>
-
-          <div class="m-panel">
-            <h2 class="m-panel-h">Plan Mix</h2>
-            <p class="m-panel-note">Active subscriptions by billing cadence</p>
-            <div class="m-canvas-wrap"><canvas id="chart-plan"></canvas></div>
+          <div class="m-card">
+            <h3>Campaign progress</h3>
+            <p class="cap">Working the book, one month-cohort at a time</p>
+            <div class="m-prog" id="m-campaign"></div>
+            <div class="m-hbars" id="m-cohorts" style="margin-top:16px;"></div>
+            <p class="cap" id="m-cohorts-cap" style="margin:10px 0 0;">Invited per cohort &middot; lighter = not started</p>
           </div>
-
-          <div class="m-panel">
-            <h2 class="m-panel-h">Generator Class</h2>
-            <p class="m-panel-note">Active subscriptions by unit size</p>
-            <div class="m-canvas-wrap"><canvas id="chart-genclass"></canvas></div>
+        </div>
+        <div class="m-two">
+          <div class="m-card">
+            <h3>Conversion by source</h3>
+            <p class="cap">Which channel actually closes</p>
+            <div class="m-hbars" id="m-sources"></div>
           </div>
-
-          <div class="m-panel">
-            <h2 class="m-panel-h">Add-on Popularity</h2>
-            <p class="m-panel-note">Active subs with each add-on</p>
-            <div class="m-canvas-wrap" id="addon-wrap"><canvas id="chart-addons"></canvas></div>
+          <div class="m-card">
+            <h3>Invite velocity <span class="h-stat" id="m-followup"></span></h3>
+            <p class="cap">Invites sent per week (the drip)</p>
+            <div class="m-bars" id="m-velocity"></div>
+            <div class="m-xlab" id="m-velocity-lab"></div>
           </div>
+        </div>
 
-          <div class="m-panel">
-            <h2 class="m-panel-h">Cancellations</h2>
-            <p class="m-panel-note" id="churn-note">Overall churn &amp; canceled-per-month</p>
-            <div class="m-canvas-wrap" id="churn-wrap"><canvas id="chart-churn"></canvas></div>
+        <!-- Program & revenue: the existing program data, restyled -->
+        <div class="m-seclabel"><span class="bar money"></span> Program &amp; revenue</div>
+        <div class="m-two">
+          <div class="m-card">
+            <h3>Signups by month</h3>
+            <p class="cap" id="signups-note">New Generator Care customers</p>
+            <div class="m-canvas-wrap"><canvas id="chart-signups"></canvas></div>
           </div>
-
-          <div class="m-panel wide">
-            <h2 class="m-panel-h">Signups by Channel</h2>
-            <p class="m-panel-note" id="channel-note">How customers heard about us</p>
-            <div class="m-canvas-wrap" id="channel-wrap"><canvas id="chart-channel"></canvas></div>
+          <div class="m-card">
+            <h3>Plan &amp; generator mix</h3>
+            <p class="cap">Of the active book</p>
+            <div class="m-donuts">
+              <div class="m-donutwrap">
+                <div class="m-donut-canvas"><canvas id="chart-plan"></canvas></div>
+                <div class="m-legend" id="legend-plan"></div>
+              </div>
+              <div class="m-donutwrap">
+                <div class="m-donut-canvas"><canvas id="chart-gen"></canvas></div>
+                <div class="m-legend" id="legend-gen"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="m-three">
+          <div class="m-card">
+            <h3>Add-on attach</h3>
+            <p class="cap">% of active subs with each</p>
+            <div class="m-hbars" id="m-addons"></div>
+          </div>
+          <div class="m-card">
+            <h3>Retention</h3>
+            <p class="cap" id="m-retention-cap">Last 12 months</p>
+            <div class="m-statrow" id="m-retention"></div>
+          </div>
+          <div class="m-card">
+            <h3>Revenue per sub</h3>
+            <p class="cap">Average annual, active book</p>
+            <div class="m-statrow">
+              <div><div class="num money" id="m-arpu">$0</div><div class="cap">per active subscription / year</div></div>
+            </div>
           </div>
         </div>
       </div>
