@@ -229,7 +229,7 @@
     /* Card grid: the mockup's two-up / three-up rows */
     .m-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     .m-three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
-    .m-two + .m-two, .m-two + .m-three { margin-top: 14px; }
+    .m-two + .m-two, .m-two + .m-three, .m-three + .m-two { margin-top: 14px; }
     .m-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 17px 18px; box-shadow: var(--shadow-1); min-width: 0; }
     .m-card h3 { font-size: 0.85rem; font-weight: 700; color: var(--ink); margin: 0 0 2px; }
     .m-card h3 .h-stat { float: right; font-size: 0.74rem; color: var(--amber); font-weight: 700; }
@@ -722,6 +722,18 @@
             <div class="m-statrow">
               <div><div class="num money" id="m-arpu">$0</div><div class="cap">per active subscription / year</div></div>
             </div>
+          </div>
+        </div>
+        <div class="m-two">
+          <div class="m-card">
+            <h3>Signups by channel</h3>
+            <p class="cap" id="channel-note">How customers heard about us</p>
+            <div class="m-canvas-wrap" id="channel-wrap"><canvas id="chart-channel"></canvas></div>
+          </div>
+          <div class="m-card">
+            <h3>Cancellations</h3>
+            <p class="cap" id="churn-note">Overall churn &amp; canceled-per-month</p>
+            <div class="m-canvas-wrap" id="churn-wrap"><canvas id="chart-churn"></canvas></div>
           </div>
         </div>
       </div>

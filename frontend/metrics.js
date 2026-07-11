@@ -36,6 +36,18 @@
   };
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+  // "How did you hear about us?" answers from the signup form.
+  const CHANNEL_LABELS = {
+    existing_customer: 'Installed/serviced by Bates',
+    phone_call: 'Phone call from Bates',
+    postcard_mail: 'Postcard / mail',
+    website: 'Website',
+    referral: 'Referral',
+    other: 'Other',
+  };
+  const channelLabel = (k) =>
+    CHANNEL_LABELS[k] || String(k).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
   const fmtInt = (n) => (n || 0).toLocaleString('en-US');
@@ -97,6 +109,11 @@
     if (charts[key]) { charts[key].destroy(); delete charts[key]; }
     const el = $(canvasId);
     if (!el || typeof Chart === 'undefined') return;
+    // Un-hide + clear any empty-state note left from a previous render
+    // (Refresh-safe — see emptyPanel).
+    el.style.display = '';
+    const prevNote = el.parentElement && el.parentElement.querySelector('.m-empty-note');
+    if (prevNote) prevNote.remove();
     charts[key] = new Chart(el.getContext('2d'), config);
   }
 
@@ -104,6 +121,21 @@
   function emptyNote(containerId, msg) {
     const wrap = $(containerId);
     if (wrap) wrap.innerHTML = `<div class="m-empty-note">${msg}</div>`;
+  }
+
+  // Empty state for a Chart.js panel: hide the canvas (without destroying it)
+  // and show a note instead, so a later Refresh with real data can redraw.
+  function emptyPanel(wrapId, msg) {
+    const wrap = $(wrapId);
+    if (!wrap) return;
+    const canvas = wrap.querySelector('canvas');
+    for (const k of Object.keys(charts)) {
+      if (charts[k] && charts[k].canvas === canvas) { charts[k].destroy(); delete charts[k]; }
+    }
+    if (canvas) canvas.style.display = 'none';
+    let note = wrap.querySelector('.m-empty-note');
+    if (!note) { note = document.createElement('div'); note.className = 'm-empty-note'; wrap.appendChild(note); }
+    note.textContent = msg;
   }
 
   // ---- Load + render ----
@@ -341,6 +373,59 @@
       <div><div class="num coral">${fmtInt(ret.canceled_12mo)}</div><div class="cap">canceled</div></div>
       <div><div class="num">${netNew >= 0 ? '+' : ''}${fmtInt(netNew)}</div><div class="cap">net new</div></div>`;
     $('m-arpu').textContent = fmtMoneyWhole(rev.arpu_annual_cents);
+
+    // ----- Program & revenue: signups by channel (horizontal bars) -----
+    const ch = data.channel || {};
+    const cb = ch.breakdown || [];
+    if (cb.length) {
+      const cCats = [
+        tok('--accent'), tok('--info'), tok('--violet'), tok('--green'),
+        tok('--amber'), tok('--money'), tok('--coral'), tok('--neutral'),
+      ];
+      draw('channel', 'chart-channel', {
+        type: 'bar',
+        data: {
+          labels: cb.map((p) => channelLabel(p.source)),
+          datasets: [{ data: cb.map((p) => p.count), backgroundColor: cb.map((_, i) => cCats[i % cCats.length]), borderRadius: 4 }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+        },
+      });
+      $('channel-note').textContent = ch.collecting_since
+        ? `How customers heard about us · collecting since ${fmtDate(ch.collecting_since)}`
+        : 'How customers heard about us';
+    } else {
+      emptyPanel('channel-wrap', ch.collecting_since
+        ? `No "how did you hear about us" answers in this range yet (collecting since ${fmtDate(ch.collecting_since)}).`
+        : 'Channel data starts collecting once new signups answer "How did you hear about us?" on the signup form.');
+    }
+
+    // ----- Program & revenue: cancellations trend -----
+    const churn = data.churn || {};
+    const cbm = churn.by_month || [];
+    $('churn-note').innerHTML =
+      `Overall churn <strong>${fmtPct(churn.overall_rate, 1)}</strong> · ${fmtInt(churn.canceled_total)} canceled all-time · ${fmtInt(churn.canceled_in_range)} in range`;
+    if (churn.tracking_since) {
+      draw('churn', 'chart-churn', {
+        type: 'bar',
+        data: {
+          labels: cbm.map((p) => monthLabel(p.month)),
+          datasets: [{ data: cbm.map((p) => p.count), backgroundColor: tok('--coral'), borderRadius: 4, maxBarThickness: 46 }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        },
+      });
+    } else {
+      emptyPanel('churn-wrap',
+        'No cancellations recorded with a date yet. Cancellation dates are tracked going forward, so the monthly trend starts filling in from now.');
+    }
   }
 
   // One small mix donut + its HTML legend. colorByKey maps slice key ->
