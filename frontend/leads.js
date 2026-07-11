@@ -361,6 +361,14 @@
     }
     if (!added) showStatus('Everyone emailable is already selected.', 'info');
     render();
+    // WP4.3: the fresh selection is grouped at the top of the list — bring
+    // it (and the action bar) into view so the batch is immediately
+    // reviewable instead of landing off-screen.
+    if (added) {
+      // scroll-margin-top on the bar keeps it clear of the sticky topbar.
+      const bar = $('lead-month-summary');
+      if (bar) bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   // WP4.1 preview dialog: the exact recipient list, one `Name — email` row
@@ -516,17 +524,41 @@
       return;
     }
 
+    // WP4.3: checked leads float to the TOP of the list. "Select next 40"
+    // picks the oldest-due (the real send order) while the list sorts
+    // newest-first, so without this the fresh selection lands scattered at
+    // the bottom. Stable partition: selected keep their relative order and
+    // so do the rest, so nothing else jumps around. (Under "Show selected"
+    // everything visible is selected — nothing to float.)
+    let floated = [];
+    let rest = visible;
+    if (!showSelectedOnly && selected.size) {
+      floated = visible.filter((l) => selected.has(l.id));
+      rest = visible.filter((l) => !selected.has(l.id));
+    }
+
+    // One template for every group heading (same treatment as the Needs
+    // Attention queue). The Selected group's count says "N of M" when a
+    // search is hiding part of the batch — the send button sends all M, and
+    // two adjacent "selected" numbers must never silently disagree.
+    const groupHtml = (label, count, items) => (items.length
+      ? `<div class="gc-att-group-h">${label} <span class="count">${count}</span></div>`
+        + items.map(leadCardHtml).join('')
+      : '');
+    const floatedCount = floated.length === selected.size
+      ? String(floated.length)
+      : `${floated.length} of ${selected.size}`;
+
     if (activeStage === 'all') {
-      // Grouped by stage, working order — same group-heading treatment as the
-      // Needs Attention queue.
-      listEl.innerHTML = STAGE_ORDER.map((s) => {
-        const group = visible.filter((l) => l.status === s);
-        if (!group.length) return '';
-        return `<div class="gc-att-group-h">${escapeHtml(STAGES[s].label)} <span class="count">${group.length}</span></div>`
-          + group.map(leadCardHtml).join('');
-      }).join('');
+      // Grouped by stage, working order. The floated selection gets its own
+      // heading so it doesn't read as a stray stage group.
+      listEl.innerHTML = groupHtml('Selected', floatedCount, floated)
+        + STAGE_ORDER.map((s) => {
+          const group = rest.filter((l) => l.status === s);
+          return groupHtml(escapeHtml(STAGES[s].label), group.length, group);
+        }).join('');
     } else {
-      listEl.innerHTML = visible.map(leadCardHtml).join('');
+      listEl.innerHTML = [...floated, ...rest].map(leadCardHtml).join('');
     }
   }
 
@@ -834,19 +866,16 @@
       } else {
         selected.delete(id);
       }
-      // Under "Show selected" the visible list IS the selection — a full
-      // render drops the unchecked card so the list never lies about what
-      // will be sent (blowing away the clicked box is fine: it's leaving).
-      if (showSelectedOnly) {
-        render();
-        return;
-      }
-      // WP4.2: the card's selected styling follows the box in place.
-      const card = box.closest('.lead-card');
-      if (card) card.classList.toggle('is-selected', box.checked);
-      // Only the summary bar's counts change — re-rendering the whole list
-      // here would blow away the checkbox the user just clicked.
-      renderMonthSummary(leads.filter(matchesMonth));
+      // WP4.3: a check/uncheck changes the card's LIST POSITION (checked
+      // leads float to the top; unchecked drop back into place), so every
+      // toggle is a full render now. This also keeps the "Show selected"
+      // view honest (an unchecked card leaves it). The rebuild resets
+      // keyboard focus to <body>, so put it back on the same lead's box —
+      // a keyboard user working a batch must not re-Tab from the page top
+      // after every Space.
+      render();
+      const rebuilt = document.querySelector(`input.lead-check[data-check="${id}"]`);
+      if (rebuilt) rebuilt.focus();
     });
     // The selection controls live inside the cohort summary, which is rebuilt
     // every render — delegate from the container (bound once here).

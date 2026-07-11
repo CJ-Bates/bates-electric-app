@@ -341,7 +341,9 @@
     .lead-month-quick { display: flex; gap: 8px; flex-wrap: wrap; }
     .lead-month-quick .filter { border-color: var(--line); }
     .lead-month-quick .filter.active { border-color: var(--accent); }
-    .lead-month-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; font-size: 0.9rem; }
+    /* scroll-margin: "Select next" scrolls this bar into view (leads.js) —
+       without it the bar would land underneath the sticky app topbar */
+    .lead-month-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; font-size: 0.9rem; scroll-margin-top: calc(64px + env(safe-area-inset-top, 0px)); }
     .lead-month-summary .month { font-weight: 700; color: var(--ink); }
     .lead-month-summary .detail { color: var(--ink-2); }
     /* WP4.1: invite selection controls on the cohort header */
