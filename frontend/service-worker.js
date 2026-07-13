@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v125';
+const CACHE = 'bates-shell-v126';
 const ASSETS = [
   './',
   './arrival-windows.js',

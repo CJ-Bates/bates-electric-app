@@ -467,8 +467,15 @@ const ENROLL_FIELDS = [
 ];
 
 // POST /api/generator-care/tech/enroll
-// Body: { customer_name (required), customer_phone?, customer_email?,
+// Body: { customer_name?, customer_phone?, customer_email?,
 //         install_address/city/state/zip?, generator_info?, send_email? }.
+// EVERY customer field is optional (WP6.1): the customer re-enters their
+// details at signup anyway, so capture only exists for follow-up if they
+// DON'T sign up on the spot. An empty enroll is a valid `field` lead — it
+// converts with real data on signup, and the office can delete an empty
+// non-converted one. (Deliberately looser than the office POST /leads,
+// which requires name/email/phone — that row is worked by hand; this one's
+// ?lead= URL is usually consumed within minutes.)
 // Returns { ok, lead_id, signup_url, emailed, email_error }. With
 // send_email:true (and an email on file) the existing FL-aware signup-link
 // email goes out too; a failed send still returns the URL — the QR is the
@@ -480,9 +487,6 @@ router.post('/enroll', async (req, res) => {
     for (const f of ENROLL_FIELDS) {
       const v = typeof body[f] === 'string' ? body[f].trim() : '';
       if (v) row[f] = v; // trimmed empties -> column stays null
-    }
-    if (!row.customer_name) {
-      return res.status(400).json({ error: 'Customer name is required.' });
     }
     if (row.customer_email && !EMAIL_RE.test(row.customer_email)) {
       return res.status(400).json({ error: 'That email address doesn\u2019t look right.' });

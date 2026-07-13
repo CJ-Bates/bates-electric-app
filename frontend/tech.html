@@ -47,6 +47,12 @@
     .td-enroll-text { flex: 1; min-width: 0; }
     .td-enroll-text strong { display: block; font-weight: 700; font-size: 0.95rem; color: var(--ink); }
     .td-enroll-text span { display: block; font-size: 0.8rem; color: var(--ink-2); margin-top: 2px; }
+    /* WP6.1 QR-first enroll sheet: the primary "Show signup QR" sits at the
+       TOP (works with nothing filled); the capture form below it is clearly
+       secondary/optional. */
+    .td-enroll-go { width: 100%; padding: 13px; font-size: 0.95rem; font-weight: 700; border-radius: var(--radius-sm); margin: 2px 0 4px; }
+    .td-enroll-opt { font-size: 0.74rem; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .td-enroll-opt span { display: block; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink-3); margin-top: 3px; }
 
     /* Up-next featured card */
     .td-upnext { background: linear-gradient(150deg, var(--navy-800), var(--navy-900)); border-radius: var(--radius); padding: 17px; color: #fff; box-shadow: var(--shadow-2); margin-bottom: 26px; position: relative; overflow: hidden; }

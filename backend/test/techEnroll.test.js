@@ -2,8 +2,9 @@
 // tests via the real shipped handler (test/helpers/routeHandler bypasses the
 // requireAuth/requireRole('tech') mounted via router.use in
 // routes/generator-tech.js). Covers: field-lead creation with the tech's
-// attribution + the pre-tagged ?lead= URL, the label fallback, validation
-// (name required, email shape), the optional-send path (advance to
+// attribution + the pre-tagged ?lead= URL, the label fallback, WP6.1's
+// every-field-optional posture (an EMPTY enroll succeeds; email is still
+// shape-checked when present), the optional-send path (advance to
 // signup_sent + invited_at stamp, FL branding) vs QR-only, and a failed send
 // still returning the URL without advancing the lead.
 require('./helpers/env');
@@ -125,16 +126,24 @@ test('empty/whitespace optional fields stay off the row (columns stay null)', as
   assert.equal('customer_email' in seen.insert, false);
 });
 
-test('missing customer name -> 400, nothing inserted', async () => {
+test('WP6.1: an EMPTY enroll succeeds — bare field lead, only the server-set columns', async () => {
   const seen = {};
   restoreSupabase = installMockSupabase(leadResolvers(seen));
 
   const res = makeRes();
-  await handler(techReq({ customer_phone: '(314) 555-0123' }), res);
+  await handler(techReq({}), res);
 
-  assert.equal(res.statusCode, 400);
-  assert.match(res.body.error, /name is required/i);
-  assert.equal(seen.insert, undefined);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.signup_url, EXPECTED_URL, 'a no-field enroll still returns a working ?lead= URL');
+
+  // Exactly the server-set columns — source/status/attribution — nothing else.
+  assert.deepEqual(Object.keys(seen.insert).sort(),
+    ['referred_by_label', 'referred_by_user_id', 'source', 'status']);
+  assert.equal(seen.insert.source, 'field');
+  assert.equal(seen.insert.status, 'new');
+  assert.equal(seen.insert.referred_by_user_id, TECH_ID);
+  assert.equal(brevoCalls.length, 0);
 });
 
 test('malformed email -> 400, nothing inserted', async () => {
