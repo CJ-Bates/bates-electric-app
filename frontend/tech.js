@@ -808,60 +808,96 @@
     }
   }
 
-  // ---- Field enrollment (Growth Engine WP6) ----
-  // A tech on any job enrolls a generator customer on the spot: capture the
-  // basics, POST /tech/enroll (creates a field-source lead attributed to this
-  // tech), then show the pre-tagged ?lead= signup URL as a QR the customer
-  // scans on their OWN phone. Signup through it auto-converts the lead (WP2's
-  // webhook attribution) — nothing else to do in the field.
+  // ---- Field enrollment (Growth Engine WP6, QR-first per WP6.1) ----
+  // A tech on any job enrolls a generator customer on the spot. The QR IS the
+  // flow: one tap opens this sheet, one more shows the pre-tagged ?lead=
+  // signup QR. The customer re-enters everything at signup, so EVERY capture
+  // field is optional — they exist only for follow-up if the customer doesn't
+  // sign up now. POST /tech/enroll creates the field-source lead attributed
+  // to this tech; a signup through the QR auto-converts it (WP2's webhook
+  // attribution). Bespoke sheet on the shared gc-rd-* classes (same reasoning
+  // as the office recipient-preview dialog in leads.js): openPrompt puts its
+  // confirm BELOW the fields, but "Show signup QR" must be the first thing on
+  // the sheet, above the optional form — not after a scroll.
   // MIRRORS backend EMAIL_RE in routes/generator-tech.js (separate deploys,
   // no bundler) — edit BOTH together.
   const ENROLL_EMAIL_RE = /^\S+@\S+\.\S+$/;
 
-  async function enrollCustomer() {
-    const vals = await openPrompt({
-      title: 'Enroll a customer',
-      message: 'Capture the basics \u2014 the QR code on the next screen takes them straight to signup.',
-      fields: [
-        { name: 'name', label: 'Customer name', required: true, placeholder: 'Jane Doe' },
-        { name: 'phone', label: 'Phone', type: 'tel', inputmode: 'tel', placeholder: '(314) 555-0123' },
-        { name: 'email', label: 'Email', type: 'email', placeholder: 'jane@example.com', hint: 'Optional \u2014 lets you email them the link too' },
-        { name: 'address', label: 'Street address', placeholder: 'Usually the job address' },
-        { name: 'city', label: 'City' },
-        { name: 'state', label: 'State', placeholder: 'MO', hint: '2-letter code' },
-        { name: 'zip', label: 'ZIP', inputmode: 'numeric' },
-        { name: 'generator', label: 'Generator make / model', placeholder: 'e.g. Generac 24kW' },
-        {
-          name: 'send', label: 'Signup link', type: 'select', value: 'qr',
-          options: [
-            { value: 'qr', label: 'Show QR only (they scan it now)' },
-            { value: 'email', label: 'Also email them the link' },
-          ],
-        },
-      ],
-      validate: (v) => {
-        const email = v.email.trim();
-        if (email && !ENROLL_EMAIL_RE.test(email)) return 'That email doesn\u2019t look right.';
-        if (v.send === 'email' && !email) return 'Enter their email to send the link.';
-        if (v.state.trim() && !/^[A-Za-z]{2}$/.test(v.state.trim())) return 'State should be the 2-letter code (e.g. MO).';
-        return '';
-      },
-      confirmText: 'Create signup QR',
-    });
-    if (vals === null) return;
+  function enrollCustomer() {
+    const overlay = document.createElement('div');
+    overlay.className = 'gc-rd-overlay';
+    const field = (name, label, extra = '', hint = '') =>
+      `<label class="gc-rd-field"><span>${label}</span><input data-name="${name}"${extra.includes('type=') ? '' : ' type="text"'}${extra}>${hint ? `<small>${hint}</small>` : ''}</label>`;
+    overlay.innerHTML = `
+      <div class="gc-rd-panel" role="dialog" aria-modal="true" aria-label="Enroll a customer">
+        <h3 class="gc-rd-title">Enroll a customer</h3>
+        <div class="gc-rd-sub">The QR takes them straight to signup &mdash; they enter their own details there.</div>
+        <button type="button" class="btn btn-primary td-enroll-go" data-enroll-go>Show signup QR</button>
+        <div class="td-enroll-opt">Add their info <span>(optional &mdash; for follow-up if they don&rsquo;t sign up now)</span></div>
+        ${field('name', 'Customer name', ' placeholder="Jane Doe"')}
+        ${field('phone', 'Phone', ' type="tel" inputmode="tel" placeholder="(314) 555-0123"')}
+        ${field('email', 'Email', ' type="email" placeholder="jane@example.com"', 'Lets you email them the link too')}
+        ${field('address', 'Street address', ' placeholder="Usually the job address"')}
+        ${field('city', 'City')}
+        ${field('state', 'State', ' placeholder="MO"')}
+        ${field('zip', 'ZIP', ' inputmode="numeric"')}
+        ${field('generator', 'Generator make / model', ' placeholder="e.g. Generac 24kW"')}
+        <label class="gc-rd-field"><span>Signup link</span>
+          <select data-name="send">
+            <option value="qr" selected>Show QR only (they scan it now)</option>
+            <option value="email">Also email them the link</option>
+          </select>
+        </label>
+        <div class="gc-rd-error" hidden></div>
+        <div class="gc-rd-actions">
+          <button type="button" class="btn btn-secondary gc-rd-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" data-enroll-go>Show signup QR</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const errEl = overlay.querySelector('.gc-rd-error');
+    const goBtns = overlay.querySelectorAll('[data-enroll-go]');
+    function close() { document.removeEventListener('keydown', onKey); overlay.remove(); }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('.gc-rd-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-    const phone = vals.phone.trim();
-    const body = {
-      customer_name: vals.name.trim(),
-      customer_phone: phone,
-      customer_email: vals.email.trim(),
-      install_address: vals.address.trim(),
-      install_city: vals.city.trim(),
-      install_state: vals.state.trim().toUpperCase(),
-      install_zip: vals.zip.trim(),
-      generator_info: vals.generator.trim(),
-      send_email: vals.send === 'email',
-    };
+    let busy = false; // one tap = one lead; swallow double-taps while POSTing
+    goBtns.forEach((btn) => btn.addEventListener('click', async () => {
+      if (busy) return;
+      const val = (n) => (overlay.querySelector(`[data-name="${n}"]`).value || '').trim();
+      const email = val('email');
+      const fail = (msg) => { errEl.textContent = msg; errEl.hidden = false; };
+      // The ONLY blocking checks involve the email itself; an empty sheet is
+      // a valid enroll (WP6.1) — the QR is never held up by the form.
+      if (email && !ENROLL_EMAIL_RE.test(email)) return fail('That email doesn\u2019t look right.');
+      if (val('send') === 'email' && !email) return fail('Enter their email to send the link.');
+      errEl.hidden = true;
+      busy = true;
+      goBtns.forEach((b) => { b.disabled = true; });
+      const ok = await submitEnroll({
+        customer_name: val('name'),
+        customer_phone: val('phone'),
+        customer_email: email,
+        install_address: val('address'),
+        install_city: val('city'),
+        install_state: val('state').toUpperCase(),
+        install_zip: val('zip'),
+        generator_info: val('generator'),
+        send_email: val('send') === 'email',
+      }, close);
+      if (!ok) { // sheet stays open so nothing typed is lost; retry works
+        busy = false;
+        goBtns.forEach((b) => { b.disabled = false; });
+      }
+    }));
+    setTimeout(() => goBtns[0].focus(), 30);
+  }
+
+  // POST the enroll; on success close the sheet (via closeSheet) and show the
+  // QR result. Returns false on any failure so the sheet can re-enable.
+  async function submitEnroll(body, closeSheet) {
     let data;
     try {
       const r = await BatesAuth.authFetch(`${TECH_BASE}/enroll`, {
@@ -870,17 +906,18 @@
         body: JSON.stringify(body),
       });
       data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(`Could not enroll: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      if (!r.ok) { showStatus(`Could not enroll: ${data.error || ('HTTP ' + r.status)}`, 'error'); return false; }
     } catch (e) {
       console.error('enroll failed', e);
       showStatus(`Failed: ${e.message}`, 'error');
-      return;
+      return false;
     }
+    closeSheet();
 
     // Result sheet: the QR is the headline; the link rides along as copyable
     // text plus a "text it to them" handoff that opens the tech's Messages.
     const links = [];
-    const telDigits = phone.replace(/[^\d+]/g, '');
+    const telDigits = body.customer_phone.replace(/[^\d+]/g, '');
     if (telDigits) {
       const smsBody = `Complete your Generator Care signup here: ${data.signup_url}`;
       links.push({ label: 'Text them the link', href: `sms:${telDigits}?&body=${encodeURIComponent(smsBody)}` });
@@ -895,6 +932,7 @@
       note: 'They scan this, sign up in a few minutes, and you\u2019re done \u2014 it\u2019ll show as enrolled automatically.',
       links,
     });
+    return true;
   }
 
   // ---- Init ----
