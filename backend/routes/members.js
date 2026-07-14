@@ -10,14 +10,14 @@
 // Mounted by server.js at /api/members.
 
 const express = require('express');
-const { supabaseAdmin, supabaseAnon } = require('../lib/supabase');
+const { supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const {
   requireAdmin,
   effectivePermissions,
   ALL_FLAGS,
 } = require('../middleware/permissions');
-const { sendEmail, DASHBOARD_URL } = require('../lib/emails');
+const { sendEmail, sendSetPasswordEmail, DASHBOARD_URL } = require('../lib/emails');
 
 const router = express.Router();
 
@@ -25,14 +25,6 @@ router.use(requireAuth, requireRole('office'), requireAdmin);
 
 function isOfficeEmail(email) {
   return !!email && /@bates-electric\.com$/i.test(String(email).trim());
-}
-
-// Resolve a safe origin for the set-password link we email (mirror of auth.js).
-function resolveLinkOrigin(req) {
-  const PROD = 'https://bates-electric-app.onrender.com';
-  const origin = (req.headers.origin || '').replace(/\/+$/, '');
-  const allowed = [PROD, 'http://localhost:4000', 'http://127.0.0.1:4000'];
-  return origin && allowed.includes(origin) ? origin : PROD;
 }
 
 // Map of auth.users id -> last_sign_in_at. The user count is tiny (staff +
@@ -129,9 +121,9 @@ router.post('/invite', async (req, res) => {
       .from('member_permissions')
       .upsert({ profile_id: created.user.id, updated_by: req.profile.id }, { onConflict: 'profile_id', ignoreDuplicates: true });
 
-    const redirectTo = `${resolveLinkOrigin(req)}/auth/reset-password-page`;
-    const { error: mailErr } = await supabaseAnon.auth.resetPasswordForEmail(email, { redirectTo });
-    if (mailErr) {
+    try {
+      await sendSetPasswordEmail({ email, name, mode: 'create' });
+    } catch (mailErr) {
       console.error('[members] office invite email failed:', mailErr.message);
       return res.json({
         ok: true,
@@ -152,14 +144,17 @@ router.post('/:id/resend-invite', async (req, res) => {
   try {
     const { data: member, error } = await supabaseAdmin
       .from('profiles')
-      .select('email, role')
+      .select('email, full_name, role')
       .eq('id', req.params.id)
       .single();
     if (error || !member) return res.status(404).json({ error: 'member not found' });
     if (member.role !== 'office') return res.status(400).json({ error: 'not an office account' });
-    const redirectTo = `${resolveLinkOrigin(req)}/auth/reset-password-page`;
-    const { error: mailErr } = await supabaseAnon.auth.resetPasswordForEmail(member.email, { redirectTo });
-    if (mailErr) return res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
+    try {
+      await sendSetPasswordEmail({ email: member.email, name: member.full_name, mode: 'create' });
+    } catch (mailErr) {
+      console.error('[members] resend invite email failed:', mailErr.message);
+      return res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('[members] resend invite error:', err && err.message);

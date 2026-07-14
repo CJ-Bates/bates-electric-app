@@ -4,8 +4,9 @@
 
 const express = require('express');
 const { requirePermission } = require('../../middleware/permissions');
-const { supabaseAdmin, supabaseAnon } = require('../../lib/supabase');
+const { supabaseAdmin } = require('../../lib/supabase');
 const { reportError } = require('../../middleware/error-reporter');
+const { sendSetPasswordEmail } = require('../../lib/emails');
 
 const router = express.Router();
 
@@ -17,14 +18,6 @@ const router = express.Router();
 // trigger from the email domain, so a tech's email MUST be *.bateselectric@gmail.com.
 function isTechEmail(email) {
   return !!email && /\.bateselectric@gmail\.com$/i.test(String(email).trim());
-}
-
-// Resolve a safe origin for the set-password link we email (mirror of auth.js).
-function resolveLinkOrigin(req) {
-  const PROD = 'https://bates-electric-app.onrender.com';
-  const origin = (req.headers.origin || '').replace(/\/+$/, '');
-  const allowed = [PROD, 'http://localhost:4000', 'http://127.0.0.1:4000'];
-  return origin && allowed.includes(origin) ? origin : PROD;
 }
 
 // GET /api/generator-care/techs — list tech accounts (for the assign picker +
@@ -75,10 +68,10 @@ router.post('/techs', requirePermission('tech_manage'), async (req, res) => {
       return res.status(400).json({ error: msg });
     }
 
-    // Send the tech a set-password link (reuses the existing recovery flow/page).
-    const redirectTo = `${resolveLinkOrigin(req)}/auth/reset-password-page`;
-    const { error: mailErr } = await supabaseAnon.auth.resetPasswordForEmail(email, { redirectTo });
-    if (mailErr) {
+    // Send the tech our branded "Create your password" email.
+    try {
+      await sendSetPasswordEmail({ email, name, mode: 'create' });
+    } catch (mailErr) {
       console.error('[generator-care] tech invite email failed:', mailErr.message);
       // Account exists; the office can resend the link. Surface a soft warning.
       return res.json({
@@ -101,14 +94,17 @@ router.post('/techs/:id/resend-invite', requirePermission('tech_manage'), async 
   try {
     const { data: tech, error } = await supabaseAdmin
       .from('profiles')
-      .select('email, role')
+      .select('email, full_name, role')
       .eq('id', req.params.id)
       .single();
     if (error || !tech) return res.status(404).json({ error: 'tech not found' });
     if (tech.role !== 'tech') return res.status(400).json({ error: 'not a tech account' });
-    const redirectTo = `${resolveLinkOrigin(req)}/auth/reset-password-page`;
-    const { error: mailErr } = await supabaseAnon.auth.resetPasswordForEmail(tech.email, { redirectTo });
-    if (mailErr) return res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
+    try {
+      await sendSetPasswordEmail({ email: tech.email, name: tech.full_name, mode: 'create' });
+    } catch (mailErr) {
+      console.error('[generator-care] resend tech invite email failed:', mailErr.message);
+      return res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('[generator-care] resend tech invite error:', err && err.message);

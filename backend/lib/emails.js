@@ -11,6 +11,7 @@
 
 const { sendViaBrevo } = require('./mailer');
 const { isFlorida, companyName } = require('./branding');
+const { supabaseAdmin } = require('./supabase');
 
 // ============================================================================
 // Brand constants -- single source of truth for everything visible
@@ -1002,6 +1003,86 @@ function buildEnrollmentInviteEmail({ name, contactType, signupUrl, unsubscribeU
   return { subject: 'Your generator, maintained and tracked — without the hassle', html, text };
 }
 
+// --- 13. Staff set-password (office/tech invites + password resets) ----------
+
+// Where the set-password page lives (frontend/reset-password.html on Netlify,
+// served for /auth/reset-password-page via frontend/_redirects). Supabase's
+// Site URL is NOT involved: we build the link ourselves in sendSetPasswordEmail.
+const PUBLIC_APP_ORIGIN = 'https://app.bates-electric.com';
+
+// Staff-only email (office members + field techs), so no FL/S.E. branding —
+// companyState stays unset and the default Bates Electric chrome is used.
+//   mode 'create' — brand-new account (invite / resend-invite)
+//   mode 'reset'  — existing account (forgot-password)
+function buildSetPasswordEmail({ name, actionUrl, mode }) {
+  const create = mode === 'create';
+  const safeName = name || 'there';
+  const subject = create
+    ? 'Create your Bates Electric password'
+    : 'Reset your Bates Electric password';
+  const heading = create ? 'Create your password' : 'Reset your password';
+
+  const body = create
+    ? `<p style="${P}">Welcome aboard! Your Bates Electric account is ready &mdash; all that&rsquo;s left is to choose the password you&rsquo;ll sign in with. The button below takes you to a secure page to set it up.</p>`
+    : `<p style="${P}">We received a request to reset the password for your Bates Electric account. Use the button below to choose a new one.</p>`;
+
+  const signoff =
+    `<p style="${P}margin-top:24px;">` +
+    (create
+      ? `This link expires after a while and can only be used once. If it stops working, ask the office to resend your invite.`
+      : `This link expires after a while and can only be used once. If you didn&rsquo;t request a password reset, you can safely ignore this email &mdash; your password won&rsquo;t change.`) +
+    `</p>` +
+    DEFAULT_SIGNOFF;
+
+  const html = renderBrandedEmail({
+    heading,
+    intro: `Hi ${escHtml(safeName)},`,
+    body,
+    ctaText: 'Set my password',
+    ctaUrl: actionUrl,
+    signoff,
+  });
+
+  const text = create
+    ? `Hi ${safeName},\n\n` +
+      `Welcome aboard! Your Bates Electric account is ready -- all that's left is to choose ` +
+      `the password you'll sign in with. Set it up here:\n\n${actionUrl}\n\n` +
+      `This link expires after a while and can only be used once. If it stops working, ask ` +
+      `the office to resend your invite.\n\n` +
+      `-- The Bates Electric team`
+    : `Hi ${safeName},\n\n` +
+      `We received a request to reset the password for your Bates Electric account. ` +
+      `Choose a new one here:\n\n${actionUrl}\n\n` +
+      `This link expires after a while and can only be used once. If you didn't request a ` +
+      `password reset, you can safely ignore this email -- your password won't change.\n\n` +
+      `-- The Bates Electric team`;
+
+  return { subject, html, text };
+}
+
+// Generates a Supabase recovery token for the account (WITHOUT sending
+// Supabase's generic email) and sends our own branded set-password email.
+// Throws on any failure — token generation or send — so callers keep their
+// existing warning/502 handling. NEVER log the token, hashed_token, or
+// actionUrl: any of them grants a password reset for the account.
+async function sendSetPasswordEmail({ email, name, mode }) {
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'recovery',
+    email,
+  });
+  if (error) throw new Error(`generateLink failed: ${error.message}`);
+  const hashedToken = data && data.properties && data.properties.hashed_token;
+  if (!hashedToken) throw new Error('generateLink returned no hashed_token');
+
+  const actionUrl =
+    `${PUBLIC_APP_ORIGIN}/auth/reset-password-page` +
+    `?token_hash=${encodeURIComponent(hashedToken)}&type=recovery`;
+
+  const { subject, html, text } = buildSetPasswordEmail({ name, actionUrl, mode });
+  const result = await sendEmail({ to: email, subject, html, text, logTag: '[set-password]' });
+  if (!result.sent) throw new Error(`set-password email send failed: ${result.reason || 'unknown'}`);
+}
+
 // ============================================================================
 // Module exports
 // ============================================================================
@@ -1036,6 +1117,8 @@ module.exports = {
   buildRefundReceiptEmail,
   buildSignupLinkEmail,
   buildEnrollmentInviteEmail,
+  buildSetPasswordEmail,
+  sendSetPasswordEmail,
   inviteGreeting,
   CONTACT_TYPES,
 

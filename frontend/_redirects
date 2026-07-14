@@ -27,3 +27,8 @@ https://my.bates-electric.com/ /my.html 200!
 /pdf-viewer      /pdf-viewer.html      200
 /reset-password  /reset-password.html  200
 /my              /my.html              200
+
+# Supabase recovery links (set-password invites + password resets) point at
+# /auth/reset-password-page?token_hash=...&type=recovery — serve the reset
+# page for them. 200 rewrite keeps the query string intact.
+/auth/reset-password-page  /reset-password.html  200
