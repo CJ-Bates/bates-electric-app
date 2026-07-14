@@ -3,6 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { supabaseAnon, supabaseAdmin, supabaseForUser } = require('../lib/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { getPermissionRow, effectivePermissions } = require('../middleware/permissions');
+const { sendSetPasswordEmail } = require('../lib/emails');
 
 const router = express.Router();
 
@@ -32,25 +33,6 @@ const generalAuthLimiter = rateLimit({
   legacyHeaders: false,
   message: RATE_LIMIT_MESSAGE,
 });
-
-const PROD_ORIGIN = 'https://bates-electric-app.onrender.com';
-
-// Pick a safe origin for links we email. Honor the caller's Origin header
-// when it looks like one of ours, otherwise fall back to the prod URL.
-function resolveOrigin(req) {
-  const origin = (req.headers.origin || '').replace(/\/+$/, '');
-  const allowed = [
-    PROD_ORIGIN,
-    'http://localhost:4000',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:4000',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173',
-  ];
-  if (origin && allowed.includes(origin)) return origin;
-  return PROD_ORIGIN;
-}
 
 // Mirror of the Postgres rule so we can fail fast with a clear message
 // before even hitting Supabase. The DB trigger is still the source of truth.
@@ -260,7 +242,7 @@ router.post('/change-password', generalAuthLimiter, requireAuth, async (req, res
 // POST /auth/forgot-password  { email }
 // Always returns { ok: true } regardless of whether the account exists,
 // so a caller can't probe for valid emails.
-// Uses Supabase's built-in email service so no domain verification is needed.
+// Sends our own branded email via lib/emails.js (generateLink + Brevo).
 router.post('/forgot-password', strictAuthLimiter, async (req, res) => {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string') {
@@ -270,25 +252,17 @@ router.post('/forgot-password', strictAuthLimiter, async (req, res) => {
   const normalized = email.toLowerCase().trim();
 
   // Always resolve to {ok:true} at the API layer so a caller can't probe
-  // for valid Bates addresses. Errors are logged server-side only.
+  // for valid Bates addresses. Errors are logged server-side only — including
+  // generateLink failing because the account doesn't exist.
   try {
     if (!allowedBatesEmail(normalized)) return res.json({ ok: true });
 
-    const origin = resolveOrigin(req);
-    const redirectTo = `${origin}/auth/reset-password-page`;
-
-    // Use Supabase's built-in auth email. Resend bounces on
-    // @bates-electric.com because onboarding@resend.dev fails SPF/DKIM.
-    // Supabase's own email service passes their mail server checks.
-    // Free-tier rate limit: 2 emails/hr (sufficient for production use).
-    const { error: resetErr } = await supabaseAnon.auth.resetPasswordForEmail(normalized, {
-      redirectTo,
-    });
-    if (resetErr) {
-      console.error('resetPasswordForEmail failed:', resetErr.message || resetErr);
-    }
+    // Our own branded email (Brevo) with a link to the set-password page on
+    // app.bates-electric.com — Supabase's generic template pointed the link at
+    // a host with no such route.
+    await sendSetPasswordEmail({ email: normalized, mode: 'reset' });
   } catch (err) {
-    console.error('forgot-password failed:', err);
+    console.error('forgot-password failed:', err && err.message);
   }
 
   return res.json({ ok: true });

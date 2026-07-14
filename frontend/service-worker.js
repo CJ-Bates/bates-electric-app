@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v126';
+const CACHE = 'bates-shell-v127';
 const ASSETS = [
   './',
   './arrival-windows.js',
@@ -68,6 +68,10 @@ self.addEventListener('activate', (e) => {
 // working no matter which URL form was navigated to.
 function canonicalPath(pathname) {
   const p = pathname.replace(/\/+$/, '') || '/';
+  // Supabase recovery links (?token_hash=...) land on this path; Netlify
+  // rewrites it to reset-password.html, so cache under that canonical key
+  // (never under the tokened URL).
+  if (p === '/auth/reset-password-page') return '/reset-password.html';
   return p !== '/' && /^\/[a-z0-9-]+$/i.test(p) ? p + '.html' : p;
 }
 

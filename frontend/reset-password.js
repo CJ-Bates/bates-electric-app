@@ -43,32 +43,23 @@
   }
 
   function init() {
-    const { access_token, type, error } = parseHash();
-
     const emailInput = document.getElementById('reset-email');
     const form = document.getElementById('reset-form');
     const submitBtn = document.getElementById('reset-submit');
 
-    if (error) {
-      showStatus(error, 'error');
-      if (submitBtn) submitBtn.disabled = true;
-      return;
-    }
-    if (!access_token || type !== 'recovery') {
-      showStatus('This reset link is invalid or expired. Request a new one from the sign-in page.', 'error');
-      if (submitBtn) submitBtn.disabled = true;
-      return;
-    }
-
-    // Populate the (readonly) email field so iOS Keychain can associate the new password.
-    const payload = decodeJwtPayload(access_token);
-    if (payload && payload.email && emailInput) {
-      emailInput.value = payload.email;
-    }
+    // Recovery access token, filled by whichever link flavor brought us here:
+    // the ?token_hash=... query (invite + reset emails) verified via the
+    // backend, or the legacy #access_token=... hash.
+    let accessToken = '';
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearStatus();
+
+      if (!accessToken) {
+        showStatus('This link is invalid or expired. Request a new one from the sign-in page.', 'error');
+        return;
+      }
 
       const newPw = document.getElementById('reset-new').value;
       const confirmPw = document.getElementById('reset-confirm').value;
@@ -85,22 +76,22 @@
       submitBtn.disabled = true;
       const label = submitBtn.querySelector('.btn-label');
       const prev = label ? label.textContent : '';
-      if (label) label.textContent = 'Updating…';
+      if (label) label.textContent = 'Saving…';
 
       try {
         const res = await fetch(`${API_BASE}/auth/reset-password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ access_token, new_password: newPw }),
+          body: JSON.stringify({ access_token: accessToken, new_password: newPw }),
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
-          showStatus(body.error || 'Could not update password.', 'error');
+          showStatus(body.error || 'Could not set password.', 'error');
           submitBtn.disabled = false;
           if (label) label.textContent = prev;
           return;
         }
-        showStatus('Password updated. Redirecting to sign in…', 'success');
+        showStatus('Password set. Redirecting to sign in…', 'success');
         setTimeout(() => {
           window.location.replace('/');
         }, 1200);
@@ -110,6 +101,59 @@
         if (label) label.textContent = prev;
       }
     });
+
+    // Modern links: ?token_hash=...&type=recovery — exchange the token hash
+    // for a session via the backend before enabling the form.
+    const query = new URLSearchParams(window.location.search);
+    const tokenHash = query.get('token_hash') || '';
+    if (tokenHash && query.get('type') === 'recovery') {
+      submitBtn.disabled = true;
+      showStatus('Verifying your link…', 'info');
+      fetch(`${API_BASE}/auth/verify-recovery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token_hash: tokenHash }),
+      })
+        .then(async (res) => {
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || !body.access_token) {
+            showStatus(body.error || 'This link is invalid or expired. Request a new one from the sign-in page.', 'error');
+            return;
+          }
+          accessToken = body.access_token;
+          // Populate the (readonly) email field so iOS Keychain can associate
+          // the new password.
+          if (body.email && emailInput) emailInput.value = body.email;
+          clearStatus();
+          submitBtn.disabled = false;
+        })
+        .catch(() => {
+          showStatus('Network error verifying your link. Refresh the page to try again.', 'error');
+        });
+      return;
+    }
+
+    // Legacy links: token delivered in the URL hash (#access_token=...).
+    const { access_token, type, error } = parseHash();
+
+    if (error) {
+      showStatus(error, 'error');
+      if (submitBtn) submitBtn.disabled = true;
+      return;
+    }
+    if (!access_token || type !== 'recovery') {
+      showStatus('This link is invalid or expired. Request a new one from the sign-in page.', 'error');
+      if (submitBtn) submitBtn.disabled = true;
+      return;
+    }
+
+    accessToken = access_token;
+
+    // Populate the (readonly) email field so iOS Keychain can associate the new password.
+    const payload = decodeJwtPayload(access_token);
+    if (payload && payload.email && emailInput) {
+      emailInput.value = payload.email;
+    }
   }
 
   if (document.readyState === 'loading') {
