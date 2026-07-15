@@ -11,6 +11,7 @@ const { supabaseAdmin: supabase } = require('../lib/supabase');
 const catalog = require('../lib/generator-catalog');
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildRefundReceiptEmail } = require('../lib/emails');
+const { recordConsent, sendSms, buildOptInConfirmationSms, CONSENT_TEXT } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -332,6 +333,37 @@ async function handleSubscriptionCreated(subscription) {
   } catch (e) {
     reportError(
       new Error(`lead attribution failed for subscription ${subscription.id} (lead_id ${meta.lead_id}): ${(e && e.message) || e}`),
+      webhookErrCtx
+    ).catch(() => {});
+  }
+
+  // 8. SMS consent (Phase 1). The signup form's UNCHECKED opt-in checkbox
+  // rides in as metadata sms_opt_in='true' (bates-generator create-checkout.js
+  // — the checkbox label MIRRORS CONSENT_TEXT.signup; edit both together).
+  // Writes the legal consent row, then the carrier-required opt-in
+  // confirmation text (copy 6) — which sendSms still gates on the kill-switch.
+  // Additive + non-throwing, like every step after the subscription insert.
+  try {
+    if (meta.sms_opt_in === 'true' && customer.phone) {
+      const consentRow = await recordConsent({
+        customerId: customer.id,
+        phone: customer.phone,
+        optedIn: true,
+        source: 'signup',
+        consentText: CONSENT_TEXT.signup,
+      });
+      if (consentRow) {
+        await sendSms({
+          toPhone: customer.phone,
+          body: buildOptInConfirmationSms({ installState: customer.install_state }),
+          customerId: customer.id,
+          ignoreQuietHours: true, // immediate ack of an action the customer just took
+        });
+      }
+    }
+  } catch (e) {
+    reportError(
+      new Error(`sms signup consent failed for subscription ${subscription.id}: ${(e && e.message) || e}`),
       webhookErrCtx
     ).catch(() => {});
   }

@@ -16,6 +16,7 @@ const {
   sendCardUpdateLinkEmail,
 } = require('../../lib/gcShared');
 const { sendEmail, buildWelcomeEmail, buildCancellationEmail } = require('../../lib/emails');
+const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, CONSENT_TEXT } = require('../../lib/sms');
 const planChange = require('../../lib/planChange');
 
 const router = express.Router();
@@ -197,12 +198,47 @@ router.get('/subscriptions/:id', async (req, res) => {
       console.log('[generator-care] visit preferences unavailable (migration pending?):', e && e.message);
     }
 
+    // SMS state (Phase 1): the customer's consent row + the latest outbound
+    // text per visit, so the visit rows can show sent/blocked/confirmed and
+    // the contact card shows opted-in/out. Graceful no-op pre-025.
+    let smsConsent = null;
+    let visitSms = {};
+    try {
+      const customerId = subR.data && subR.data.customer && subR.data.customer.id;
+      if (customerId) {
+        const { data: consentRows, error: consentErr } = await supabaseAdmin
+          .from('generator_sms_consent')
+          .select('phone, opted_in, opted_out, source, opted_in_at, opted_out_at')
+          .eq('customer_id', customerId)
+          .order('updated_at', { ascending: false });
+        if (!consentErr && consentRows && consentRows.length) smsConsent = consentRows[0];
+      }
+      const visitIds = (visitsR.data || []).map((v) => v.id);
+      if (visitIds.length) {
+        const { data: msgRows, error: msgErr } = await supabaseAdmin
+          .from('generator_sms_messages')
+          .select('related_visit_id, direction, status, detail, created_at')
+          .in('related_visit_id', visitIds)
+          .eq('direction', 'out')
+          .order('created_at', { ascending: false });
+        if (!msgErr && msgRows) {
+          for (const m of msgRows) {
+            if (!visitSms[m.related_visit_id]) visitSms[m.related_visit_id] = m; // newest wins
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[generator-care] sms state unavailable (migration pending?):', e && e.message);
+    }
+
     res.json({
       subscription: subR.data,
       visits: visitsR.data || [],
       pending_addons: addonsR.data || [],
       adhoc_charges: adhocR.data || [],
       visit_preferences: visitPreferences,
+      sms_consent: smsConsent,
+      visit_sms: visitSms,
     });
   } catch (err) {
     console.error('[generator-care] subscription detail error:', err);
@@ -953,6 +989,54 @@ router.patch('/customers/:id', requirePermission('customer_edit'), async (req, r
     res.json({ ok: true, customer: updated });
   } catch (err) {
     console.error('[generator-care] customer patch error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/customers/:id/sms-consent { opt_in: boolean }
+// Office records SMS consent for a customer (SMS Phase 1) — the "customer
+// agreed verbally on the phone / at the door" path. Writes the legal consent
+// row (source 'office') against the phone we have on file; opting in sends
+// the carrier-required confirmation text (copy 6), still behind the
+// SMS_ENABLED kill-switch inside sendSms. Same permission as editing the
+// customer's contact info — it's a customer-record change, no money moved.
+router.post('/customers/:id/sms-consent', requirePermission('customer_edit'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const optIn = !!(req.body && req.body.opt_in === true);
+
+    const { data: customer, error: custErr } = await supabaseAdmin
+      .from('generator_customers')
+      .select('id, phone, install_state')
+      .eq('id', id)
+      .maybeSingle();
+    if (custErr) throw custErr;
+    if (!customer) return res.status(404).json({ error: 'customer not found' });
+
+    const phone = normalizePhone(customer.phone);
+    if (!phone) return res.status(400).json({ error: 'No usable mobile number on file for this customer. Add a phone first.' });
+
+    const row = await recordConsent({
+      customerId: customer.id,
+      phone,
+      optedIn: optIn,
+      source: 'office',
+      consentText: CONSENT_TEXT.office,
+    });
+    if (!row) return res.status(500).json({ error: 'Could not save consent. Try again.' });
+
+    if (optIn) {
+      await sendSms({
+        toPhone: phone,
+        body: buildOptInConfirmationSms({ installState: customer.install_state }),
+        customerId: customer.id,
+        ignoreQuietHours: true, // immediate ack of consent the customer just gave
+      });
+    }
+
+    res.json({ ok: true, sms_consent: { opted_in: !!(row.opted_in && !row.opted_out), phone } });
+  } catch (err) {
+    console.error('[generator-care] sms-consent error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

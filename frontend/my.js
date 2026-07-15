@@ -332,6 +332,7 @@
     renderGenerator(o);
     renderVisits(o.visits || []);
     renderPlan(o.plan);
+    renderSmsCard(o.sms, o.customer);
     renderAddons(o.addons || {});
     renderReceipts(o.invoices || []);
     renderCancelCard(o.plan);
@@ -350,6 +351,44 @@
     }
     $('sub').textContent = (bits.length ? bits[0] + ' — ' : '')
       + genLabel + ' generator · ' + planLabelShort(o.plan && o.plan.plan);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Appointment texts (SMS Phase 1). The card only appears when a usable
+  // mobile number is on file (the API decides — sms.available); the checkbox
+  // mirrors the stored consent state and each flip writes a consent row
+  // server-side. The label text MIRRORS the backend CONSENT_TEXT — the exact
+  // language is the legal record, edit both together.
+  // ---------------------------------------------------------------------------
+  function renderSmsCard(sms, customer) {
+    const card = $('sms-card');
+    if (!card) return;
+    if (!sms || !sms.available) { card.hidden = true; return; }
+    card.hidden = false;
+    $('sms-phone-line').textContent = 'We’ll text ' + ((customer && customer.phone) || 'your number on file') + ' about upcoming visits.';
+    $('sms-toggle').checked = !!sms.opted_in;
+  }
+
+  async function onSmsToggle(e) {
+    const box = e.target;
+    const optIn = !!box.checked;
+    box.disabled = true;
+    try {
+      const r = await api('/api/my/sms-consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opt_in: optIn }),
+      });
+      if (overview) overview.sms = { available: true, opted_in: !!r.opted_in };
+      showStatus(optIn
+        ? 'You’re signed up for appointment texts.'
+        : 'Appointment texts are turned off.', 'success');
+    } catch (err) {
+      box.checked = !optIn; // revert — the server didn't take it
+      surface(err);
+    } finally {
+      box.disabled = false;
+    }
   }
 
   function renderHero(nextVisit) {
@@ -915,6 +954,7 @@
 
     $('btn-reschedule').addEventListener('click', onReschedule);
     $('btn-calendar').addEventListener('click', onAddToCalendar);
+    $('sms-toggle').addEventListener('change', onSmsToggle);
     $('btn-switch').addEventListener('click', onSwitchPlan);
     $('btn-billing').addEventListener('click', onBillingPortal);
     $('btn-add-addon').addEventListener('click', onAddAddon);
