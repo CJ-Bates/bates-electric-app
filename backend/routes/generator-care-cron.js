@@ -6,6 +6,8 @@ const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendViaBrevo } = require('../lib/mailer');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
+const { sendSms, buildReminderSms } = require('../lib/sms');
+const { DASHBOARD_URL } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -150,6 +152,118 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  reportError(err, { route: '/api/cron/generator-care/daily-email', method: 'POST', user: 'gc-cron' }).catch(() => {});
  res.status(500).json({ error: 'Server error' });
  }
+});
+
+// ============================================================================
+// SMS appointment reminders (Phase 2).
+// POST /api/cron/generator-care/sms-reminders — fired daily at ~8am Central
+// (must land inside the 8am-9pm quiet-hours window or sendSms refuses every
+// send). Two passes: visits whose appointment falls 3 days from now, and
+// visits whose appointment is today. Read-only except the per-visit stamp
+// columns (026) — reminders never touch the appointment itself.
+//
+// Idempotency: each pass only selects visits whose stamp column is null, and
+// stamps it ONLY on a TERMINAL sendSms result — 'sent', or the permanent
+// refusals 'no_consent' / 'opted_out' / 'invalid_phone'. Transient outcomes
+// ('disabled' kill-switch, 'quiet_hours', 'failed') leave the column null so
+// the next daily run retries. Every attempt, refusals included, is already
+// logged to generator_sms_messages by sendSms — never pre-filter consent here.
+// ============================================================================
+
+const REMINDER_TERMINAL_STATUSES = ['sent', 'no_consent', 'opted_out', 'invalid_phone'];
+
+// A calendar date in Central time, as 'YYYY-MM-DD' (en-CA renders ISO order).
+function centralDateStr(d) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+}
+
+// 'YYYY-MM-DD' + n days -> 'YYYY-MM-DD'. Noon-UTC parse dodges date rolls.
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// One reminder pass: every scheduled, unstamped visit whose appointment falls
+// on targetDateStr IN CENTRAL TIME. appointment_at is a timestamptz, so the
+// query grabs a UTC superset ([target-1d, target+2d) covers every instant
+// that could render as the target Central date) and the exact Central-date
+// match happens in JS — same Intl clock the rest of the app uses.
+async function runReminderPass({ targetDateStr, stampColumn, isToday, now }) {
+  const summary = { considered: 0, sent: 0, skipped: 0 };
+  const { data: visits, error } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id, appointment_at, arrival_window, sms_confirmed_at, subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
+    .eq('status', 'scheduled')
+    .is(stampColumn, null)
+    .not('appointment_at', 'is', null)
+    .gte('appointment_at', addDays(targetDateStr, -1) + 'T00:00:00Z')
+    .lt('appointment_at', addDays(targetDateStr, 2) + 'T00:00:00Z');
+  if (error) throw error;
+
+  for (const v of visits || []) {
+    if (centralDateStr(new Date(v.appointment_at)) !== targetDateStr) continue;
+    summary.considered++;
+
+    const customer = (v.subscription && v.subscription.customer) || null;
+    if (!customer || !customer.phone) { summary.skipped++; continue; }
+
+    // sendSms owns every gate (consent, SMS_ENABLED, quiet hours) and logs
+    // the attempt either way — the pass just builds the copy and reads the
+    // verdict. Sequential on purpose: volume is tiny and it keeps the
+    // stamp-after-send ordering obvious.
+    const result = await sendSms({
+      toPhone: customer.phone,
+      body: buildReminderSms({
+        installState: customer.install_state,
+        dateStr: targetDateStr,
+        windowCode: v.arrival_window,
+        link: DASHBOARD_URL,
+        confirmed: !!v.sms_confirmed_at,
+        isToday,
+      }),
+      customerId: customer.id,
+      relatedVisitId: v.id,
+      now,
+    });
+    if (result.status === 'sent') summary.sent++; else summary.skipped++;
+
+    if (REMINDER_TERMINAL_STATUSES.includes(result.status)) {
+      const { error: stampErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ [stampColumn]: (now || new Date()).toISOString() })
+        .eq('id', v.id);
+      // A failed stamp risks a duplicate text tomorrow — make it loud.
+      if (stampErr) {
+        console.error('[gc-cron] reminder stamp failed for visit ' + v.id + ':', stampErr.message);
+        reportError(new Error('sms reminder stamp failed for visit ' + v.id + ': ' + stampErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+      }
+    }
+  }
+  return summary;
+}
+
+// POST /api/cron/generator-care/sms-reminders
+// No Healthchecks ping here — HEALTHCHECKS_URL is the daily digest's
+// dead-man's switch; pinging it from a second cron would mask digest outages.
+router.post('/sms-reminders', requireCronSecret, async (req, res) => {
+  try {
+    const now = new Date();
+    const todayCentral = centralDateStr(now);
+    const threeDay = await runReminderPass({
+      targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', isToday: false, now,
+    });
+    const dayOf = await runReminderPass({
+      targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', isToday: true, now,
+    });
+    res.json({ ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf });
+  } catch (err) {
+    console.error('[gc-cron] sms-reminders error:', err && err.message);
+    reportError(err, { route: '/api/cron/generator-care/sms-reminders', method: 'POST', user: 'gc-cron' }).catch(() => {});
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Helpers --------------------------------------------------
@@ -436,3 +550,6 @@ function escapeHtml(s) {
 }
 
 module.exports = router;
+// Offline-test seam (same pattern as generator-webhook.js) — lets the reminder
+// pass run with a pinned clock and mocked supabase, no HTTP/cron secret needed.
+module.exports._test = { runReminderPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES };

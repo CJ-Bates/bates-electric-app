@@ -150,6 +150,19 @@ function buildRescheduleReplySms({ installState, link }) {
     MDASH + ' ' + smsBrand(installState);
 }
 
+// (3)/(4) APPOINTMENT REMINDER — the Phase 2 cron sends one 3 days out and
+// one the morning of. Confirmation-aware: once the customer has replied Y
+// (visit.sms_confirmed_at set) the reminder just reminds — it never re-asks
+// for a Y. Legacy visits without an arrival window omit the window clause.
+function buildReminderSms({ installState, dateStr, windowCode, link, confirmed, isToday }) {
+  const windowText = smsWindowText(windowCode);
+  const when = (isToday ? 'today' : 'on ' + fmtSmsDate(dateStr)) + (windowText ? ', ' + windowText : '');
+  const lead = smsBrand(installState) + ' reminder: your generator maintenance is ' + when + '.';
+  return confirmed
+    ? lead + ' Need a different time? Tap ' + link + '.'
+    : lead + ' Reply Y to confirm, or tap ' + link + ' to reschedule.';
+}
+
 // (6) OPT-IN CONFIRMATION — the moment a customer opts in (carrier-required
 // disclosures: frequency, rates, HELP/STOP).
 function buildOptInConfirmationSms({ installState }) {
@@ -359,6 +372,7 @@ module.exports = {
   smsWindowText,
   buildBookingConfirmationSms,
   buildConfirmedReplySms,
+  buildReminderSms,
   buildRescheduleReplySms,
   buildOptInConfirmationSms,
   getConsent,
