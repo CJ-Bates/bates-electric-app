@@ -911,10 +911,34 @@
       </div>`;
   }
 
-  function renderContactCard(customer) {
+  // SMS consent block (Phase 1) — lives OUTSIDE gc-contact-region so the
+  // contact edit/cancel re-render can't wipe it. Shows the consent state and
+  // the office "record consent" control (verbal opt-in path); the backend
+  // writes the legal consent row (source 'office').
+  function renderSmsConsentBlock(customer, smsConsent) {
+    const hasPhone = !!(customer.phone && String(customer.phone).trim());
+    let stateHtml;
+    let action = '';
+    if (smsConsent && smsConsent.opted_in && !smsConsent.opted_out) {
+      stateHtml = `<span class="chip chip-ok">Opted in</span> <span class="gc-meta-label">via ${escapeHtml(smsConsent.source || '?')}${smsConsent.opted_in_at ? ' &middot; ' + fmtDate(String(smsConsent.opted_in_at).slice(0, 10)) : ''}</span>`;
+      action = `<button type="button" class="btn btn-ghost btn-sm" id="gc-sms-consent-btn" data-optin="false">Record opt-out</button>`;
+    } else if (smsConsent && smsConsent.opted_out) {
+      stateHtml = `<span class="chip chip-warn">Opted out</span>${smsConsent.opted_out_at ? ` <span class="gc-meta-label">${fmtDate(String(smsConsent.opted_out_at).slice(0, 10))}</span>` : ''}`;
+      action = hasPhone ? `<button type="button" class="btn btn-ghost btn-sm" id="gc-sms-consent-btn" data-optin="true">Record opt-in</button>` : '';
+    } else {
+      stateHtml = `<span class="gc-meta-label">Not opted in</span>`;
+      action = hasPhone
+        ? `<button type="button" class="btn btn-ghost btn-sm" id="gc-sms-consent-btn" data-optin="true">Record consent</button>`
+        : `<span class="gc-meta-label">(no phone on file)</span>`;
+    }
+    return `<div class="gc-card-row"><span class="gc-meta-label">Appointment texts</span><span class="gc-meta-value" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${stateHtml}${action}</span></div>`;
+  }
+
+  function renderContactCard(customer, smsConsent) {
     return `
       <div class="gc-card">
         <div id="gc-contact-region">${renderContactRead(customer)}</div>
+        ${renderSmsConsentBlock(customer, smsConsent)}
         <div class="gc-note-editor">
           <span class="gc-meta-label" style="display:block;margin-bottom:6px;">Internal note (office only)</span>
           <textarea id="gc-customer-note" data-customer-id="${customer.id}" placeholder="Anything Amy or Brenda should know about this customer.">${escapeHtml(customer.notes || '')}</textarea>
@@ -1076,7 +1100,24 @@
   // Three clear states per visit: Needs scheduling (due, not booked) / Scheduled
   // (booked date + arrival window) / Completed. The plan-driven DUE date stays
   // separate and is shown as context.
-  function renderVisitsCard(visits, subscription, visitPreferences) {
+  // Human line for the latest outbound text on a visit (from visit_sms in the
+  // detail payload). Status names come from lib/sms.js's message log.
+  function smsStatusLine(m) {
+    if (!m) return null;
+    const when = m.created_at ? ' ' + fmtDate(String(m.created_at).slice(0, 10)) : '';
+    switch (m.status) {
+      case 'sent': return 'Confirmation text sent' + when;
+      case 'disabled': return 'Text logged, not sent (texting is off)' + when;
+      case 'no_consent': return 'Text not sent &mdash; customer has not opted in';
+      case 'opted_out': return 'Text not sent &mdash; customer opted out';
+      case 'quiet_hours': return 'Text skipped (outside 8am&ndash;9pm)' + when;
+      case 'failed': return 'Text failed to send' + when;
+      default: return null;
+    }
+  }
+
+  function renderVisitsCard(visits, subscription, visitPreferences, visitSms) {
+    visitSms = visitSms || {};
     const prefByVisit = {};
     (visitPreferences || []).forEach((p) => {
       // Rows arrive newest-first; keep the newest pending row per visit.
@@ -1107,6 +1148,8 @@
         badge = `<span class="badge badge-neutral">Completed${v.completed_date ? ' ' + fmtDate(v.completed_date) : ''}</span>`;
       } else if (scheduled) {
         badge = `<span class="badge badge-ok">Scheduled &middot; ${escapeHtml(fmtAppt(v.appointment_at, v.arrival_window))}</span>`;
+        // Customer replied Y to the confirmation text (SMS Phase 1).
+        if (v.sms_confirmed_at) badge += ` <span class="badge badge-ok">Confirmed by text</span>`;
       } else {
         badge = `<span class="badge badge-warn">Needs scheduling</span>`;
       }
@@ -1120,6 +1163,10 @@
 
       // Dispatch: who's assigned (shown for open visits; completed shows completed_by).
       if (!completed && v.assigned_tech_id) audit.push(`Assigned: ${escapeHtml(techName(v.assigned_tech_id))}`);
+
+      // Latest outbound text for this visit (sent / logged-not-sent / blocked).
+      const smsLine = !completed && smsStatusLine(visitSms[v.id]);
+      if (smsLine) audit.push(smsLine);
 
       let actions = '';
       if (!completed) {
@@ -1365,7 +1412,7 @@
       scope.querySelectorAll('.gc-standing-cb').forEach((cb) => { cb.disabled = true; });
     }
     if (!userPerms.customer_edit) {
-      drop('#gc-contact-edit-btn, #gc-generator-edit-btn, #gc-save-note-btn, #gc-next-visit-save');
+      drop('#gc-contact-edit-btn, #gc-generator-edit-btn, #gc-save-note-btn, #gc-next-visit-save, #gc-sms-consent-btn');
     }
     if (!userPerms.tech_manage) {
       scope.querySelectorAll('[data-assign-visit]').forEach((sel) => { sel.disabled = true; });
@@ -1391,7 +1438,7 @@
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { subscription, visits, pending_addons, adhoc_charges = [], visit_preferences = [] } = await r.json();
+      const { subscription, visits, pending_addons, adhoc_charges = [], visit_preferences = [], sms_consent = null, visit_sms = {} } = await r.json();
       const c = subscription.customer || {};
       title.textContent = fmtNameCase(c.name) || 'Customer';
       const isCanceled = subscription.status === 'canceled';
@@ -1406,10 +1453,10 @@
 
       body.innerHTML =
         renderHeaderBar(c, subscription) +
-        renderContactCard(c) +
+        renderContactCard(c, sms_consent) +
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons, openVisit) +
-        renderVisitsCard(visits, subscription, visit_preferences) +
+        renderVisitsCard(visits, subscription, visit_preferences, visit_sms) +
         renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) +
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
@@ -1493,6 +1540,9 @@
 
       const contactEditBtn = body.querySelector('#gc-contact-edit-btn');
       if (contactEditBtn) contactEditBtn.addEventListener('click', () => enterContactEdit(c, id));
+
+      const smsConsentBtn = body.querySelector('#gc-sms-consent-btn');
+      if (smsConsentBtn) smsConsentBtn.addEventListener('click', () => recordSmsConsent(c, smsConsentBtn.dataset.optin === 'true', id));
 
       const genEditBtn = body.querySelector('#gc-generator-edit-btn');
       if (genEditBtn) genEditBtn.addEventListener('click', () => enterGeneratorEdit(subscription));
@@ -2663,6 +2713,40 @@
       if (ltEl) ltEl.innerHTML = fail;
       const invEl = body.querySelector('#gc-invoices-body');
       if (invEl) invEl.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load invoices &mdash; refresh to retry.</div>`;
+    }
+  }
+
+  // Record SMS consent for a customer (office path, SMS Phase 1). The confirm
+  // spells out what "record consent" legally means — the office should only
+  // click it after the customer actually agreed (phone call / at the door).
+  async function recordSmsConsent(customer, optIn, subId) {
+    const phoneStr = fmtPhoneDisplay(customer.phone) || customer.phone || '';
+    const ok = await openConfirm(optIn
+      ? {
+          title: 'Record text opt-in?',
+          message: `Only record this after ${fmtNameCase(customer.name) || 'the customer'} clearly agreed (on the phone or in person) to receive appointment reminder and confirmation texts at ${phoneStr}. This is the legal consent record. They'll get a confirmation text when texting is enabled.`,
+          confirmText: 'Customer agreed - record it',
+        }
+      : {
+          title: 'Record text opt-out?',
+          message: `Stops all Generator Care texts to ${phoneStr}. Recorded with today's date.`,
+          confirmText: 'Record opt-out',
+          danger: true,
+        });
+    if (!ok) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/customers/${customer.id}/sms-consent`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opt_in: optIn }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      showStatus(optIn ? 'Text opt-in recorded.' : 'Text opt-out recorded.', 'success');
+      showDetail(subId);
+    } catch (err) {
+      console.error('[sms-consent] failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
     }
   }
 

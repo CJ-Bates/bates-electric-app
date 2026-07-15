@@ -41,13 +41,16 @@ async function scheduleServiceVisit({ visitId, appointmentAt, arrivalWindow, boo
       scheduled_by: bookedBy,
       scheduled_at: new Date().toISOString(),
       status: 'scheduled',
+      // A (re)booked time needs a fresh "Reply Y" — any earlier text
+      // confirmation was for the old slot (sql/025).
+      sms_confirmed_at: null,
     })
     .eq('id', visitId)
     .neq('status', 'completed');
   if (assignedTechId) update = update.eq('assigned_tech_id', assignedTechId);
 
   const { data: updated, error } = await update
-    .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(name, email, install_state))')
+    .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(id, name, email, phone, install_state))')
     .maybeSingle();
   if (error) throw error;
 

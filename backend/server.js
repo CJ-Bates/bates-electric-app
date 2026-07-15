@@ -13,6 +13,7 @@ const generatorCareCronRouter = require('./routes/generator-care-cron');
 const generatorCarePublicRouter = require('./routes/generator-care-public');
 const customerRouter = require('./routes/customer');
 const membersRouter = require('./routes/members');
+const smsInboundRouter = require('./routes/sms-inbound');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
 const { requireAuth } = require('./middleware/auth');
 const { CONTACTS_DIRECTORY } = require('./lib/contactsDirectory');
@@ -105,6 +106,9 @@ app.use('/api/generator-care', generatorCareRouter);
 app.use('/api/cron/generator-care', generatorCareCronRouter);
 // Customer Dashboard v1 (my.html) — customer-role-gated, read-mostly portal.
 app.use('/api/my', customerRouter);
+// SimpleTexting inbound-SMS webhook — public by necessity (the provider can't
+// authenticate), but shared-secret-verified + rate-limited inside the router.
+app.use('/api/sms', smsInboundRouter);
 // Member management (Members page) — admin-gated inside the router.
 app.use('/api/members', membersRouter);
 

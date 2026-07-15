@@ -9,7 +9,8 @@ const { supabaseAdmin } = require('../../lib/supabase');
 const { completeServiceVisit } = require('../../lib/completeVisit');
 const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
 const { arrivalWindow, arrivalWindowLabel } = require('../../lib/generator-catalog');
-const { sendEmail, buildVisitScheduledEmail } = require('../../lib/emails');
+const { sendEmail, buildVisitScheduledEmail, DASHBOARD_URL } = require('../../lib/emails');
+const { sendSms, buildBookingConfirmationSms } = require('../../lib/sms');
 const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
@@ -123,6 +124,26 @@ router.post('/visits/:id/schedule', async (req, res) => {
         logTag: '[visit-scheduled-email]',
         companyState: customer.install_state,
       }).catch((e) => console.error('[visit-scheduled-email] unexpected:', e && e.message));
+    }
+
+    // SMS booking confirmation (Phase 1). sendSms owns every guard — consent,
+    // the SMS_ENABLED kill-switch, quiet hours — and logs refused sends, so
+    // this call is unconditional when a phone exists. Fire-and-forget: a text
+    // hiccup must never fail the booking Amy just made.
+    if (customer && customer.phone) {
+      const body = buildBookingConfirmationSms({
+        name: customer.name,
+        installState: customer.install_state,
+        dateStr: updated.appointment_at ? updated.appointment_at.slice(0, 10) : null,
+        windowCode: updated.arrival_window,
+        link: DASHBOARD_URL,
+      });
+      sendSms({
+        toPhone: customer.phone,
+        body,
+        customerId: customer.id,
+        relatedVisitId: updated.id,
+      }).catch((e) => console.error('[visit-scheduled-sms] unexpected:', e && e.message));
     }
 
     res.json({ ok: true, visit: updated });

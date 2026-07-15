@@ -25,6 +25,7 @@ const { computePlanBilling, changePlanAtRenewal } = require('../lib/planChange')
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildCancellationEmail } = require('../lib/emails');
 const { companyName, isFlorida } = require('../lib/branding');
+const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, CONSENT_TEXT } = require('../lib/sms');
 
 const router = express.Router();
 
@@ -224,6 +225,28 @@ router.get('/overview', readLimiter, async (req, res) => {
       }
     }
 
+    // SMS consent state for the "Text me appointment reminders" toggle.
+    // Graceful no-op when the 025 migration isn't applied yet.
+    let sms = { available: false, opted_in: false };
+    try {
+      const smsPhone = normalizePhone(customer.phone);
+      if (smsPhone) {
+        sms.available = true;
+        const { data: consentRow, error: consentErr } = await supabaseAdmin
+          .from('generator_sms_consent')
+          .select('opted_in, opted_out')
+          .eq('customer_id', customer.id)
+          .eq('phone', smsPhone)
+          .maybeSingle();
+        if (!consentErr && consentRow) {
+          sms.opted_in = !!(consentRow.opted_in && !consentRow.opted_out);
+        }
+      }
+    } catch (e) {
+      console.log('[my] sms consent unavailable (migration pending?):', e && e.message);
+      sms = { available: false, opted_in: false };
+    }
+
     const planLabel = sub.plan === 'semi_annual'
       ? 'Semi-Annual — 2 visits/year'
       : (sub.plan === 'annual' ? 'Annual — 1 visit/year' : sub.plan);
@@ -242,6 +265,9 @@ router.get('/overview', readLimiter, async (req, res) => {
         install_state: customer.install_state,
         install_zip: customer.install_zip,
       },
+      // { available (a usable phone is on file), opted_in } — drives the
+      // "Text me appointment reminders" toggle.
+      sms,
       generator: {
         gen_class: sub.gen_class,
         type_label: sub.gen_type_label || null,
@@ -528,6 +554,51 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[my] reschedule-request error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/my/sms-consent { opt_in: boolean } — the dashboard "Text me
+// appointment reminders" toggle (SMS Phase 1). Writes the legal consent row
+// (source 'dashboard', exact shown language stored) for the phone we have on
+// file; the phone itself is never taken from the client. Opting in sends the
+// carrier-required confirmation text (copy 6) — still behind the SMS_ENABLED
+// kill-switch inside sendSms.
+// ---------------------------------------------------------------------------
+router.post('/sms-consent', writeLimiter, async (req, res) => {
+  try {
+    const ctx = await ctxOr403(req, res);
+    if (!ctx) return;
+    const { customer } = ctx;
+
+    const optIn = !!(req.body && req.body.opt_in === true);
+    const phone = normalizePhone(customer.phone);
+    if (!phone) {
+      return res.status(400).json({ error: "We don't have a mobile number on file. Call (636) 464-3939 and we'll add one." });
+    }
+
+    const row = await recordConsent({
+      customerId: customer.id,
+      phone,
+      optedIn: optIn,
+      source: 'dashboard',
+      consentText: CONSENT_TEXT.dashboard,
+    });
+    if (!row) return res.status(500).json({ error: 'Could not save your preference. Please try again.' });
+
+    if (optIn) {
+      await sendSms({
+        toPhone: phone,
+        body: buildOptInConfirmationSms({ installState: customer.install_state }),
+        customerId: customer.id,
+        ignoreQuietHours: true, // immediate ack of the toggle they just flipped
+      });
+    }
+
+    res.json({ ok: true, opted_in: !!(row.opted_in && !row.opted_out) });
+  } catch (err) {
+    console.error('[my] sms-consent error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });
