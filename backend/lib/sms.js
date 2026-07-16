@@ -170,6 +170,16 @@ function buildOptInConfirmationSms({ installState }) {
     'Msg & data rates may apply. Reply HELP for help, STOP to cancel.';
 }
 
+// (7) SCHEDULE NUDGE — Phase 3: sent around each renewal (invoice.upcoming)
+// to open the cycle's scheduling. `link` is the auto-login magic link, so the
+// tap lands the customer signed-in on the slot picker. Strictly transactional
+// — no promotional line may ever be added here (it would reclassify the
+// message as marketing under the A2P registration).
+function buildScheduleNudgeSms({ installState, year, link }) {
+  return smsBrand(installState) + ': it\'s time to schedule your generator maintenance' +
+    (year ? ' for ' + year : '') + '. Tap to pick a date & time: ' + link + '. Reply STOP to opt out.';
+}
+
 // ============================================================================
 // Message log — every attempt lands here, sent or refused. Non-throwing.
 // ============================================================================
@@ -279,16 +289,19 @@ async function optOutPhone(phone) {
 //
 // opts: { toPhone, body, customerId?, relatedVisitId?,
 //         ignoreQuietHours? (direct replies to an inbound text only),
+//         logBody? (what to store in generator_sms_messages instead of body —
+//           used to redact secrets like magic-link URLs from the log; the
+//           wire still carries the real body),
 //         now? (test seam for the quiet-hours clock) }
 // ============================================================================
-async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, now }) {
+async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, now }) {
   const accountPhone = normalizePhone(process.env.SIMPLETEXTING_ACCOUNT_PHONE) || null;
   const e164 = normalizePhone(toPhone);
   const base = {
     direction: 'out',
     to_phone: e164 || String(toPhone || '').slice(0, 30),
     from_phone: accountPhone,
-    body,
+    body: logBody || body,
     customer_id: customerId || null,
     related_visit_id: relatedVisitId || null,
   };
@@ -362,6 +375,83 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
   }
 }
 
+// ============================================================================
+// Auto-login magic link over SMS (Phase 3, Part A).
+//
+// Texts a single-use Supabase magic login link so the customer taps once and
+// lands signed-in on the my. portal (frontend/my.js already handles the
+// #access_token hash landing). GUARDRAILS — all load-bearing:
+//   - The link goes ONLY to the phone number on file. Callers must pass the
+//     customer's stored phone — never a number from an inbound SMS, request
+//     body, or anything else the customer could influence. The inbound
+//     webhook (routes/sms-inbound.js) must never call this.
+//   - Single-use + short-lived: both are Supabase Auth properties of the
+//     minted link (the OTP expiry is a dashboard setting — keep it low).
+//   - The action_link / token is NEVER logged: not to the console, not to
+//     generator_sms_messages (the logged copy carries a placeholder instead),
+//     not in error details. Treat it like a password.
+//   - The send still goes through sendSms, so consent, the SMS_ENABLED
+//     kill-switch, quiet hours, and attempt logging all stay in force. The
+//     link is minted before those gates run; a refused send just lets the
+//     unused link expire, which is harmless — duplicating the gate logic
+//     here to avoid that would be worse.
+//
+// `buildBody(link)` -> the final message text: the caller owns the copy (it
+// must be strictly transactional), this helper owns the link. Called twice —
+// once with the real link for the wire, once with a placeholder for the log.
+// Returns sendSms's { sent, status, reason }; a link-minting failure returns
+// the non-terminal { sent:false, status:'failed' } so callers retry later.
+// ============================================================================
+const MY_PORTAL_URL = 'https://my.bates-electric.com/';
+const MAGIC_LINK_PLACEHOLDER = '[auto-login link]';
+
+async function sendMagicLoginSms({ customerId, phone, email, buildBody, relatedVisitId, now }) {
+  const logBody = buildBody(MAGIC_LINK_PLACEHOLDER);
+
+  // A phone that can't normalize can never receive the link — skip minting
+  // one, but still route through sendSms so the invalid_phone refusal lands
+  // in the message log like every other attempt.
+  if (!normalizePhone(phone)) {
+    return sendSms({ toPhone: phone, body: logBody, customerId, relatedVisitId, logBody, now });
+  }
+
+  let actionLink;
+  try {
+    const mint = () => supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email,
+      options: { redirectTo: MY_PORTAL_URL },
+    });
+    let { data, error } = await mint();
+    if (error && /not.?found/i.test(error.message || '')) {
+      // The customer has never signed in, so no auth account exists yet.
+      // The portal's own sign-in form creates one on demand for exactly this
+      // email (create_user: true OTP in frontend/my.js) — mirror that, then
+      // mint again.
+      const created = await supabaseAdmin.auth.admin.createUser({ email, email_confirm: true });
+      if (created.error) throw new Error('createUser failed: ' + created.error.message);
+      ({ data, error } = await mint());
+    }
+    if (error) throw new Error('generateLink failed: ' + error.message);
+    actionLink = data && data.properties && data.properties.action_link;
+    if (!actionLink) throw new Error('generateLink returned no action_link');
+  } catch (e) {
+    const detail = 'magic link generation failed: ' + ((e && e.message) || e);
+    console.error('[sms] ' + detail);
+    reportError(new Error('[sms] ' + detail + ' (customer ' + customerId + ')'), { route: 'lib/sms sendMagicLoginSms' }).catch(() => {});
+    return { sent: false, status: 'failed', reason: detail };
+  }
+
+  return sendSms({
+    toPhone: phone,
+    body: buildBody(actionLink),
+    customerId,
+    relatedVisitId,
+    logBody,
+    now,
+  });
+}
+
 module.exports = {
   CONSENT_TEXT,
   normalizePhone,
@@ -375,9 +465,11 @@ module.exports = {
   buildReminderSms,
   buildRescheduleReplySms,
   buildOptInConfirmationSms,
+  buildScheduleNudgeSms,
   getConsent,
   recordConsent,
   optOutPhone,
   sendSms,
+  sendMagicLoginSms,
   logSmsMessage,
 };

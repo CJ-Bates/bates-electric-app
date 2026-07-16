@@ -11,7 +11,7 @@ const { supabaseAdmin: supabase } = require('../lib/supabase');
 const catalog = require('../lib/generator-catalog');
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildRefundReceiptEmail } = require('../lib/emails');
-const { recordConsent, sendSms, buildOptInConfirmationSms, CONSENT_TEXT } = require('../lib/sms');
+const { recordConsent, sendSms, sendMagicLoginSms, buildOptInConfirmationSms, buildScheduleNudgeSms, CONSENT_TEXT } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -800,7 +800,7 @@ async function handleInvoiceUpcoming(invoice) {
 
   const { data: sub } = await supabase
     .from('generator_subscriptions')
-    .select('id, plan, status, customer:generator_customers(name, email, install_state)')
+    .select('id, plan, status, customer:generator_customers(id, name, email, phone, install_state)')
     .eq('stripe_subscription_id', stripeSubId)
     .maybeSingle();
   if (!sub) {
@@ -846,6 +846,116 @@ async function handleInvoiceUpcoming(invoice) {
     logTag: '[renewal-upcoming]',
     companyState: customer.install_state,
   });
+
+  // Phase 3: "time to schedule" nudge text, riding the same renewal event.
+  // Non-throwing and AFTER the email send on purpose — the renewal email is
+  // never gated on SMS, and a nudge failure must not 500 the webhook (Stripe
+  // would retry and re-send the email).
+  try {
+    await maybeSendScheduleNudge({ sub, customer, periodEndDate });
+  } catch (e) {
+    reportError(
+      new Error(`schedule nudge failed for subscription ${sub.id}: ${(e && e.message) || e}`),
+      { route: '/webhooks/stripe (invoice.upcoming)', method: 'POST', user: 'stripe-webhook' }
+    ).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 schedule nudge: around each renewal, text the customer a magic
+// auto-login link that drops them signed-in on the my. portal's existing slot
+// picker. From there the built flow takes over: they propose slots
+// (/api/my/visit-preferences), the office is emailed, Amy books, and the
+// Phase 2 booking-confirmation text fires. This function only opens the loop.
+//
+// Once per cycle, never lost: invoice.upcoming fires ONCE per cycle at
+// whatever hour Stripe picks and this handler answers 200 either way, so a
+// send refused by quiet hours or the kill-switch can't count on event
+// redelivery. The webhook therefore marks the cycle's OPEN visit as QUEUED
+// (schedule_nudge_queued_at) before attempting the send, and stamps
+// schedule_nudge_sent_at only on a TERMINAL result — 'sent' or a permanent
+// refusal — same rule as the Phase 2 reminders. Visits left queued-but-unsent
+// are retried by the daily 8am sms-reminders cron (runNudgeRetryPass in
+// generator-care-cron.js), which runs inside quiet hours by design.
+// ---------------------------------------------------------------------------
+const NUDGE_TERMINAL_STATUSES = ['sent', 'no_consent', 'opted_out', 'invalid_phone'];
+
+// `now` is a test-only seam for the quiet-hours clock (same as sendSms's);
+// the live handler never passes it.
+async function maybeSendScheduleNudge({ sub, customer, periodEndDate, now }) {
+  // The customer's next open visit — the SAME query /api/my/visit-preferences
+  // uses to resolve the slot picker's target (routes/customer.js), so the
+  // visit we stamp is exactly the one their proposals will attach to.
+  const { data: openVisit, error: ovErr } = await supabase
+    .from('generator_service_visits')
+    .select('id, schedule_nudge_queued_at, schedule_nudge_sent_at')
+    .eq('subscription_id', sub.id)
+    .is('completed_date', null)
+    .neq('status', 'canceled')
+    .order('scheduled_date', { ascending: true, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  if (ovErr) throw new Error('open visit lookup: ' + ovErr.message);
+
+  let visit = openVisit;
+  if (!visit) {
+    // New cycle with no visit yet — open one so the slot picker has a target.
+    // Mirrors the subscription.created first-visit insert; scheduled_date is
+    // a placeholder (the renewal date) until Amy books a real appointment.
+    const { data: created, error: insErr } = await supabase
+      .from('generator_service_visits')
+      .insert({
+        subscription_id: sub.id,
+        visit_type: 'regular_service',
+        scheduled_date: periodEndDate,
+        status: 'tentative',
+      })
+      .select('id, schedule_nudge_queued_at, schedule_nudge_sent_at')
+      .single();
+    if (insErr) throw new Error('cycle visit insert: ' + insErr.message);
+    visit = created;
+  }
+
+  // Once per cycle.
+  if (visit.schedule_nudge_sent_at) {
+    console.log(`[schedule-nudge] visit ${visit.id} already nudged, skipping`);
+    return;
+  }
+
+  // Queue BEFORE attempting: if the send below is refused (quiet hours,
+  // kill-switch) or the process dies mid-send, the daily cron sweep picks
+  // this visit up instead of the nudge silently burning for the cycle.
+  if (!visit.schedule_nudge_queued_at) {
+    const { error: queueErr } = await supabase
+      .from('generator_service_visits')
+      .update({ schedule_nudge_queued_at: new Date().toISOString() })
+      .eq('id', visit.id);
+    if (queueErr) throw new Error('nudge queue stamp failed for visit ' + visit.id + ': ' + queueErr.message);
+  }
+
+  // Part A mints the single-use auto-login link and sends through sendSms
+  // (consent, SMS_ENABLED kill-switch, quiet hours, and attempt logging all
+  // apply); this side only owns the copy. The raw link never reaches a log.
+  const year = periodEndDate ? Number(periodEndDate.slice(0, 4)) : null;
+  const result = await sendMagicLoginSms({
+    customerId: customer.id,
+    phone: customer.phone,
+    email: customer.email,
+    relatedVisitId: visit.id,
+    buildBody: (link) => buildScheduleNudgeSms({ installState: customer.install_state, year, link }),
+    now,
+  });
+
+  if (NUDGE_TERMINAL_STATUSES.includes(result.status)) {
+    const { error: stampErr } = await supabase
+      .from('generator_service_visits')
+      .update({ schedule_nudge_sent_at: new Date().toISOString() })
+      .eq('id', visit.id);
+    // A failed stamp risks a duplicate text from the cron sweep — be loud.
+    if (stampErr) throw new Error('nudge stamp failed for visit ' + visit.id + ': ' + stampErr.message);
+  } else {
+    console.log(`[schedule-nudge] visit ${visit.id} queued but not sent (status ${result.status}) — the daily sms-reminders cron will retry`);
+  }
 }
 
 
@@ -983,4 +1093,4 @@ async function sendCancellationEmail({ customer }) {
 module.exports = router;
 // Test seam only (offline unit tests with Stripe/Supabase mocked) — server.js
 // mounts the router; nothing at runtime reaches in through _test.
-module.exports._test = { handleSubscriptionCreated, attributeLeadConversion };
+module.exports._test = { handleSubscriptionCreated, attributeLeadConversion, handleInvoiceUpcoming, maybeSendScheduleNudge, NUDGE_TERMINAL_STATUSES };

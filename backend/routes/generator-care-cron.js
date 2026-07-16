@@ -6,7 +6,7 @@ const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendViaBrevo } = require('../lib/mailer');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
-const { sendSms, buildReminderSms } = require('../lib/sms');
+const { sendSms, sendMagicLoginSms, buildReminderSms, buildScheduleNudgeSms } = require('../lib/sms');
 const { DASHBOARD_URL } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
@@ -245,6 +245,66 @@ async function runReminderPass({ targetDateStr, stampColumn, isToday, now }) {
   return summary;
 }
 
+// Phase 3 schedule-nudge retry sweep. The invoice.upcoming webhook QUEUES a
+// nudge on the cycle's open visit (schedule_nudge_queued_at, sql/027) and
+// attempts the send immediately, but that event fires once per cycle at
+// whatever hour Stripe picks — a quiet-hours or kill-switch refusal there has
+// no redelivery to lean on. This pass, riding the same daily ~8am trigger as
+// the reminders (inside quiet hours by design), re-attempts every visit still
+// queued-but-unsent: a fresh single-use auto-login link is minted per attempt
+// (sendMagicLoginSms — the raw link never reaches a log), and
+// schedule_nudge_sent_at is stamped on the same TERMINAL statuses as the
+// reminder passes so permanent refusals drain from the queue while transient
+// ones ('disabled', 'failed') retry the next day.
+async function runNudgeRetryPass({ now }) {
+  const summary = { considered: 0, sent: 0, skipped: 0 };
+  const { data: visits, error } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id, scheduled_date, subscription:generator_subscriptions(status, customer:generator_customers(id, name, email, phone, install_state))')
+    .not('schedule_nudge_queued_at', 'is', null)
+    .is('schedule_nudge_sent_at', null)
+    .is('completed_date', null)
+    .neq('status', 'canceled');
+  if (error) throw error;
+
+  for (const v of visits || []) {
+    summary.considered++;
+    // A subscription canceled after its nudge was queued must not be texted
+    // "time to schedule" — skip, leaving the queue mark (harmless once the
+    // visit is canceled/completed by the cancellation flow).
+    if (v.subscription && v.subscription.status === 'canceled') { summary.skipped++; continue; }
+    const customer = (v.subscription && v.subscription.customer) || null;
+    // generateLink needs the account email; a customer without one can't get
+    // an auto-login link — leave the visit queued and skip (Amy still sees
+    // the cycle through the existing digest/dashboard).
+    if (!customer || !customer.email) { summary.skipped++; continue; }
+
+    const year = v.scheduled_date ? Number(String(v.scheduled_date).slice(0, 4)) : null;
+    const result = await sendMagicLoginSms({
+      customerId: customer.id,
+      phone: customer.phone,
+      email: customer.email,
+      relatedVisitId: v.id,
+      buildBody: (link) => buildScheduleNudgeSms({ installState: customer.install_state, year, link }),
+      now,
+    });
+    if (result.status === 'sent') summary.sent++; else summary.skipped++;
+
+    if (REMINDER_TERMINAL_STATUSES.includes(result.status)) {
+      const { error: stampErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ schedule_nudge_sent_at: (now || new Date()).toISOString() })
+        .eq('id', v.id);
+      // A failed stamp risks a duplicate text tomorrow — make it loud.
+      if (stampErr) {
+        console.error('[gc-cron] nudge stamp failed for visit ' + v.id + ':', stampErr.message);
+        reportError(new Error('schedule nudge stamp failed for visit ' + v.id + ': ' + stampErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+      }
+    }
+  }
+  return summary;
+}
+
 // POST /api/cron/generator-care/sms-reminders
 // No Healthchecks ping here — HEALTHCHECKS_URL is the daily digest's
 // dead-man's switch; pinging it from a second cron would mask digest outages.
@@ -258,7 +318,8 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     const dayOf = await runReminderPass({
       targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', isToday: true, now,
     });
-    res.json({ ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf });
+    const nudgeRetry = await runNudgeRetryPass({ now });
+    res.json({ ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf, nudge_retry: nudgeRetry });
   } catch (err) {
     console.error('[gc-cron] sms-reminders error:', err && err.message);
     reportError(err, { route: '/api/cron/generator-care/sms-reminders', method: 'POST', user: 'gc-cron' }).catch(() => {});
@@ -552,4 +613,4 @@ function escapeHtml(s) {
 module.exports = router;
 // Offline-test seam (same pattern as generator-webhook.js) — lets the reminder
 // pass run with a pinned clock and mocked supabase, no HTTP/cron secret needed.
-module.exports._test = { runReminderPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES };
+module.exports._test = { runReminderPass, runNudgeRetryPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES };
