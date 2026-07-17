@@ -25,7 +25,7 @@ const { computePlanBilling, changePlanAtRenewal } = require('../lib/planChange')
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildCancellationEmail } = require('../lib/emails');
 const { companyName, isFlorida } = require('../lib/branding');
-const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, CONSENT_TEXT } = require('../lib/sms');
+const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, upsertSimpleTextingContact, CONSENT_TEXT } = require('../lib/sms');
 
 const router = express.Router();
 
@@ -588,6 +588,10 @@ router.post('/sms-consent', writeLimiter, async (req, res) => {
     if (!row) return res.status(500).json({ error: 'Could not save your preference. Please try again.' });
 
     if (optIn) {
+      // Name their SimpleTexting contact up front so the first text lands on
+      // "John Fort", not a bare number. Fire-and-forget: best-effort and
+      // non-throwing, never blocks the response or the confirmation text.
+      upsertSimpleTextingContact({ phone, name: customer.name });
       await sendSms({
         toPhone: phone,
         body: buildOptInConfirmationSms({ installState: customer.install_state }),

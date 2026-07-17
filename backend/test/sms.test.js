@@ -286,3 +286,79 @@ test('recordConsent: opt-out on an existing row flips flags but PRESERVES the or
   assert.equal(updated.consent_text, undefined, 'withdrawal must not overwrite what they originally agreed to');
   assert.equal(updated.opted_in, undefined, 'opt-out only flips the opt-out flag');
 });
+
+// ---------------------------------------------------------------------------
+// upsertSimpleTextingContact — best-effort contact naming (never throws,
+// never fetches without a full phone + name + token)
+// ---------------------------------------------------------------------------
+test('upsertSimpleTextingContact: full name splits on the FIRST space and posts to the contacts upsert endpoint', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_secret';
+  realFetch = global.fetch;
+  let captured;
+  global.fetch = async (url, opts) => {
+    captured = { url: String(url), opts };
+    return { ok: true, status: 201, json: async () => ({ id: 'contact_1' }) };
+  };
+  const r = await sms.upsertSimpleTextingContact({ phone: '(636) 555-0100', name: 'John Fort' });
+  assert.equal(r.ok, true);
+  assert.ok(captured.url.endsWith('/api/contacts?upsert=true&listsReplacement=false'), captured.url);
+  assert.equal(captured.opts.method, 'POST');
+  assert.equal(captured.opts.headers.Authorization, 'Bearer tok_secret');
+  const body = JSON.parse(captured.opts.body);
+  assert.deepEqual(body, { contactPhone: '6365550100', firstName: 'John', lastName: 'Fort' });
+});
+
+test('upsertSimpleTextingContact: multi-word surname stays whole ("Anna van Dyke" -> Anna / "van Dyke")', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_secret';
+  realFetch = global.fetch;
+  let body;
+  global.fetch = async (url, opts) => {
+    body = JSON.parse(opts.body);
+    return { ok: true, status: 201, json: async () => ({ id: 'contact_1' }) };
+  };
+  await sms.upsertSimpleTextingContact({ phone: '6365550100', name: '  Anna   van Dyke  ' });
+  assert.equal(body.firstName, 'Anna');
+  assert.equal(body.lastName, 'van Dyke');
+});
+
+test('upsertSimpleTextingContact: single-word name sends firstName only, no lastName key', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_secret';
+  realFetch = global.fetch;
+  let body;
+  global.fetch = async (url, opts) => {
+    body = JSON.parse(opts.body);
+    return { ok: true, status: 201, json: async () => ({ id: 'contact_1' }) };
+  };
+  await sms.upsertSimpleTextingContact({ phone: '6365550100', name: 'Cher' });
+  assert.equal(body.firstName, 'Cher');
+  assert.equal('lastName' in body, false, 'no lastName key for a single-word name');
+});
+
+test('upsertSimpleTextingContact: missing name, bad phone, or missing token skips without any fetch', async () => {
+  forbidFetch();
+  // Name missing/blank
+  assert.equal((await sms.upsertSimpleTextingContact({ phone: '6365550100', name: '' })).ok, false);
+  assert.equal((await sms.upsertSimpleTextingContact({ phone: '6365550100', name: null })).ok, false);
+  assert.equal((await sms.upsertSimpleTextingContact({ phone: '6365550100', name: '   ' })).ok, false);
+  // Phone unusable
+  assert.equal((await sms.upsertSimpleTextingContact({ phone: '555-0100', name: 'John Fort' })).ok, false);
+  // Token not set (env.js never sets it) — a fetch here would throw via forbidFetch
+  const r = await sms.upsertSimpleTextingContact({ phone: '6365550100', name: 'John Fort' });
+  assert.equal(r.ok, false);
+  assert.ok(r.reason.includes('SIMPLETEXTING_API_TOKEN'));
+});
+
+test('upsertSimpleTextingContact: API failure resolves { ok:false } without throwing and never leaks the token', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_super_secret_value';
+  realFetch = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 401, text: async () => 'unauthorized request' });
+  const r = await sms.upsertSimpleTextingContact({ phone: '6365550100', name: 'John Fort' });
+  assert.equal(r.ok, false);
+  assert.ok(r.reason.includes('SimpleTexting 401'), r.reason);
+  assert.ok(!r.reason.includes('tok_super_secret_value'), 'token must never appear in the failure detail');
+
+  // A transport-level throw is swallowed the same way.
+  global.fetch = async () => { throw new Error('socket hang up'); };
+  const r2 = await sms.upsertSimpleTextingContact({ phone: '6365550100', name: 'John Fort' });
+  assert.equal(r2.ok, false);
+});

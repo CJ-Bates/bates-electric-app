@@ -11,7 +11,7 @@ const { supabaseAdmin: supabase } = require('../lib/supabase');
 const catalog = require('../lib/generator-catalog');
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildRefundReceiptEmail } = require('../lib/emails');
-const { recordConsent, sendSms, sendMagicLoginSms, buildOptInConfirmationSms, buildScheduleNudgeSms, CONSENT_TEXT } = require('../lib/sms');
+const { recordConsent, sendSms, sendMagicLoginSms, buildOptInConfirmationSms, buildScheduleNudgeSms, upsertSimpleTextingContact, CONSENT_TEXT } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -353,6 +353,10 @@ async function handleSubscriptionCreated(subscription) {
         consentText: CONSENT_TEXT.signup,
       });
       if (consentRow) {
+        // Name their SimpleTexting contact up front so the first text lands
+        // on "John Fort", not a bare number. Fire-and-forget: best-effort and
+        // non-throwing, never blocks the webhook or the confirmation text.
+        upsertSimpleTextingContact({ phone: customer.phone, name: customer.name });
         await sendSms({
           toPhone: customer.phone,
           body: buildOptInConfirmationSms({ installState: customer.install_state }),
