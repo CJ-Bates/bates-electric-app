@@ -635,22 +635,40 @@
         });
       }
 
-      // ACTION — appointment date passed but the visit was never marked complete
+      // Appointment date passed but the visit was never marked complete. Two
+      // very different situations hide in that state, so the card branches:
+      // a tech WAS dispatched -> the visit probably happened, just confirm it
+      // (action tier). No tech was EVER assigned -> the job almost certainly
+      // didn't happen — a missed appointment the customer was expecting.
+      // That's critical: ranked with the overdue items (above them in the
+      // group, below payment failures) and routed straight to the assign
+      // picker so Amy dispatches + rebooks from one place.
       if (sub.status !== 'canceled' && apptPassed(ov)) {
-        items.push({
-          tier: 'action', cls: 'c-info', icon: 'checksquare', sub, sort: Date.parse(ov.appointment_at) || 0,
-          title: 'Appointment passed &mdash; confirm completion',
-          desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))}. If the visit happened, mark it complete so the next cycle starts.`,
-          action: { kind: 'visits', label: 'Mark complete' },
-        });
+        if (ov.assigned_tech_id) {
+          items.push({
+            tier: 'action', cls: 'c-info', icon: 'checksquare', sub, sort: Date.parse(ov.appointment_at) || 0,
+            title: 'Appointment passed &mdash; confirm completion',
+            desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))}. If the visit happened, mark it complete so the next cycle starts.`,
+            action: { kind: 'visits', label: 'Mark complete' },
+          });
+        } else {
+          items.push({
+            tier: 'critical', cls: 'c-danger', icon: 'wrench', sub,
+            sort: -900 + (daysUntil(toLocalDateInput(ov.appointment_at)) || 0),
+            title: 'Passed &mdash; no tech was assigned',
+            desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))} and no tech was ever dispatched. The job likely didn&rsquo;t happen &mdash; assign a tech and rebook.`,
+            action: { kind: 'visits', label: 'Assign a tech' },
+          });
+        }
       }
 
       // ACTION — visit needs a tech dispatched: booked (upcoming) or due soon,
       // with nobody assigned. Far-future tentative visits (a new signup whose
       // first visit is months out) stay quiet — no date pressure, no card.
-      // A booked-but-PASSED appointment is owned by the confirm-completion
-      // card above, not this one. Within ~2 days of the appointment the card
-      // jumps to the top of this tier (and goes red) — dispatch is urgent.
+      // A booked-but-PASSED appointment is owned by the passed-appointment
+      // branch above (critical "Passed — no tech was assigned" when nobody was
+      // dispatched), never this card — one card per visit. Within ~2 days of
+      // the appointment this one jumps to the top of its tier (and goes red).
       if ((sub.status === 'active' || sub.status === 'past_due')
           && ov && ov.status !== 'canceled' && !ov.assigned_tech_id) {
         if (booked && !apptPassed(ov)) {
