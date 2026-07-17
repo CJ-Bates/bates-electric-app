@@ -416,6 +416,40 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
   }
 });
 
+// GET /api/generator-care/subscriptions/:id/sms-messages
+// Full text-message history for the subscription's customer — every attempt in
+// generator_sms_messages, both directions, including refused sends (no_consent,
+// opted_out, quiet_hours...). SimpleTexting's UI only shows a conversation once
+// the customer replies, so this is the office's definitive "did they get their
+// confirmation?" view. Read-only; lazy-loaded by the customer detail modal.
+// Bodies are already redaction-safe (magic-login sends log the [auto-login
+// link] placeholder, never the raw link — lib/sms.js logBody).
+router.get('/subscriptions/:id/sms-messages', async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('customer_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (!sub.customer_id) return res.json({ messages: [] });
+
+    const { data: rows, error: msgErr } = await supabaseAdmin
+      .from('generator_sms_messages')
+      .select('created_at, direction, status, detail, body, related_visit_id, provider_id')
+      .eq('customer_id', sub.customer_id)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (msgErr) throw msgErr;
+
+    res.json({ messages: rows || [] });
+  } catch (err) {
+    console.error('[generator-care] sms-messages error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /api/generator-care/billing-snapshot
 // Batched Stripe enrichment for the Needs Attention queue: renewal date,
 // cancel-at-period-end flag, and card-on-file expiry for EVERY subscription,
