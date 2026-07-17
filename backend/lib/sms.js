@@ -26,6 +26,7 @@
 // (the verified toll-free sender, e.g. 8339425468), SMS_ENABLED ('true' to
 // arm). Missing token fails closed like lib/mailer.js: loud log, no throw.
 
+const crypto = require('crypto');
 const { supabaseAdmin } = require('./supabase');
 const { isFlorida } = require('./branding');
 const { arrivalWindow } = require('./generator-catalog');
@@ -385,11 +386,22 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
 //     customer's stored phone — never a number from an inbound SMS, request
 //     body, or anything else the customer could influence. The inbound
 //     webhook (routes/sms-inbound.js) must never call this.
-//   - Single-use + short-lived: both are Supabase Auth properties of the
-//     minted link (the OTP expiry is a dashboard setting — keep it low).
+//   - The customer is texted a SHORT BRANDED link — my.bates-electric.com/s/
+//     <token> — not the raw supabase.co action_link (which reads like
+//     phishing in an SMS). The token -> action_link map lives in
+//     generator_magic_shortlinks (sql/028); GET /s/:token (routes/
+//     magic-shortlink.js) 302-redirects to the real link. If the shortlink
+//     row can't be stored, the send FAILS (non-terminal, so callers retry) —
+//     falling back to texting the raw link is deliberately not allowed.
+//   - Single-use + short-lived, twice over: the Supabase link has both
+//     properties natively (the OTP expiry is a dashboard setting — keep it
+//     low), and the shortlink adds its own used_at claim + 30-min expiry
+//     (kept at/under the OTP expiry so the short link never outlives the
+//     real one).
 //   - The action_link / token is NEVER logged: not to the console, not to
 //     generator_sms_messages (the logged copy carries a placeholder instead),
-//     not in error details. Treat it like a password.
+//     not in error details. Treat it like a password. The short link is a
+//     credential too — same rule.
 //   - The send still goes through sendSms, so consent, the SMS_ENABLED
 //     kill-switch, quiet hours, and attempt logging all stay in force. The
 //     link is minted before those gates run; a refused send just lets the
@@ -404,6 +416,11 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
 // ============================================================================
 const MY_PORTAL_URL = 'https://my.bates-electric.com/';
 const MAGIC_LINK_PLACEHOLDER = '[auto-login link]';
+const SHORTLINK_BASE = MY_PORTAL_URL + 's/';
+// 9 random bytes -> 12 base64url chars (72 bits) — unguessable at any
+// realistic rate-limited probe rate within the 30-minute lifetime.
+const SHORTLINK_TOKEN_BYTES = 9;
+const SHORTLINK_TTL_MS = 30 * 60 * 1000;
 
 async function sendMagicLoginSms({ customerId, phone, email, buildBody, relatedVisitId, now }) {
   const logBody = buildBody(MAGIC_LINK_PLACEHOLDER);
@@ -442,9 +459,33 @@ async function sendMagicLoginSms({ customerId, phone, email, buildBody, relatedV
     return { sent: false, status: 'failed', reason: detail };
   }
 
+  // Wrap the raw link in a short branded /s/<token> URL. Storing the row is
+  // load-bearing: without it the short link would 302 to "expired", so a
+  // failed insert fails the send (non-terminal — callers retry) rather than
+  // ever putting the raw supabase.co link on the wire. The error detail never
+  // includes the token or target.
+  const token = crypto.randomBytes(SHORTLINK_TOKEN_BYTES).toString('base64url');
+  try {
+    const mintedAt = now || new Date();
+    const { error: linkErr } = await supabaseAdmin
+      .from('generator_magic_shortlinks')
+      .insert({
+        token,
+        target_url: actionLink,
+        customer_id: customerId || null,
+        expires_at: new Date(mintedAt.getTime() + SHORTLINK_TTL_MS).toISOString(),
+      });
+    if (linkErr) throw new Error(linkErr.message);
+  } catch (e) {
+    const detail = 'shortlink store failed: ' + ((e && e.message) || e);
+    console.error('[sms] ' + detail);
+    reportError(new Error('[sms] ' + detail + ' (customer ' + customerId + ')'), { route: 'lib/sms sendMagicLoginSms' }).catch(() => {});
+    return { sent: false, status: 'failed', reason: detail };
+  }
+
   return sendSms({
     toPhone: phone,
-    body: buildBody(actionLink),
+    body: buildBody(SHORTLINK_BASE + token),
     customerId,
     relatedVisitId,
     logBody,

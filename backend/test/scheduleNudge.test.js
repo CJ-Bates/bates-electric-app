@@ -34,6 +34,14 @@ const SUB_ID = 's0000000-0000-4000-8000-000000000001';
 const ACTION_LINK = 'https://dummy.supabase.co/auth/v1/verify?token=SECRET-OTP-TOKEN' +
   '&type=magiclink&redirect_to=https%3A%2F%2Fmy.bates-electric.com%2F';
 
+// What the customer actually gets texted since the shortlink change: the
+// branded /s/<token> wrapper (magicShortlink.test.js covers it in depth).
+// The action_link now lives only in the stored shortlink row's target_url.
+const SHORT_PREFIX = 'https://my.bates-electric.com/s/';
+function shortUrl(world) {
+  return SHORT_PREFIX + (world.shortlinks[0] && world.shortlinks[0].token);
+}
+
 // Pinned clock: 8:30am CDT — inside quiet hours, so the only thing between a
 // consented customer and 'sent' is the transport mock.
 const NOW = new Date('2026-07-15T13:30:00Z');
@@ -126,6 +134,7 @@ function makeWorld({ visits, consentRows, subRow } = {}) {
     logged: [],   // generator_sms_messages inserts
     emails: [],   // Brevo payloads
     texts: [],    // SimpleTexting payloads
+    shortlinks: [], // generator_magic_shortlinks inserts (sql/028)
   };
   restoreSupabase = installMockSupabase({
     generator_subscriptions: () => ({ data: subRow !== undefined ? subRow : null, error: null }),
@@ -162,6 +171,11 @@ function makeWorld({ visits, consentRows, subRow } = {}) {
     generator_sms_messages: (chain) => {
       const ins = chain.find((c) => c.method === 'insert');
       if (ins) world.logged.push(ins.args[0]);
+      return { data: null, error: null };
+    },
+    generator_magic_shortlinks: (chain) => {
+      const ins = chain.find((c) => c.method === 'insert');
+      if (ins) world.shortlinks.push(ins.args[0]);
       return { data: null, error: null };
     },
   });
@@ -209,16 +223,21 @@ test('sendMagicLoginSms: magiclink type + my. redirect, real link on the wire, R
   assert.equal(linkCalls[0].email, 'sarah@example.com');
   assert.equal(linkCalls[0].options.redirectTo, 'https://my.bates-electric.com/');
 
-  // The wire carries the real single-use link...
+  // The wire carries the branded short link wrapping the real one (which is
+  // stored server-side in the shortlink row) — never a supabase.co URL.
   assert.equal(world.texts.length, 1);
-  assert.ok(world.texts[0].text.includes(ACTION_LINK), world.texts[0].text);
+  assert.equal(world.shortlinks.length, 1);
+  assert.equal(world.shortlinks[0].target_url, ACTION_LINK);
+  assert.ok(world.texts[0].text.includes(shortUrl(world)), world.texts[0].text);
+  assert.ok(!world.texts[0].text.includes('supabase.co'), world.texts[0].text);
 
-  // ...but the logged copy never does — placeholder only. This is the
-  // treat-it-like-a-password guarantee.
+  // ...and the logged copy carries neither link — placeholder only. This is
+  // the treat-it-like-a-password guarantee.
   assert.equal(world.logged.length, 1);
   assert.equal(world.logged[0].status, 'sent');
   assert.ok(!world.logged[0].body.includes('SECRET-OTP-TOKEN'), world.logged[0].body);
   assert.ok(!world.logged[0].body.includes(ACTION_LINK), world.logged[0].body);
+  assert.ok(!world.logged[0].body.includes(SHORT_PREFIX), world.logged[0].body);
   assert.ok(world.logged[0].body.includes('[auto-login link]'), world.logged[0].body);
 });
 
@@ -290,7 +309,7 @@ test('fresh open visit: queued, nudged, and stamped sent', async () => {
   assert.equal(world.inserts.length, 0, 'existing open visit is reused');
   assert.equal(world.texts.length, 1);
   assert.ok(world.texts[0].text.includes('for 2027'), world.texts[0].text);
-  assert.ok(world.texts[0].text.includes(ACTION_LINK), world.texts[0].text);
+  assert.ok(world.texts[0].text.includes(shortUrl(world)), world.texts[0].text);
   const v = world.visits[0];
   assert.ok(v.schedule_nudge_queued_at, 'queued before the send');
   assert.ok(v.schedule_nudge_sent_at, 'stamped on sent');
@@ -430,7 +449,7 @@ test('sweep retries exactly the queued-but-unsent open visits, with a fresh link
   const summary = await runNudgeRetryPass({ now: NOW });
   assert.deepEqual(summary, { considered: 1, sent: 1, skipped: 0 });
   assert.equal(world.texts.length, 1);
-  assert.ok(world.texts[0].text.includes(ACTION_LINK), 'fresh link on the wire');
+  assert.ok(world.texts[0].text.includes(shortUrl(world)), 'fresh short link on the wire');
   assert.ok(!world.logged[0].body.includes('SECRET-OTP-TOKEN'), 'sweep log is redacted too');
   const v = world.visits.find((x) => x.id === 'v-queued');
   assert.ok(v.schedule_nudge_sent_at);

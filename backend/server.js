@@ -14,6 +14,7 @@ const generatorCarePublicRouter = require('./routes/generator-care-public');
 const customerRouter = require('./routes/customer');
 const membersRouter = require('./routes/members');
 const smsInboundRouter = require('./routes/sms-inbound');
+const magicShortlinkRouter = require('./routes/magic-shortlink');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
 const { requireAuth } = require('./middleware/auth');
 const { CONTACTS_DIRECTORY } = require('./lib/contactsDirectory');
@@ -90,6 +91,12 @@ app.get('/contacts-directory', requireAuth, (req, res) => {
 // in a customer's inbox and must work with no session. Token-only lookups,
 // opt-out-only writes; see routes/generator-care-public.js.
 app.use('/generator-care', generatorCarePublicRouter);
+
+// Public (no-auth) SMS short-link redeemer — the /s/<token> URL from the
+// auto-login nudge text. Single-use, rate-limited, redirect-only; see
+// routes/magic-shortlink.js. my.bates-electric.com/s/* proxies here via
+// frontend/_redirects.
+app.use('/s', magicShortlinkRouter);
 
 app.use('/auth', authRoutes);
 // GET /me lives on the auth router but is commonly called without the prefix;

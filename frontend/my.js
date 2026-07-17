@@ -985,10 +985,27 @@
       }
     });
 
+    // A dead SMS short link (/s/<token> already used or expired) redirects
+    // here with ?link=expired. Strip the param, and if there's no session to
+    // fall back on, pair the sign-in card with a gentle note. Deliberately
+    // neutral wording — the redeemer never reveals which check failed.
+    var expiredLink = false;
+    try {
+      var qs = new URLSearchParams(location.search);
+      if (qs.get('link') === 'expired') {
+        expiredLink = true;
+        qs.delete('link');
+        history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs.toString() : ''));
+      }
+    } catch (e) { /* ignore */ }
+
     // Stored token (fresh from the magic link, or an existing session) → straight
     // to the dashboard; otherwise the sign-in card.
     if (sessionStorage.getItem(TOKEN_KEY)) loadOverview();
-    else showView('signin');
+    else {
+      showView('signin');
+      if (expiredLink) showStatus('That sign-in link has expired — enter your email below and we’ll send you a fresh one.', 'info');
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
