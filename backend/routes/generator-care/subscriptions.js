@@ -16,7 +16,7 @@ const {
   sendCardUpdateLinkEmail,
 } = require('../../lib/gcShared');
 const { sendEmail, buildWelcomeEmail, buildCancellationEmail } = require('../../lib/emails');
-const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, CONSENT_TEXT } = require('../../lib/sms');
+const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, upsertSimpleTextingContact, CONSENT_TEXT } = require('../../lib/sms');
 const planChange = require('../../lib/planChange');
 
 const router = express.Router();
@@ -1007,7 +1007,7 @@ router.post('/customers/:id/sms-consent', requirePermission('customer_edit'), as
 
     const { data: customer, error: custErr } = await supabaseAdmin
       .from('generator_customers')
-      .select('id, phone, install_state')
+      .select('id, name, phone, install_state')
       .eq('id', id)
       .maybeSingle();
     if (custErr) throw custErr;
@@ -1026,6 +1026,10 @@ router.post('/customers/:id/sms-consent', requirePermission('customer_edit'), as
     if (!row) return res.status(500).json({ error: 'Could not save consent. Try again.' });
 
     if (optIn) {
+      // Name their SimpleTexting contact up front so the first text lands on
+      // "John Fort", not a bare number. Fire-and-forget: best-effort and
+      // non-throwing, never blocks the response or the confirmation text.
+      upsertSimpleTextingContact({ phone, name: customer.name });
       await sendSms({
         toPhone: phone,
         body: buildOptInConfirmationSms({ installState: customer.install_state }),

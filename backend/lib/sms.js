@@ -283,6 +283,71 @@ async function optOutPhone(phone) {
 }
 
 // ============================================================================
+// SimpleTexting contact naming — best-effort. Sending to a number the account
+// has never seen makes SimpleTexting auto-create a bare contact with NO name,
+// so the shared inbox shows "no name / (314) 409-5426" and the office can't
+// tell customers apart. Whenever we have a name + phone (consent time), upsert
+// the contact so it shows as "John Fort" before we ever text them.
+//
+// Provider facts (confirmed against api-doc.simpletexting.com OpenAPI spec,
+// 2026-07-17):
+//   POST {base}/api/contacts?upsert=true&listsReplacement=false
+//   body (SingleContactUpdate): { contactPhone (10-digit national),
+//   firstName?, lastName? } — omitted fields are left untouched. 201 -> {id}.
+//   upsert=true turns "already exists" into an update instead of an error;
+//   listsReplacement=false is load-bearing on this SHARED account: its
+//   default (true) would remove the contact from every list it's already on
+//   (the service team's lists included) — never send this without it.
+//
+// Name split: first space only — "John Fort" -> John/Fort, "Anna van Dyke" ->
+// Anna/"van Dyke", "Cher" -> firstName only.
+//
+// NEVER throws and must never block a caller — a naming hiccup can't be
+// allowed to fail a signup, consent write, or send. Missing input/config just
+// skips quietly; a live API failure logs + reportErrors. Returns
+// { ok, reason? } so unit tests can see why it skipped.
+// ============================================================================
+async function upsertSimpleTextingContact({ phone, name }) {
+  try {
+    const e164 = normalizePhone(phone);
+    const trimmed = String(name || '').trim();
+    if (!e164 || !trimmed) return { ok: false, reason: 'missing phone or name' };
+    const token = process.env.SIMPLETEXTING_API_TOKEN;
+    if (!token) return { ok: false, reason: 'SIMPLETEXTING_API_TOKEN not set' };
+
+    const spaceAt = trimmed.search(/\s/);
+    const contact = { contactPhone: toProviderPhone(e164) };
+    if (spaceAt === -1) {
+      contact.firstName = trimmed;
+    } else {
+      contact.firstName = trimmed.slice(0, spaceAt);
+      contact.lastName = trimmed.slice(spaceAt + 1).trim();
+    }
+
+    const resp = await fetch(SIMPLETEXTING_BASE + '/api/contacts?upsert=true&listsReplacement=false', {
+      method: 'POST',
+      headers: {
+        // Token lives ONLY in this header — never in a log or error detail.
+        Authorization: 'Bearer ' + token,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify(contact),
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => '');
+      throw new Error('SimpleTexting ' + resp.status + ': ' + errBody.slice(0, 300));
+    }
+    return { ok: true };
+  } catch (e) {
+    const detail = 'contact name upsert failed: ' + ((e && e.message) || e);
+    console.error('[sms] ' + detail);
+    reportError(new Error('[sms] ' + detail), { route: 'lib/sms upsertSimpleTextingContact' }).catch(() => {});
+    return { ok: false, reason: detail };
+  }
+}
+
+// ============================================================================
 // The send. Gate order: consent -> kill-switch -> quiet hours -> transport.
 // Every refusal logs a generator_sms_messages row saying why, so booking with
 // SMS_ENABLED=false still leaves the visible "would have sent" trail the
@@ -510,6 +575,7 @@ module.exports = {
   getConsent,
   recordConsent,
   optOutPhone,
+  upsertSimpleTextingContact,
   sendSms,
   sendMagicLoginSms,
   logSmsMessage,

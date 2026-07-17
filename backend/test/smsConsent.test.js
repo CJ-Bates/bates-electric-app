@@ -35,6 +35,7 @@ test.afterEach(() => {
   if (restoreSupabase) { restoreSupabase(); restoreSupabase = undefined; }
   if (realFetch) { global.fetch = realFetch; realFetch = undefined; }
   delete process.env.SMS_ENABLED;
+  delete process.env.SIMPLETEXTING_API_TOKEN;
 });
 
 // Fire-and-forget sends settle a microtask/macrotask after the response; give
@@ -259,4 +260,74 @@ test('(d) signup without the checkbox writes NO consent row and sends nothing', 
   await handleSubscriptionCreated(makeSubscription({ customer_phone: '636-555-0100' }));
   assert.equal(world.consentInserts.length, 0);
   assert.equal(world.logged.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// (e) Contact-name hooks: every consent capture upserts the SimpleTexting
+// contact with the customer's name (fire-and-forget), so the first text lands
+// on "Sarah Example" instead of a bare "no name" number. The kill-switch off
+// means the ONLY SimpleTexting call in these tests is the contacts upsert.
+// ---------------------------------------------------------------------------
+function captureContactUpserts({ allowStripe } = {}) {
+  realFetch = global.fetch;
+  const upserts = [];
+  global.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes('/api/contacts')) {
+      upserts.push({ url: u, body: JSON.parse(opts.body) });
+      return { ok: true, status: 201, json: async () => ({ id: 'contact_1' }) };
+    }
+    if (allowStripe && u.startsWith('https://api.stripe.com/')) {
+      let body = {};
+      if (u.includes('/customers/cus_1')) body = { id: 'cus_1', email: 'sarah@example.com', name: 'Sarah Example', phone: '' };
+      return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    throw new Error('unexpected fetch in offline test: ' + u);
+  };
+  return upserts;
+}
+
+test('(e) dashboard opt-in fire-and-forgets the contact-name upsert with the customer name', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_secret';
+  const upserts = captureContactUpserts();
+  consentWorld();
+  const res = makeRes();
+  await myConsentHandler(makeReq({ body: { opt_in: true }, user: { email: 'sarah@example.com' } }), res);
+  assert.equal(res.statusCode, 200, 'response never waits on the upsert');
+  await settle();
+  assert.equal(upserts.length, 1);
+  assert.ok(upserts[0].url.includes('upsert=true'), upserts[0].url);
+  assert.ok(upserts[0].url.includes('listsReplacement=false'), 'must never yank the contact off existing lists on the shared account');
+  assert.deepEqual(upserts[0].body, { contactPhone: '6365550100', firstName: 'Sarah', lastName: 'Example' });
+});
+
+test('(e) office opt-in upserts the name; opt-out does not touch the contact', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_secret';
+  let upserts = captureContactUpserts();
+  consentWorld();
+  let res = makeRes();
+  await officeConsentHandler(makeReq({ params: { id: CUSTOMER_ID }, body: { opt_in: true } }), res);
+  assert.equal(res.statusCode, 200);
+  await settle();
+  assert.equal(upserts.length, 1);
+  assert.equal(upserts[0].body.firstName, 'Sarah');
+  assert.equal(upserts[0].body.lastName, 'Example');
+
+  upserts = captureContactUpserts();
+  consentWorld();
+  res = makeRes();
+  await officeConsentHandler(makeReq({ params: { id: CUSTOMER_ID }, body: { opt_in: false } }), res);
+  assert.equal(res.statusCode, 200);
+  await settle();
+  assert.equal(upserts.length, 0, 'no contact write on an opt-out');
+});
+
+test('(e) signup webhook with sms_opt_in=true upserts the contact name', async () => {
+  process.env.SIMPLETEXTING_API_TOKEN = 'tok_secret';
+  const upserts = captureContactUpserts({ allowStripe: true });
+  signupWorld();
+  await handleSubscriptionCreated(makeSubscription({ sms_opt_in: 'true', customer_phone: '636-555-0100' }));
+  await settle();
+  assert.equal(upserts.length, 1);
+  assert.deepEqual(upserts[0].body, { contactPhone: '6365550100', firstName: 'Sarah', lastName: 'Example' });
 });
