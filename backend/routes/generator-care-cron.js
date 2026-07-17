@@ -43,6 +43,19 @@ function requireCronSecret(req, res, next) {
 // POST /api/cron/generator-care/daily-email
 // Sends Amy + CJ a summary of service visits due in the next 14 days plus any overdue.
 router.post('/daily-email', requireCronSecret, async (req, res) => {
+ // Opportunistic hygiene riding the daily trigger: purge SMS auto-login
+ // shortlinks (sql/028) a day past expiry. Rows are inert once used/expired,
+ // so a failed purge must never touch the digest — own try/catch, no rethrow.
+ try {
+   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+   const { error: purgeErr } = await supabaseAdmin
+     .from('generator_magic_shortlinks')
+     .delete()
+     .lt('expires_at', cutoff);
+   if (purgeErr) console.error('[gc-cron] shortlink purge failed:', purgeErr.message);
+ } catch (e) {
+   console.error('[gc-cron] shortlink purge failed:', e && e.message);
+ }
  try {
  const today = new Date();
  today.setHours(0, 0, 0, 0);

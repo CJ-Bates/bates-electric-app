@@ -32,3 +32,9 @@ https://my.bates-electric.com/ /my.html 200!
 # /auth/reset-password-page?token_hash=...&type=recovery — serve the reset
 # page for them. 200 rewrite keeps the query string intact.
 /auth/reset-password-page  /reset-password.html  200
+
+# SMS auto-login short links: my.bates-electric.com/s/<token> proxies to the
+# backend redeemer (backend/routes/magic-shortlink.js), which 302s the browser
+# on to the real magic link. 200 proxy keeps the branded domain in the SMS;
+# nothing else lives under /s/ so this shadows no page or asset.
+/s/*  https://bates-electric-app.onrender.com/s/:splat  200
