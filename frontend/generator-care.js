@@ -1376,6 +1376,60 @@
     </div>`;
   }
 
+  // Text message history (SMS Phase 1 follow-up). SimpleTexting's UI only
+  // shows a conversation once the customer REPLIES — outbound-only threads
+  // (opt-in confirmation, booking confirmation, reminders, nudges) are
+  // invisible there. generator_sms_messages has the complete record, so this
+  // card is the definitive "did they get their confirmation?" answer.
+  // Skeleton card; loadSmsHistory() replaces innerHTML once the log lands.
+  function renderSmsHistoryCard() {
+    return `<div class="gc-card" id="gc-card-sms">
+      <h3 class="gc-card-h">Text Message History</h3>
+      <div id="gc-sms-history-body">
+        <div class="gc-skeleton-card-row"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+        <div class="gc-skeleton-card-row"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
+      </div>
+    </div>`;
+  }
+
+  // Status chip per logged message. Statuses come from lib/sms.js's message
+  // log (out: sent|failed|disabled|no_consent|opted_out|quiet_hours|
+  // invalid_phone; in: received) — refused sends are logged too, so blocked
+  // texts are visible here rather than silently missing.
+  function smsHistoryChip(m) {
+    if (m.direction === 'in') return '<span class="badge badge-ok">Reply</span>';
+    switch (m.status) {
+      case 'sent': return '<span class="badge badge-ok">Sent</span>';
+      case 'failed': return '<span class="badge badge-danger">Failed</span>';
+      case 'invalid_phone': return '<span class="badge badge-danger">Invalid phone</span>';
+      case 'no_consent': return '<span class="badge badge-warn">Not sent &mdash; no consent</span>';
+      case 'opted_out': return '<span class="badge badge-warn">Not sent &mdash; opted out</span>';
+      case 'quiet_hours': return '<span class="badge badge-neutral">Skipped &mdash; quiet hours</span>';
+      case 'disabled': return '<span class="badge badge-neutral">Logged &mdash; texting off</span>';
+      default: return `<span class="badge badge-neutral">${escapeHtml(m.status || '')}</span>`;
+    }
+  }
+
+  function renderSmsHistoryRow(m) {
+    const dirLabel = m.direction === 'in' ? 'From customer' : 'To customer';
+    const visitTag = m.related_visit_id
+      ? ` <span class="gc-meta-label" style="border:1px solid var(--line);border-radius:4px;padding:0 5px;">visit</span>`
+      : '';
+    // Failure reason (never the API token — lib/sms.js keeps it out of the log).
+    const failDetail = (m.status === 'failed' || m.status === 'invalid_phone') && m.detail
+      ? `<div class="gc-meta-label" style="margin-top:2px;color:var(--danger);">${escapeHtml(m.detail)}</div>`
+      : '';
+    return `<div class="gc-card-row" style="display:block;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span class="gc-meta-value">${escapeHtml(fmtDateTime(m.created_at))}</span>
+        <span class="gc-meta-label">${dirLabel}</span>
+        ${smsHistoryChip(m)}${visitTag}
+      </div>
+      <div style="margin-top:4px;font-size:0.83rem;color:var(--ink-2);white-space:pre-line;overflow-wrap:anywhere;">${escapeHtml(m.body || '')}</div>
+      ${failDetail}
+    </div>`;
+  }
+
   function renderDangerZone(isCanceled, subscription) {
     if (isCanceled) {
       // Stripe keeps the sub active until the period end even though we mark it
@@ -1454,6 +1508,7 @@
       body.innerHTML =
         renderHeaderBar(c, subscription) +
         renderContactCard(c, sms_consent) +
+        renderSmsHistoryCard() +
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons, openVisit) +
         renderVisitsCard(visits, subscription, visit_preferences, visit_sms) +
@@ -1632,8 +1687,9 @@
       }
 
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
-      // and the work-order packet's actual signup charge)
+      // and the work-order packet's actual signup charge) + the text-message log.
       loadStripeData(id, subscription, pending_addons, c.id, openVisit);
+      loadSmsHistory(id);
 
     } catch (err) {
       console.error('Detail load failed:', err);
@@ -2713,6 +2769,32 @@
       if (ltEl) ltEl.innerHTML = fail;
       const invEl = body.querySelector('#gc-invoices-body');
       if (invEl) invEl.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load invoices &mdash; refresh to retry.</div>`;
+    }
+  }
+
+  // Text message history (lazy) — fills #gc-sms-history-body with the
+  // customer's complete log, newest first. Same open-fast pattern as
+  // loadStripeData: the modal paints instantly, this fills in after. Read-only;
+  // a failed load shows a retry note and must never break the modal.
+  async function loadSmsHistory(subscriptionId) {
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    const el = body.querySelector('#gc-sms-history-body');
+    if (!el) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/sms-messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const { messages } = await r.json();
+      if (!messages || !messages.length) {
+        el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">No texts sent yet.</div>`;
+        return;
+      }
+      el.innerHTML = messages.map(renderSmsHistoryRow).join('');
+    } catch (err) {
+      console.error('[sms-history] load failed:', err);
+      el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load texts &mdash; refresh to retry.</div>`;
     }
   }
 
