@@ -40,6 +40,7 @@ app.use(helmet({ contentSecurityPolicy: false, frameguard: { action: 'deny' } })
 // server) are allowed; cross-origin browser requests from anywhere else are not.
 const ALLOWED_ORIGINS = [
   'https://app.bates-electric.com',
+  'https://my.bates-electric.com', // customer portal (Generator Care dashboard)
   'https://generator.bates-electric.com',
   'https://bates-electric-app.netlify.app',
   'https://bates-generator.netlify.app',
