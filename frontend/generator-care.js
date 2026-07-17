@@ -525,6 +525,7 @@
     refresh: attIcon('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>'),
     checksquare: attIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 5-5.5"/>'),
     userminus: attIcon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M17 11h6"/>'),
+    wrench: attIcon('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
   };
   const TIER_ORDER = ['critical', 'money', 'action', 'upcoming'];
   const TIER_META = {
@@ -634,14 +635,61 @@
         });
       }
 
-      // ACTION — appointment date passed but the visit was never marked complete
+      // Appointment date passed but the visit was never marked complete. Two
+      // very different situations hide in that state, so the card branches:
+      // a tech WAS dispatched -> the visit probably happened, just confirm it
+      // (action tier). No tech was EVER assigned -> the job almost certainly
+      // didn't happen — a missed appointment the customer was expecting.
+      // That's critical: ranked with the overdue items (above them in the
+      // group, below payment failures) and routed straight to the assign
+      // picker so Amy dispatches + rebooks from one place.
       if (sub.status !== 'canceled' && apptPassed(ov)) {
-        items.push({
-          tier: 'action', cls: 'c-info', icon: 'checksquare', sub, sort: Date.parse(ov.appointment_at) || 0,
-          title: 'Appointment passed &mdash; confirm completion',
-          desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))}. If the visit happened, mark it complete so the next cycle starts.`,
-          action: { kind: 'visits', label: 'Mark complete' },
-        });
+        if (ov.assigned_tech_id) {
+          items.push({
+            tier: 'action', cls: 'c-info', icon: 'checksquare', sub, sort: Date.parse(ov.appointment_at) || 0,
+            title: 'Appointment passed &mdash; confirm completion',
+            desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))}. If the visit happened, mark it complete so the next cycle starts.`,
+            action: { kind: 'visits', label: 'Mark complete' },
+          });
+        } else {
+          items.push({
+            tier: 'critical', cls: 'c-danger', icon: 'wrench', sub,
+            sort: -900 + (daysUntil(toLocalDateInput(ov.appointment_at)) || 0),
+            title: 'Passed &mdash; no tech was assigned',
+            desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))} and no tech was ever dispatched. The job likely didn&rsquo;t happen &mdash; assign a tech and rebook.`,
+            action: { kind: 'visits', label: 'Assign a tech' },
+          });
+        }
+      }
+
+      // ACTION — visit needs a tech dispatched: booked (upcoming) or due soon,
+      // with nobody assigned. Far-future tentative visits (a new signup whose
+      // first visit is months out) stay quiet — no date pressure, no card.
+      // A booked-but-PASSED appointment is owned by the passed-appointment
+      // branch above (critical "Passed — no tech was assigned" when nobody was
+      // dispatched), never this card — one card per visit. Within ~2 days of
+      // the appointment this one jumps to the top of its tier (and goes red).
+      if ((sub.status === 'active' || sub.status === 'past_due')
+          && ov && ov.status !== 'canceled' && !ov.assigned_tech_id) {
+        if (booked && !apptPassed(ov)) {
+          const apptDays = daysUntil(toLocalDateInput(ov.appointment_at));
+          const imminent = apptDays !== null && apptDays <= 2;
+          items.push({
+            tier: 'action', cls: imminent ? 'c-danger' : 'c-warn', icon: 'wrench', sub,
+            sort: imminent ? -900 + apptDays : (Date.parse(ov.appointment_at) || 0),
+            title: 'No tech assigned',
+            desc: `${customerLink(sub)} &mdash; booked for ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))} with no tech assigned.`,
+            action: { kind: 'visits', label: 'Assign a tech' },
+          });
+        } else if (!booked && d !== null && d >= 0 && d <= DUE_SOON_DAYS) {
+          items.push({
+            tier: 'action', cls: 'c-warn', icon: 'wrench', sub,
+            sort: Date.parse((ov.scheduled_date || sub.next_visit_due) + 'T00:00:00') || 0,
+            title: 'No tech assigned',
+            desc: `${customerLink(sub)} &mdash; visit due ${escapeHtml(fmtDate(sub.next_visit_due))} with no tech assigned.`,
+            action: { kind: 'visits', label: 'Assign a tech' },
+          });
+        }
       }
 
       // ACTION — new signup, Jonas work order not created yet
