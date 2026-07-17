@@ -111,15 +111,22 @@
   // ---------------------------------------------------------------------------
   // Views
   // ---------------------------------------------------------------------------
+  // Shown during every normal load (also the static first-paint copy in
+  // my.html); showLoadFailure swaps it for the error text.
+  var LOADING_COPY = 'Loading your dashboard…';
+
   function showView(name) {
     $('view-signin').hidden = name !== 'signin';
     $('view-loading').hidden = name !== 'loading';
     $('view-dash').hidden = name !== 'dash';
     $('signout-btn').hidden = name === 'signin';
     if (name === 'loading') {
-      // Skeleton shell while loading; the message + retry only appear on failure.
+      // Skeleton + reassuring copy while loading; only retry waits for an
+      // actual failure. Reset the message — a retry re-enters here with the
+      // failure text still in place.
       $('loading-skel').hidden = false;
-      $('loading-msg').hidden = true;
+      $('loading-msg').hidden = false;
+      $('loading-msg').textContent = LOADING_COPY;
       $('retry-btn').hidden = true;
     }
   }

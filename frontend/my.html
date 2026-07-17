@@ -98,12 +98,18 @@
     .signin .sent{background:var(--ok-bg);color:var(--ok);border-radius:var(--radius-sm);padding:10px;font-size:13px;font-weight:600;margin-top:10px;display:none;text-align:left}
     .signin .sent.show{display:block}
 
-    .loading-msg{text-align:center;color:var(--ink-2);padding:60px 0 20px;font-size:14px}
+    .loading-msg{text-align:center;color:var(--ink-2);padding:18px 0 20px;font-size:14px}
+    /* Failure state hides the skeleton — the standalone message gets more room */
+    #loading-skel[hidden]~.loading-msg{padding-top:60px}
     .loading-actions{text-align:center;padding-bottom:40px}
 
-    /* Skeleton placeholders (v3 pattern, same shapes generator-care uses) */
-    @keyframes skel-pulse{0%,100%{background-color:var(--neutral-bg)}50%{background-color:var(--surface-2)}}
-    .skel{display:block;background:var(--neutral-bg);border-radius:4px;animation:skel-pulse 1.5s ease-in-out infinite;height:14px;margin:8px 0}
+    /* Skeleton placeholders (v3 pattern, same shapes generator-care uses).
+       Shimmer sweep instead of a faint pulse so a slow load reads as
+       "loading", never "empty". */
+    @keyframes skel-sweep{to{transform:translateX(100%)}}
+    .skel{display:block;position:relative;overflow:hidden;background:var(--neutral-bg);border-radius:4px;height:14px;margin:8px 0}
+    .skel::after{content:"";position:absolute;top:0;left:0;right:0;bottom:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--surface-2) 50%,transparent);animation:skel-sweep 1.4s ease-in-out infinite}
+    @media (prefers-reduced-motion:reduce){.skel::after{display:none}}
     .skel-sm{width:120px}.skel-md{width:200px}.skel-lg{width:280px;max-width:100%}
 
     /* Appointment preferences on the hero (dark navy background) */
@@ -156,14 +162,17 @@
     </div>
   </section>
 
-  <!-- Loading: skeleton shell, never a blank screen -->
-  <section id="view-loading" hidden>
+  <!-- Loading: skeleton shell, never a blank screen. Deliberately NOT hidden —
+       this is the default first paint, visible before my.js even executes, so a
+       slow connection shows the branded skeleton instead of a blank page.
+       showView() takes over the moment the script boots. -->
+  <section id="view-loading">
     <div id="loading-skel" aria-hidden="true">
       <div class="card"><span class="skel skel-sm"></span><span class="skel skel-lg" style="height:22px"></span><span class="skel skel-md"></span></div>
       <div class="card"><span class="skel skel-md" style="height:16px"></span><span class="skel skel-lg"></span><span class="skel skel-lg"></span><span class="skel skel-sm"></span></div>
       <div class="card"><span class="skel skel-md" style="height:16px"></span><span class="skel skel-lg"></span><span class="skel skel-md"></span></div>
     </div>
-    <div class="loading-msg" id="loading-msg" hidden>Loading your dashboard…</div>
+    <div class="loading-msg" id="loading-msg">Loading your dashboard&hellip;</div>
     <div class="loading-actions"><button class="btn btn-secondary" id="retry-btn" data-action="retry" hidden>Try again</button></div>
   </section>
 
