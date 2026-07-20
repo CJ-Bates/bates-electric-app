@@ -8,12 +8,11 @@ const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const {
   stripe,
-  resolveSavedPaymentMethod,
-  emailCardUpdateLinkForSub,
   executeStripeRefund,
   buildRefundNote,
   parseRefundedFromNotes,
 } = require('../../lib/gcShared');
+const { chargeAdhocImmediate } = require('../../lib/gcCharges');
 
 const router = express.Router();
 
@@ -38,6 +37,29 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
       return res.status(400).json({ error: "billing_method must be 'immediate' or 'renewal'" });
     }
 
+    // 'immediate' runs through the shared charge core (lib/gcCharges.js) — the
+    // SAME code path the tech on-site charge uses, so field and office charges
+    // are provably identical. The response bodies below are unchanged.
+    if (billing_method === 'immediate') {
+      const result = await chargeAdhocImmediate({
+        subscriptionId: id,
+        description,
+        amountCents: amount_cents,
+        serviceVisitId: service_visit_id,
+        datePerformed: date_performed,
+      });
+      if (!result.ok) {
+        const body = { error: result.error };
+        if (result.reason) body.reason = result.reason;
+        if (result.adhocChargeId) body.adhoc_charge_id = result.adhocChargeId;
+        if (result.cardUpdateEmailSent !== undefined) body.card_update_email_sent = result.cardUpdateEmailSent;
+        return res.status(result.status).json(body);
+      }
+      return res.json({ ok: true, adhoc_charge: result.adhocCharge, payment_intent_id: result.paymentIntentId });
+    }
+
+    // billing_method === 'renewal' - create invoice item (renewal-only checks +
+    // the pending-row insert stay inline; no card is charged on this path).
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
       .select('id, stripe_subscription_id, stripe_customer_id, status, customer:generator_customers(name, email)')
@@ -45,7 +67,7 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
       .single();
     if (subErr) throw subErr;
     if (!sub) return res.status(404).json({ error: 'subscription not found' });
-    if (sub.status === 'canceled' && billing_method === 'renewal') {
+    if (sub.status === 'canceled') {
       return res.status(400).json({ error: 'subscription is canceled; no future renewal to bill against. Use billing_method=immediate.' });
     }
     if (!sub.stripe_customer_id) {
@@ -55,10 +77,9 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
     const today = new Date().toISOString().slice(0, 10);
     const performedDate = date_performed || today;
     const customerName = (sub.customer && sub.customer.name) || 'customer';
-    const customerEmail = (sub.customer && sub.customer.email) || null;
     const stripeDescription = 'Bates Electric: ' + description.trim();
 
-    // 1. Insert the row first as 'pending'
+    // Insert the row first as 'pending'
     const { data: row, error: insErr } = await supabaseAdmin
       .from('generator_adhoc_charges')
       .insert({
@@ -74,75 +95,6 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
       .single();
     if (insErr) throw insErr;
 
-    // 2. Hit Stripe based on billing_method
-    if (billing_method === 'immediate') {
-      // Resolve which saved card to charge first — a bare
-      // paymentIntents.create({ customer }) can't find the card Checkout attached
-      // to the subscription, which is what was failing in the field.
-      const paymentMethodId = await resolveSavedPaymentMethod(sub.stripe_subscription_id, sub.stripe_customer_id);
-      if (!paymentMethodId) {
-        // No card on file at all: record the failure and auto-email the
-        // card-update link so the customer can add one.
-        await supabaseAdmin
-          .from('generator_adhoc_charges')
-          .update({ status: 'failed', notes: 'Charge failed on ' + today + ': no saved card on file' })
-          .eq('id', row.id);
-        const linkResult = await emailCardUpdateLinkForSub(id);
-        return res.status(402).json({
-          error: 'charge failed',
-          reason: 'no saved card on file',
-          adhoc_charge_id: row.id,
-          card_update_email_sent: !!linkResult.sent,
-        });
-      }
-
-      let intent;
-      try {
-        intent = await stripe.paymentIntents.create({
-          customer: sub.stripe_customer_id,
-          amount: amount_cents,
-          currency: 'usd',
-          payment_method: paymentMethodId,
-          payment_method_types: ['card'],
-          off_session: true,
-          confirm: true,
-          description: stripeDescription,
-          // Stripe's automatic receipts for raw PaymentIntents key off receipt_email;
-          // without it ad-hoc charges won't generate a receipt even with the
-          // "Successful payments" email setting enabled.
-          ...(customerEmail ? { receipt_email: customerEmail } : {}),
-          metadata: {
-            adhoc_charge_id: row.id,
-            subscription_id: id,
-            customer_name: customerName,
-          },
-        });
-      } catch (stripeErr) {
-        // Off-session charges can fail with authentication_required (3DS) or card
-        // errors (declined, expired, etc.). Record FAILED with the message and do
-        // not throw; Amy can re-send a card-update link from the dashboard.
-        const reason = stripeErr.message || stripeErr.code || 'unknown_error';
-        await supabaseAdmin
-          .from('generator_adhoc_charges')
-          .update({ status: 'failed', notes: 'Charge failed on ' + today + ': ' + reason })
-          .eq('id', row.id);
-        return res.status(402).json({ error: 'charge failed', reason, adhoc_charge_id: row.id });
-      }
-      const { data: updated, error: updErr } = await supabaseAdmin
-        .from('generator_adhoc_charges')
-        .update({
-          status: 'charged',
-          date_charged: today,
-          stripe_payment_intent_id: intent.id,
-        })
-        .eq('id', row.id)
-        .select()
-        .single();
-      if (updErr) throw updErr;
-      return res.json({ ok: true, adhoc_charge: updated, payment_intent_id: intent.id });
-    }
-
-    // billing_method === 'renewal' - create invoice item
     if (!sub.stripe_subscription_id) {
       await supabaseAdmin
         .from('generator_adhoc_charges')

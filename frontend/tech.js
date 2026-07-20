@@ -536,7 +536,18 @@
         </label>
       </div>
 
-      <div class="tvd-sec" id="tvd-addons-sec" hidden></div>
+      <div class="tvd-sec" id="tvd-addons-sec">
+        <h3>Add-ons</h3>
+        <p class="tvd-addon-hint">Loading the add-on menu&hellip;</p>
+      </div>
+
+      ${!done ? `<div class="tvd-sec" id="tvd-complete-sec">
+        <h3>Wrap up &amp; notes</h3>
+        <label class="tvd-fld"><span>Date performed</span><input type="date" id="tvd-done-date" value="${todayStr()}"></label>
+        <label class="tvd-fld"><span>Note for the customer (optional)</span><textarea id="tvd-done-notes" rows="2" placeholder="What we did, anything they should know&hellip;"></textarea><small>The customer sees this in their visit-complete email.</small></label>
+        <label class="tvd-fld"><span>Internal note (office + techs only)</span><textarea id="tvd-done-internal" rows="2" placeholder="Follow-ups, access notes&hellip;"></textarea><small>Never shown to the customer.</small></label>
+        <label class="tvd-fld"><span>Parts used / needs quote (office only)</span><textarea id="tvd-done-parts" rows="2" placeholder="Breaker 20A x2, needs quote for surge protector&hellip;"></textarea><small>Sent to the office with a [Field] stamp &mdash; never shown to the customer.</small></label>
+      </div>` : ''}
 
       <div class="tvd-cta">
         ${done
@@ -706,52 +717,106 @@
     }
   }
 
-  // ---- Add-ons checklist (phase 2) ----
-  // Labels only — NEVER amounts; billing is office-only. Section stays hidden
-  // unless the API returns items (and on any load error, since it's additive).
+  // ---- Add-on MENU (add-ons menu Phase 1) ----
+  // The complete menu for this customer's generator: every applicable add-on
+  // with its price and status. On an open visit the section is ALWAYS shown —
+  // "all Not in plan" is real information (they declined everything), a blank
+  // box is not. Techs can add one-time add-ons, enroll every-visit ones, mark
+  // performed, and charge the card on file — the office is emailed on every
+  // tech-initiated charge.
+  const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+  let chargeInFlight = false; // one charge at a time — no double-taps, no double-charges
+
   async function loadAddons(v) {
     const sec = document.getElementById('tvd-addons-sec');
     if (!sec) return;
     try {
-      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/addons`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/addon-menu`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       // Identity guard: don't render into a panel that re-rendered meanwhile.
       if (document.getElementById('tvd-addons-sec') !== sec) return;
-      renderAddons(v, data.addons || []);
+      renderAddons(v, data.menu || [], !!data.subscription_canceled);
     } catch (e) {
-      console.error('load addons failed', e); // additive — section just stays hidden
+      console.error('load addon menu failed', e);
+      if (document.getElementById('tvd-addons-sec') === sec) {
+        sec.innerHTML = `<h3>Add-ons</h3><p class="tvd-addon-hint">Couldn't load the add-on menu &mdash; close and reopen the visit to retry.</p>`;
+      }
     }
   }
 
-  function renderAddons(v, addons) {
+  function menuChip(m) {
+    if (m.status === 'charged') return `<span class="badge" style="background:var(--ok);color:#fff;">Charged</span>`;
+    if (m.status === 'performed') return `<span class="badge badge-ok">Performed</span>`;
+    if (m.status === 'this_visit') return `<span class="badge badge-warn">This visit</span>`;
+    if (m.status === 'every_visit') return `<span class="badge badge-info">Every visit</span>`;
+    return `<span class="badge badge-neutral">Not in plan</span>`;
+  }
+
+  function renderAddons(v, menu, subCanceled) {
     const sec = document.getElementById('tvd-addons-sec');
     if (!sec) return;
-    if (!addons.length) { sec.hidden = true; sec.innerHTML = ''; return; }
     const done = !!(v.completed_date || v.status === 'completed');
-    const rows = addons.map((a) => {
-      const badge = a.status === 'performed'
-        ? `<span class="badge badge-ok">Performed${a.date_performed ? ' ' + esc(fmtDate(a.date_performed)) : ''}</span>`
-        : `<span class="badge badge-warn">Pending</span>`;
-      let action = '';
-      if (!done) {
-        action = a.status === 'pending'
-          ? `<button type="button" class="btn btn-primary btn-sm" data-addon-perform="${esc(a.id)}">Mark performed</button>`
-          : `<button type="button" class="btn btn-ghost btn-sm" data-addon-undo="${esc(a.id)}">Undo</button>`;
+    const canAct = !done && !subCanceled;
+
+    const rows = menu.map((m) => {
+      const actions = [];
+      if (canAct) {
+        if (m.status === 'not_in_plan') {
+          actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-menu-add="${esc(m.addon_type)}" data-label="${esc(m.label)}" data-amount="${m.amount_cents}">Add this visit</button>`);
+          if (m.recurring) actions.push(`<button type="button" class="btn btn-ghost btn-sm" data-standing-on="${esc(m.addon_type)}" data-label="${esc(m.label)}" data-amount="${m.amount_cents}">Every visit</button>`);
+        } else if (m.status === 'every_visit') {
+          if (m.addon_id) actions.push(`<button type="button" class="btn btn-primary btn-sm" data-addon-perform="${esc(m.addon_id)}">Mark performed</button>`);
+          else actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-menu-add="${esc(m.addon_type)}" data-label="${esc(m.label)}" data-amount="${m.amount_cents}">Add this visit</button>`);
+          actions.push(`<button type="button" class="btn btn-ghost btn-sm" data-standing-off="${esc(m.addon_type)}" data-label="${esc(m.label)}">Stop</button>`);
+        } else if (m.status === 'this_visit') {
+          actions.push(`<button type="button" class="btn btn-primary btn-sm" data-addon-perform="${esc(m.addon_id)}">Mark performed</button>`);
+        } else if (m.status === 'performed') {
+          actions.push(`<button type="button" class="btn btn-ghost btn-sm" data-addon-undo="${esc(m.addon_id)}">Undo</button>`);
+        }
       }
       return `<div class="tvd-addon-row">
-        <div class="tvd-addon-label">${esc(a.label)}</div>
-        <div class="tvd-addon-side">${badge}${action}</div>
+        <div><div class="tvd-addon-label">${esc(m.label)}</div>
+          <div class="tvd-addon-price">${money(m.amount_cents)}</div></div>
+        <div class="tvd-addon-side">${menuChip(m)}${actions.join('')}</div>
       </div>`;
     }).join('');
-    sec.innerHTML = `<h3>Add-ons</h3><p class="tvd-addon-hint">Flag work you performed — the office bills it later.</p>${rows}`;
-    sec.hidden = false;
+
+    // "Charge now" for performed-but-unbilled catalog add-ons + the custom
+    // charge builder. Charging only ever bills PERFORMED work.
+    const performed = menu.filter((m) => m.status === 'performed' && m.amount_cents > 0);
+    const performedTotal = performed.reduce((s, m) => s + m.amount_cents, 0);
+    const footer = canAct
+      ? `<div class="tvd-addon-foot">
+          ${performed.length ? `<button type="button" class="btn btn-primary btn-sm" id="tvd-charge-now">Charge now (${money(performedTotal)})</button>` : ''}
+          <button type="button" class="btn btn-secondary btn-sm" id="tvd-custom-charge">+ Custom charge</button>
+        </div>
+        <p class="tvd-addon-hint" style="margin-top:8px;">Charges the card on file &middot; the office is notified.</p>`
+      : '';
+
+    sec.innerHTML = `<h3>Add-ons</h3>
+      <p class="tvd-addon-hint">Everything available for this generator, with prices. Adding never charges &mdash; billing happens after the work is performed.</p>
+      ${rows || `<p class="tvd-addon-hint">No add-ons apply to this generator.</p>`}${footer}`;
+
     sec.querySelectorAll('[data-addon-perform]').forEach((btn) => {
       btn.addEventListener('click', () => performAddon(v, btn.getAttribute('data-addon-perform'), false));
     });
     sec.querySelectorAll('[data-addon-undo]').forEach((btn) => {
       btn.addEventListener('click', () => performAddon(v, btn.getAttribute('data-addon-undo'), true));
     });
+    sec.querySelectorAll('[data-menu-add]').forEach((btn) => {
+      btn.addEventListener('click', () => addMenuAddon(v, btn.getAttribute('data-menu-add'), btn.getAttribute('data-label'), parseInt(btn.getAttribute('data-amount'), 10)));
+    });
+    sec.querySelectorAll('[data-standing-on]').forEach((btn) => {
+      btn.addEventListener('click', () => setStanding(v, btn.getAttribute('data-standing-on'), true, btn.getAttribute('data-label'), parseInt(btn.getAttribute('data-amount'), 10)));
+    });
+    sec.querySelectorAll('[data-standing-off]').forEach((btn) => {
+      btn.addEventListener('click', () => setStanding(v, btn.getAttribute('data-standing-off'), false, btn.getAttribute('data-label'), 0));
+    });
+    const chargeBtn = sec.querySelector('#tvd-charge-now');
+    if (chargeBtn) chargeBtn.addEventListener('click', () => chargePerformedNow(v, performed, performedTotal, chargeBtn));
+    const customBtn = sec.querySelector('#tvd-custom-charge');
+    if (customBtn) customBtn.addEventListener('click', () => customCharge(v, customBtn));
   }
 
   async function performAddon(v, addonId, undo) {
@@ -771,26 +836,169 @@
     loadAddons(v); // refresh either way — a 409 means it changed underneath us
   }
 
-  // ---- Complete ----
-  async function completeVisit(id) {
+  // Add a one-time catalog add-on for this visit. Scheduling only — the charge
+  // happens later, once it's performed and "Charge now" runs.
+  async function addMenuAddon(v, addonType, label, amountCents) {
+    const ok = await openConfirm({
+      title: `Add ${label}?`,
+      message: `${label} (${money(amountCents)}) is added for this visit. Nothing is charged until the work is done.`,
+      confirmText: 'Add this visit',
+    });
+    if (!ok) return;
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/addons`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addon_type: addonType }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); }
+      else showStatus(`${label} added for this visit.`, 'success');
+    } catch (e) {
+      console.error('menu add failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+    loadAddons(v);
+  }
+
+  // Enroll / unenroll an every-visit (standing) add-on. Enrolling also puts it
+  // on today's visit so it can be performed right away.
+  async function setStanding(v, addonType, on, label, amountCents) {
+    const ok = await openConfirm(on
+      ? {
+          title: `${label} every visit?`,
+          message: `${label} (${money(amountCents)} per visit) will be on every future visit, starting today. It's only charged when the work is done.`,
+          confirmText: 'Every visit',
+        }
+      : {
+          title: `Stop ${label}?`,
+          message: `${label} stops coming back on future visits, and comes off today's list if it hasn't been performed.`,
+          confirmText: 'Stop',
+        });
+    if (!ok) return;
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/standing/${encodeURIComponent(addonType)}`, {
+        method: on ? 'POST' : 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); }
+      else showStatus(on ? `${label} set to every visit.` : `${label} stopped.`, 'success');
+    } catch (e) {
+      console.error('standing toggle failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+    loadAddons(v);
+  }
+
+  // Friendly copy for a failed charge (402 shapes from the shared charge core).
+  function chargeFailMessage(data) {
+    if (data && data.reason === 'no saved card on file') {
+      return data.card_update_email_sent
+        ? 'No card on file — the customer was emailed a link to add one. The office can retry the charge later.'
+        : 'No card on file, and the card-update email couldn’t be sent — let the office know.';
+    }
+    return `The card was declined: ${(data && (data.reason || data.error)) || 'unknown error'}. The office can follow up.`;
+  }
+
+  // Charge every performed-but-unbilled add-on in ONE payment (one receipt).
+  async function chargePerformedNow(v, performed, totalCents, btn) {
+    if (chargeInFlight) return;
+    const items = performed.map((m) => `${m.label} (${money(m.amount_cents)})`).join(', ');
+    const ok = await openConfirm({
+      title: `Charge ${money(totalCents)} now?`,
+      message: `Charge ${money(totalCents)} to the card on file for ${customerName(v)}: ${items}. One charge, one receipt.`,
+      confirmText: `Charge ${money(totalCents)}`,
+    });
+    if (!ok) return;
+    chargeInFlight = true;
+    btn.disabled = true;
+    btn.textContent = 'Charging…';
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/charge-performed-addons`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
+      else showStatus(`Charged ${money(data.total_cents)} — the customer gets a receipt and the office was notified.`, 'success');
+    } catch (e) {
+      console.error('charge now failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+    chargeInFlight = false;
+    loadAddons(v); // re-render restores the button state
+  }
+
+  // Full-freedom custom charge: own description + any positive amount (no
+  // cap — the confirm step is the safeguard). Always charges the card on
+  // file immediately.
+  async function customCharge(v, btn) {
+    if (chargeInFlight) return;
     const res = await openPrompt({
-      title: 'Mark visit complete',
-      message: 'Records the date performed and notes. The next visit is auto-scheduled on the plan cadence (the office will assign it).',
+      title: 'Custom charge',
+      message: 'Describe the work and the amount. This charges the customer’s card on file today.',
       fields: [
-        { name: 'date', label: 'Date performed', type: 'date', value: todayStr(), required: true },
-        { name: 'notes', label: 'Note for the customer (optional)', type: 'textarea', placeholder: 'What we did, anything they should know…', hint: 'The customer sees this in their visit-complete email.' },
-        { name: 'internal', label: 'Internal note (office + techs only)', type: 'textarea', placeholder: 'Parts used, follow-ups, access notes…', hint: 'Never shown to the customer.' },
-        { name: 'parts', label: 'Parts used / needs quote (office only)', type: 'textarea', placeholder: 'Breaker 20A x2, needs quote for surge protector…', hint: 'Sent to the office with a [Field] stamp — never shown to the customer.' },
+        { name: 'description', label: 'Description (shown on the customer’s receipt)', type: 'text', required: true, placeholder: 'e.g. Replaced battery cables' },
+        { name: 'amount', label: 'Amount ($)', type: 'number', step: '0.01', min: '0.01', inputmode: 'decimal', required: true, placeholder: 'e.g. 125.50' },
       ],
-      confirmText: 'Mark complete',
+      confirmText: 'Continue',
+      validate: (vals) => {
+        if (!(vals.description || '').trim()) return 'Enter a description.';
+        const num = parseFloat(vals.amount);
+        if (!Number.isFinite(num) || num <= 0) return 'Amount must be a positive number.';
+        return '';
+      },
     });
     if (res === null) return;
+    const description = (res.description || '').trim();
+    const amountCents = Math.round(parseFloat(res.amount) * 100);
+    const ok = await openConfirm({
+      title: `Charge ${money(amountCents)}?`,
+      message: `Charge ${money(amountCents)} to the card on file for ${customerName(v)}: “${description}”`,
+      confirmText: `Charge ${money(amountCents)}`,
+      danger: true,
+    });
+    if (!ok) return;
+    if (chargeInFlight) return;
+    chargeInFlight = true;
+    if (btn) { btn.disabled = true; btn.textContent = 'Charging…'; }
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/adhoc-charge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, amount_cents: amountCents }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
+      else showStatus(`Charged ${money(data.charge.amount_cents)} — the customer gets a receipt and the office was notified.`, 'success');
+    } catch (e) {
+      console.error('custom charge failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+    chargeInFlight = false;
+    loadAddons(v); // re-render restores the button state
+  }
+
+  // ---- Complete ----
+  // Notes now live INLINE in the "Wrap up & notes" section right above this
+  // button (filled in as the last step on site); completing just confirms and
+  // posts the same fields to the same endpoint as before.
+  async function completeVisit(id) {
+    const val = (elId) => { const el = document.getElementById(elId); return el ? el.value : ''; };
     const body = {
-      completed_date: (res.date || '').trim() || todayStr(),
-      notes: (res.notes || '').trim() || null,
-      internal_note: (res.internal || '').trim() || null,
-      parts_note: (res.parts || '').trim() || null,
+      completed_date: (val('tvd-done-date') || '').trim() || todayStr(),
+      notes: (val('tvd-done-notes') || '').trim() || null,
+      internal_note: (val('tvd-done-internal') || '').trim() || null,
+      parts_note: (val('tvd-done-parts') || '').trim() || null,
     };
+    const ok = await openConfirm({
+      title: 'Mark visit complete?',
+      message: 'Records the date and the notes above. The next visit is auto-scheduled on the plan cadence (the office will assign it).',
+      confirmText: 'Mark complete',
+    });
+    if (!ok) return;
     try {
       const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${id}/complete`, {
         method: 'POST',

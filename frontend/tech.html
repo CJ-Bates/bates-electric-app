@@ -131,6 +131,14 @@
     .tvd-addon-row:last-child { border-bottom: 0; padding-bottom: 0; }
     .tvd-addon-label { font-size: 0.92rem; font-weight: 600; color: var(--ink); }
     .tvd-addon-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+    /* Add-ons menu Phase 1: price line, charge footer, inline wrap-up fields */
+    .tvd-addon-price { font-size: 0.82rem; color: var(--ink-2); font-weight: 600; margin-top: 1px; }
+    .tvd-addon-foot { display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 10px; padding-top: 12px; }
+    .tvd-fld { display: block; margin-bottom: 12px; }
+    .tvd-fld span { display: block; font-size: 0.82rem; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
+    .tvd-fld small { display: block; font-size: 0.75rem; color: var(--ink-2); margin-top: 3px; }
+    .tvd-fld input, .tvd-fld textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--ink); padding: 9px 11px; font: inherit; font-size: 0.92rem; }
+    .tvd-fld textarea { resize: vertical; min-height: 54px; }
     .tvd-cta { position: sticky; bottom: 0; background: var(--bg); padding: 12px 0 max(12px, env(safe-area-inset-bottom)); margin-top: 4px; }
     .tvd-complete { width: 100%; padding: 15px; font-size: 1rem; font-weight: 700; border-radius: var(--radius); }
     .tvd-done-banner { background: var(--ok-bg); color: var(--ok); border-radius: var(--radius); padding: 12px; text-align: center; font-weight: 700; font-size: 0.92rem; }

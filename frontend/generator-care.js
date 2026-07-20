@@ -1320,7 +1320,84 @@
     </div>`;
   }
 
-  function renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) {
+  // Status chip for a menu row (add-ons menu Phase 1 statuses).
+  function menuStatusChip(m) {
+    if (m.status === 'charged') return `<span class="badge" style="background:var(--ok);color:#fff;">Charged</span>`;
+    if (m.status === 'performed') return `<span class="badge badge-ok">Performed &middot; unbilled</span>`;
+    if (m.status === 'this_visit') return `<span class="badge badge-warn">This visit</span>`;
+    if (m.status === 'every_visit') return `<span class="badge badge-info">Every visit</span>`;
+    return `<span class="badge badge-neutral">Not in plan</span>`;
+  }
+
+  // One row of the complete add-on menu: label + price always visible, a
+  // status chip, and the office actions for that status (the same endpoints
+  // as before — add, standing toggle, mark performed, undo, remove, refund —
+  // just presented on the menu).
+  function menuRowHtml(m, subscription, rowByld, isCanceled) {
+    const label = escapeHtml(m.label);
+    const amtStr = `$${(m.amount_cents / 100).toFixed(2)}`;
+    const isStanding = ((subscription && subscription.standing_addons) || []).includes(m.addon_type);
+    const row = m.addon_id ? rowByld.get(m.addon_id) : null;
+
+    const actions = [];
+    if (isCanceled && m.status !== 'charged') {
+      // Canceled subscription: nothing new can be added/performed; only
+      // refunds on already-charged rows stay actionable.
+    } else if (m.status === 'not_in_plan') {
+      actions.push(`<button class="btn btn-secondary btn-sm" data-menu-add="${escapeHtml(m.addon_type)}" data-label="${label}" data-amount="${m.amount_cents}">Add this visit</button>`);
+      if (m.recurring) actions.push(`<button class="btn btn-ghost btn-sm" data-standing-set="${escapeHtml(m.addon_type)}" data-on="1" data-label="${label}" data-amount="${m.amount_cents}">Every visit</button>`);
+    } else if (m.status === 'every_visit') {
+      if (m.addon_id) actions.push(`<button class="btn btn-primary btn-sm" data-mark-performed="${m.addon_id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>`);
+      // Standing but not materialized on this cycle yet (enrolled mid-cycle):
+      // let the office pull it onto the current visit so it can be performed.
+      else actions.push(`<button class="btn btn-secondary btn-sm" data-menu-add="${escapeHtml(m.addon_type)}" data-label="${label}" data-amount="${m.amount_cents}">Add this visit</button>`);
+      actions.push(`<button class="btn btn-ghost btn-sm" data-standing-set="${escapeHtml(m.addon_type)}" data-on="0" data-label="${label}">Stop every visit</button>`);
+    } else if (m.status === 'this_visit') {
+      actions.push(`<button class="btn btn-primary btn-sm" data-mark-performed="${m.addon_id}" data-amount="${amtStr}" data-label="${label}">Mark Performed</button>`);
+      actions.push(`<button class="btn btn-secondary btn-sm gc-btn-icon" data-remove-addon="${m.addon_id}" data-label="${label}" title="Remove" aria-label="Remove"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`);
+    } else if (m.status === 'performed') {
+      actions.push(`<button class="btn btn-ghost btn-sm" data-unmark="${m.addon_id}">Undo</button>`);
+    } else if (m.status === 'charged' && row) {
+      const refunded = parseTotalRefundedCents(row.notes);
+      if (refunded >= row.amount_cents) {
+        // fully refunded — chip below says so, no action
+      } else {
+        actions.push(`<button class="btn btn-ghost btn-sm" data-refund-addon="${row.id}" data-amount="${row.amount_cents}" data-refunded="${refunded}" data-label="${label}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`);
+      }
+    }
+
+    // Chip: charged rows show refund state; standing types performed/charged
+    // this cycle keep a small "Every visit" tag so the office still sees (and
+    // can stop) the enrollment.
+    let chip = menuStatusChip(m);
+    if (m.status === 'charged' && row) {
+      const refunded = parseTotalRefundedCents(row.notes);
+      const chargedOn = row.date_charged ? ' &middot; ' + escapeHtml(fmtDate(row.date_charged)) : '';
+      if (refunded >= row.amount_cents) chip = `<span class="badge badge-neutral">Refunded</span>`;
+      else if (refunded > 0) chip = `<span class="badge badge-warn">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
+      else chip = `<span class="badge" style="background:var(--ok);color:#fff;">Charged${chargedOn}</span>`;
+    }
+    const standingTag = (isStanding && (m.status === 'performed' || m.status === 'charged'))
+      ? ` <span class="badge badge-info">Every visit</span>`
+      : '';
+    const performedMeta = (m.status === 'performed' && (m.date_performed || m.performed_by))
+      ? `<div class="gc-meta-label" style="margin-top:3px;">${m.date_performed ? 'Performed ' + escapeHtml(fmtDate(m.date_performed)) : ''}${m.performed_by ? ' by ' + escapeHtml(m.performed_by) : ''}</div>`
+      : '';
+    const visibleNotes = row ? stripRefundLines(row.notes) : '';
+    const noteHtml = visibleNotes ? `<div style="color:var(--danger);font-size:0.78rem;margin-top:4px;">${escapeHtml(visibleNotes)}</div>` : '';
+
+    return `<div class="gc-card-row">
+      <div>
+        <div class="gc-meta-value">${label} <span style="color:var(--ink-2);font-weight:500;">&middot; ${amtStr}</span></div>
+        <div style="margin-top:4px;">${chip}${standingTag}</div>
+        ${performedMeta}
+        ${noteHtml}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">${actions.join('')}</div>
+    </div>`;
+  }
+
+  function renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription, addonMenu) {
     const visible = (pending_addons || []).filter(a => a.status !== 'canceled');
     // Current cycle = add-ons on the open visit; history = charged add-ons from
     // prior cycles (kept, shown collapsed). Active add-ons always sit in current.
@@ -1328,12 +1405,29 @@
     const histSet = new Set(history);
     const current = visible.filter(a => !histSet.has(a));
 
-    const headerAction = isCanceled ? '' : `<button class="btn btn-secondary btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
-    const header = `<h3 class="gc-card-h"><span>Add-ons<span class="gc-card-h-count">(${current.length})</span></span>${headerAction}</h3>`;
-
-    const currentRows = current.length
-      ? current.map(addonRowHtml).join('')
-      : `<div class="gc-meta-label" style="padding:6px 0;">No add-ons this cycle${isCanceled ? '.' : ' &mdash; click "+ Add Add-on" to add one.'}</div>`;
+    // ---- The complete menu (add-ons menu Phase 1) ----
+    // Every catalog add-on that fits this generator class, price + status,
+    // served by the backend (addon_menu). Falls back to the legacy sparse
+    // card only if the API predates the menu (deploy skew).
+    let bodyRows, headerAction, headerCount;
+    if (Array.isArray(addonMenu)) {
+      const rowByld = new Map(visible.map(a => [a.id, a]));
+      const active = addonMenu.filter(m => m.status !== 'not_in_plan');
+      headerCount = active.length;
+      headerAction = '';
+      const failed = current.filter(a => a.status === 'failed');
+      bodyRows = addonMenu.map(m => menuRowHtml(m, subscription, rowByld, isCanceled)).join('')
+        + (failed.length
+          ? `<div class="gc-meta-label" style="margin-top:8px;color:var(--danger);">Failed charges</div>` + failed.map(addonRowHtml).join('')
+          : '');
+    } else {
+      headerCount = current.length;
+      headerAction = isCanceled ? '' : `<button class="btn btn-secondary btn-sm" id="gc-add-addon-btn">+ Add Add-on</button>`;
+      bodyRows = current.length
+        ? current.map(addonRowHtml).join('')
+        : `<div class="gc-meta-label" style="padding:6px 0;">No add-ons this cycle${isCanceled ? '.' : ' &mdash; click "+ Add Add-on" to add one.'}</div>`;
+    }
+    const header = `<h3 class="gc-card-h"><span>Add-ons<span class="gc-card-h-count">(${headerCount})</span></span>${headerAction}</h3>`;
 
     // One combined "charge performed add-ons" action for the current visit.
     const performedUnbilled = current.filter(a => a.status === 'performed' && a.amount_cents > 0);
@@ -1344,18 +1438,22 @@
         </div>`
       : '';
 
-    // Standing add-ons editor (which recurring types auto-return each visit).
-    const standing = new Set((subscription && subscription.standing_addons) || []);
-    const recurringAvail = availableRecurringTypes(subscription && subscription.gen_class);
-    const standingHtml = (!isCanceled && recurringAvail.length)
-      ? `<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px;">
-          <div class="gc-meta-label" style="margin-bottom:6px;">Standing add-ons <span style="opacity:0.75;font-weight:400;">&mdash; auto-return as Pending each visit</span></div>
-          ${recurringAvail.map(t => `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.88rem;cursor:pointer;">
-            <input type="checkbox" class="gc-standing-cb" data-type="${escapeHtml(t)}"${standing.has(t) ? ' checked' : ''} />
-            <span>${escapeHtml(addonLabel(t))}</span>
-          </label>`).join('')}
-        </div>`
-      : '';
+    // Standing add-ons checkbox editor — only for the legacy (menu-less)
+    // render; the menu's per-row "Every visit"/"Stop every visit" replaces it.
+    let standingHtml = '';
+    if (!Array.isArray(addonMenu)) {
+      const standing = new Set((subscription && subscription.standing_addons) || []);
+      const recurringAvail = availableRecurringTypes(subscription && subscription.gen_class);
+      standingHtml = (!isCanceled && recurringAvail.length)
+        ? `<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px;">
+            <div class="gc-meta-label" style="margin-bottom:6px;">Standing add-ons <span style="opacity:0.75;font-weight:400;">&mdash; auto-return as Pending each visit</span></div>
+            ${recurringAvail.map(t => `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.88rem;cursor:pointer;">
+              <input type="checkbox" class="gc-standing-cb" data-type="${escapeHtml(t)}"${standing.has(t) ? ' checked' : ''} />
+              <span>${escapeHtml(addonLabel(t))}</span>
+            </label>`).join('')}
+          </div>`
+        : '';
+    }
 
     const historyHtml = history.length
       ? `<details style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px;">
@@ -1364,7 +1462,7 @@
         </details>`
       : '';
 
-    return `<div class="gc-card" id="gc-card-addons">${header}${currentRows}${batchBtn}${standingHtml}${historyHtml}</div>`;
+    return `<div class="gc-card" id="gc-card-addons">${header}${bodyRows}${batchBtn}${standingHtml}${historyHtml}</div>`;
   }
 
   function renderChargesCard(adhoc_charges, isCanceled) {
@@ -1510,7 +1608,7 @@
       drop('[data-refund-addon], [data-refund-charge], [data-refund-invoice]');
     }
     if (!userPerms.billing_actions) {
-      drop('#gc-change-plan-btn, #gc-change-tier-btn, #gc-add-addon-btn, #gc-charge-addons-btn, #gc-add-charge-btn, [data-mark-performed], [data-remove-addon], [data-unmark], [data-cancel-charge]');
+      drop('#gc-change-plan-btn, #gc-change-tier-btn, #gc-add-addon-btn, #gc-charge-addons-btn, #gc-add-charge-btn, [data-mark-performed], [data-remove-addon], [data-unmark], [data-cancel-charge], [data-menu-add], [data-standing-set]');
       scope.querySelectorAll('.gc-standing-cb').forEach((cb) => { cb.disabled = true; });
     }
     if (!userPerms.customer_edit) {
@@ -1540,7 +1638,7 @@
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { subscription, visits, pending_addons, adhoc_charges = [], visit_preferences = [], sms_consent = null, visit_sms = {} } = await r.json();
+      const { subscription, visits, pending_addons, adhoc_charges = [], addon_menu = null, visit_preferences = [], sms_consent = null, visit_sms = {} } = await r.json();
       const c = subscription.customer || {};
       title.textContent = fmtNameCase(c.name) || 'Customer';
       const isCanceled = subscription.status === 'canceled';
@@ -1560,7 +1658,7 @@
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons, openVisit) +
         renderVisitsCard(visits, subscription, visit_preferences, visit_sms) +
-        renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription) +
+        renderAddonsCard(pending_addons, isCanceled, openVisitId, subscription, addon_menu) +
         renderChargesCard(adhoc_charges, isCanceled) +
         renderInvoicesCard() +
         renderDangerZone(isCanceled, subscription);
@@ -1618,6 +1716,15 @@
 
       const addAddonBtn = body.querySelector('#gc-add-addon-btn');
       if (addAddonBtn) addAddonBtn.addEventListener('click', () => addAddon(id));
+
+      // Menu-row actions (add-ons menu Phase 1): direct "Add this visit" and
+      // the per-row every-visit toggles. Same endpoints as before.
+      body.querySelectorAll('[data-menu-add]').forEach(btn => {
+        btn.addEventListener('click', () => addAddonFromMenu(id, btn.dataset.menuAdd, btn.dataset.label, parseInt(btn.dataset.amount, 10)));
+      });
+      body.querySelectorAll('[data-standing-set]').forEach(btn => {
+        btn.addEventListener('click', () => setStandingFromMenu(id, c.id, (subscription.standing_addons || []), btn.dataset.standingSet, btn.dataset.on === '1', btn.dataset.label, parseInt(btn.dataset.amount || '0', 10)));
+      });
 
       const addChargeBtn = body.querySelector('#gc-add-charge-btn');
       if (addChargeBtn) addChargeBtn.addEventListener('click', () => addAdhocCharge(id, visits || []));
@@ -1958,6 +2065,68 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Cancel adhoc charge failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  // Menu-row "Add this visit": one confirm, then the existing add-addon
+  // endpoint. Adding only schedules it — the charge happens after it's
+  // marked performed (the billing safety rule).
+  async function addAddonFromMenu(subscriptionId, addonType, label, amountCents) {
+    const money = '$' + ((amountCents || 0) / 100).toFixed(2);
+    if (!await openConfirm({
+      title: `Add ${label} this visit?`,
+      message: `${label} (${money}) is added to the current visit. Nothing is charged until it's marked performed and billed.`,
+      confirmText: 'Add this visit',
+    })) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/add-addon`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addon_type: addonType }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Could not add: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(`Added ${label} for this visit.`, 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Menu add addon failed:', err);
+      showStatus(`Failed: ${err.message}`, 'error');
+    }
+  }
+
+  // Menu-row every-visit toggle: PATCHes the standing set (current set ± this
+  // type) through the existing standing-addons endpoint.
+  async function setStandingFromMenu(subscriptionId, customerId, currentStanding, addonType, on, label, amountCents) {
+    const money = '$' + ((amountCents || 0) / 100).toFixed(2);
+    const ok = await openConfirm(on
+      ? {
+          title: `${label} every visit?`,
+          message: `${label} auto-returns on every visit (${money} each time). It's only charged when the work is performed.`,
+          confirmText: 'Every visit',
+        }
+      : {
+          title: `Stop ${label} every visit?`,
+          message: `${label} stops auto-returning on future visits. Anything already performed or charged is untouched.`,
+          confirmText: 'Stop',
+        });
+    if (!ok) return;
+    const next = new Set(currentStanding);
+    if (on) next.add(addonType); else next.delete(addonType);
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/standing-addons`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ standing_addons: Array.from(next), customer_id: customerId }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(`Couldn't update: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      showStatus(on ? `${label} set to every visit.` : `${label} no longer every visit.`, 'success');
+      await loadSubscriptions();
+      showDetail(subscriptionId);
+    } catch (err) {
+      console.error('Standing toggle failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
     }
   }
