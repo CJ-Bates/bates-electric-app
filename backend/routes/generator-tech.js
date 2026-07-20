@@ -16,7 +16,7 @@ const { completeServiceVisit, generateStandingAddons } = require('../lib/complet
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
 const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon } = require('../lib/generator-catalog');
-const { chargeAdhocImmediate, chargePerformedAddonsForSub, getOpenVisitId } = require('../lib/gcCharges');
+const { chargeVisitCart, getVisitCartCharges, getOpenVisitId } = require('../lib/gcCharges');
 const { buildAddonMenu } = require('../lib/addonMenu');
 const { reportError } = require('../middleware/error-reporter');
 
@@ -499,12 +499,15 @@ function notifyOfficeOfTechCharge({ techName, customerName, lineItems, totalCent
 // that applies to the generator class, with price + derived status
 // (not_in_plan | every_visit | this_visit | performed | charged). Built by the
 // same lib/addonMenu.js builder the office detail endpoint uses.
+// Phase 1.1: the payload is also the CART — it includes this visit's pending
+// custom charges and a computed cart total (performed-but-unbilled add-ons +
+// pending customs), which is exactly what POST …/charge would bill.
 router.get('/my-visits/:id/addon-menu', async (req, res) => {
   try {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
 
-    const [{ data: sub, error: subErr }, { data: addons, error: aErr }] = await Promise.all([
+    const [{ data: sub, error: subErr }, { data: addons, error: aErr }, customs] = await Promise.all([
       supabaseAdmin
         .from('generator_subscriptions')
         .select('id, gen_class, standing_addons, status')
@@ -515,6 +518,7 @@ router.get('/my-visits/:id/addon-menu', async (req, res) => {
         .select('id, addon_type, status, amount_cents, service_visit_id, date_performed, performed_by')
         .eq('subscription_id', visit.subscription_id)
         .order('created_at', { ascending: true }),
+      getVisitCartCharges(visit.subscription_id, visit.id),
     ]);
     if (subErr) throw subErr;
     if (aErr) throw aErr;
@@ -527,7 +531,21 @@ router.get('/my-visits/:id/addon-menu', async (req, res) => {
       pendingAddons: addons,
       openVisitId,
     });
-    res.json({ ok: true, menu, subscription_canceled: sub.status === 'canceled' });
+
+    // Cart total mirrors chargeVisitCart's scope: THIS visit's performed
+    // unbilled add-ons + THIS visit's pending customs.
+    const performedCents = (addons || [])
+      .filter((a) => a.status === 'performed' && a.service_visit_id === visit.id && a.amount_cents > 0)
+      .reduce((s, a) => s + a.amount_cents, 0);
+    const customCents = customs.reduce((s, c) => s + c.amount_cents, 0);
+
+    res.json({
+      ok: true,
+      menu,
+      custom_charges: customs.map((c) => ({ id: c.id, description: c.description, amount_cents: c.amount_cents })),
+      cart_total_cents: performedCents + customCents,
+      subscription_canceled: sub.status === 'canceled',
+    });
   } catch (err) {
     console.error('[generator-tech] addon-menu error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
@@ -677,13 +695,16 @@ async function setStandingAddon(req, res, enroll) {
 router.post('/my-visits/:id/standing/:addon_type', (req, res) => setStandingAddon(req, res, true));
 router.delete('/my-visits/:id/standing/:addon_type', (req, res) => setStandingAddon(req, res, false));
 
-// POST /api/generator-care/tech/my-visits/:id/adhoc-charge
-// Body: { description, amount_cents } — a custom charge built in the field:
-// own description, any positive amount (no cap — the UI confirm is the
-// safeguard), ALWAYS charged immediately to the card on file via the shared
-// core (the same flow as the office's "Charge now" ad-hoc). technician_id is
-// recorded on the row; a successful charge emails the office.
-router.post('/my-visits/:id/adhoc-charge', async (req, res) => {
+// POST /api/generator-care/tech/my-visits/:id/custom-charges
+// Body: { description, amount_cents } — add a custom LINE ITEM to this visit's
+// cart. Phase 1.1: this NEVER hits Stripe — it inserts a pending
+// generator_adhoc_charges row (billing_method 'immediate', this visit, the
+// tech recorded) that POST …/charge later bills together with the performed
+// add-ons on ONE invoice. Any positive amount, no cap — the UI confirm at
+// charge time is the safeguard. (The old immediate-charging
+// /adhoc-charge route is GONE on purpose: a stale cached PWA calling it gets
+// a 404 failure, never a charge it didn't show the tech.)
+router.post('/my-visits/:id/custom-charges', async (req, res) => {
   try {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
@@ -696,58 +717,79 @@ router.post('/my-visits/:id/adhoc-charge', async (req, res) => {
       return res.status(400).json({ error: 'Amount must be a positive dollar amount.' });
     }
 
-    const techName = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'tech';
-    const result = await chargeAdhocImmediate({
-      subscriptionId: visit.subscription_id,
-      description: String(description),
-      amountCents: amount_cents,
-      serviceVisitId: visit.id,
-      technicianId: req.user.id,
-    });
+    const { data: row, error: insErr } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .insert({
+        subscription_id: visit.subscription_id,
+        service_visit_id: visit.id,
+        description: String(description).trim(),
+        amount_cents,
+        billing_method: 'immediate',
+        status: 'pending',
+        date_performed: new Date().toISOString().slice(0, 10),
+        technician_id: req.user.id,
+      })
+      .select('id, description, amount_cents')
+      .single();
+    if (insErr) throw insErr;
 
-    if (!result.ok) {
-      // Curated failure shape: no Stripe/internal ids in tech-facing JSON.
-      return res.status(result.status).json({
-        error: result.error,
-        reason: result.reason || null,
-        card_update_email_sent: !!result.cardUpdateEmailSent,
-      });
-    }
-
-    notifyOfficeOfTechCharge({
-      techName,
-      customerName: result.customerName,
-      lineItems: [{ label: result.adhocCharge.description, amount_cents: result.adhocCharge.amount_cents }],
-      totalCents: result.adhocCharge.amount_cents,
-    });
-
-    res.json({
-      ok: true,
-      charge: {
-        description: result.adhocCharge.description,
-        amount_cents: result.adhocCharge.amount_cents,
-        date_charged: result.adhocCharge.date_charged,
-      },
-    });
+    res.json({ ok: true, charge: { id: row.id, description: row.description, amount_cents: row.amount_cents } });
   } catch (err) {
-    console.error('[generator-tech] adhoc-charge error:', err && err.message);
+    console.error('[generator-tech] custom-charge add error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/generator-care/tech/my-visits/:id/charge-performed-addons
-// Charge every performed-but-unbilled catalog add-on for this visit's
-// subscription in ONE invoice/receipt — the shared batch core, same as the
-// office button. A successful charge emails the office.
-router.post('/my-visits/:id/charge-performed-addons', async (req, res) => {
+// DELETE /api/generator-care/tech/my-visits/:id/custom-charges/:chargeId
+// Remove a still-uncharged cart line. Hard-scoped in the UPDATE itself: this
+// visit, status pending, immediate, never on an invoice/PI — charged or
+// failed rows (and renewal ad-hoc rows) can never match.
+router.delete('/my-visits/:id/custom-charges/:chargeId', async (req, res) => {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+
+    const { data: removed, error } = await supabaseAdmin
+      .from('generator_adhoc_charges')
+      .update({ status: 'canceled', notes: 'Removed from the visit cart on ' + new Date().toISOString().slice(0, 10) })
+      .eq('id', req.params.chargeId)
+      .eq('subscription_id', visit.subscription_id)
+      .eq('service_visit_id', visit.id)
+      .eq('status', 'pending')
+      .eq('billing_method', 'immediate')
+      .is('stripe_invoice_item_id', null)
+      .is('stripe_payment_intent_id', null)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!removed) return res.status(404).json({ error: 'That line isn’t removable (already charged, or not on this visit).' });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[generator-tech] custom-charge delete error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/tech/my-visits/:id/charge
+// Charge the whole visit cart — THIS visit's performed-but-unbilled catalog
+// add-ons + its pending custom lines — in ONE invoice -> one payment -> one
+// itemized receipt, via the shared chargeVisitCart core. Replaces the
+// Phase-1 per-group charge buttons. A successful charge emails the office
+// with every line + the total.
+router.post('/my-visits/:id/charge', async (req, res) => {
   try {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
 
     const techName = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'tech';
-    const result = await chargePerformedAddonsForSub({ subscriptionId: visit.subscription_id });
+    const result = await chargeVisitCart({
+      subscriptionId: visit.subscription_id,
+      serviceVisitId: visit.id,
+    });
 
     if (!result.ok) {
+      // Curated failure shape: no Stripe/internal ids in tech-facing JSON.
       return res.status(result.status).json({
         error: result.error,
         reason: result.reason || null,
@@ -763,9 +805,14 @@ router.post('/my-visits/:id/charge-performed-addons', async (req, res) => {
     });
 
     // No invoice/Stripe ids in the tech-facing response.
-    res.json({ ok: true, charged_count: result.chargedCount, total_cents: result.totalCents });
+    res.json({
+      ok: true,
+      total_cents: result.totalCents,
+      charged_addon_count: result.chargedAddonCount,
+      charged_custom_count: result.chargedCustomCount,
+    });
   } catch (err) {
-    console.error('[generator-tech] charge-performed-addons error:', err && err.message);
+    console.error('[generator-tech] cart charge error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

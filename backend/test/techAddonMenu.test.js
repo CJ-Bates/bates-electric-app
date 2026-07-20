@@ -59,6 +59,7 @@ test('addon-menu: 403 when the visit is not assigned to the caller — nothing e
     generator_service_visits: () => ({ data: null, error: null }),
     generator_subscriptions: () => { touchedOtherTables = true; return { data: null, error: null }; },
     generator_pending_addons: () => { touchedOtherTables = true; return { data: null, error: null }; },
+    generator_adhoc_charges: () => { touchedOtherTables = true; return { data: null, error: null }; },
   });
   const res = makeRes();
   await menuHandler(techReq(), res);
@@ -84,12 +85,19 @@ test('add addon / standing enroll / standing unenroll: all 403 on an unassigned 
 
 // ---- the menu ----
 
-test('addon-menu: full menu with prices + statuses from the shared builder', async () => {
+test('addon-menu: full menu with prices + statuses, plus the cart (custom lines + total)', async () => {
   restore = installMockSupabase({
     generator_service_visits: visitResolver(),
     generator_subscriptions: () => ({ data: { id: SUB_ID, gen_class: 'liquid_48_150', standing_addons: ['exterior_wash'], status: 'active' }, error: null }),
     generator_pending_addons: () => ({
-      data: [{ id: 'a1', addon_type: 'battery_replacement', status: 'pending', amount_cents: 26500, service_visit_id: VISIT_ID, date_performed: null, performed_by: null }],
+      data: [
+        { id: 'a1', addon_type: 'battery_replacement', status: 'pending', amount_cents: 26500, service_visit_id: VISIT_ID, date_performed: null, performed_by: null },
+        { id: 'a2', addon_type: 'ats_outage_combined', status: 'performed', amount_cents: 11000, service_visit_id: VISIT_ID, date_performed: '2026-07-20', performed_by: 'Chris Tech' },
+      ],
+      error: null,
+    }),
+    generator_adhoc_charges: () => ({
+      data: [{ id: 'c1', description: 'Trip charge', amount_cents: 100, technician_id: TECH_ID, created_at: 'x' }],
       error: null,
     }),
   });
@@ -104,6 +112,11 @@ test('addon-menu: full menu with prices + statuses from the shared builder', asy
   assert.equal(menu.coolant_flush.status, 'not_in_plan');
   assert.equal(menu.coolant_flush.amount_cents, 69500);
   assert.equal(res.body.subscription_canceled, false);
+  // The cart payload (Phase 1.1): pending custom lines + the exact total the
+  // charge endpoint would bill = performed add-ons (11000) + customs (100).
+  // The merely-pending battery is NOT in the total (not performed yet).
+  assert.deepEqual(res.body.custom_charges, [{ id: 'c1', description: 'Trip charge', amount_cents: 100 }]);
+  assert.equal(res.body.cart_total_cents, 11100);
 });
 
 // ---- add a catalog add-on this visit ----

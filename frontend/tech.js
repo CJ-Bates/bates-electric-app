@@ -717,13 +717,14 @@
     }
   }
 
-  // ---- Add-on MENU (add-ons menu Phase 1) ----
+  // ---- Add-on MENU + visit CART (Phase 1.1) ----
   // The complete menu for this customer's generator: every applicable add-on
   // with its price and status. On an open visit the section is ALWAYS shown —
   // "all Not in plan" is real information (they declined everything), a blank
-  // box is not. Techs can add one-time add-ons, enroll every-visit ones, mark
-  // performed, and charge the card on file — the office is emailed on every
-  // tech-initiated charge.
+  // box is not. The tech builds a CART: catalog add-ons join it by being
+  // marked performed, custom lines are added (never charged on add), any
+  // custom line can be removed, then ONE "Charge $total" bills everything on
+  // one invoice with one receipt. The office is emailed on every charge.
   const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
   let chargeInFlight = false; // one charge at a time — no double-taps, no double-charges
 
@@ -736,7 +737,7 @@
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       // Identity guard: don't render into a panel that re-rendered meanwhile.
       if (document.getElementById('tvd-addons-sec') !== sec) return;
-      renderAddons(v, data.menu || [], !!data.subscription_canceled);
+      renderAddons(v, data.menu || [], data.custom_charges || [], data.cart_total_cents || 0, !!data.subscription_canceled);
     } catch (e) {
       console.error('load addon menu failed', e);
       if (document.getElementById('tvd-addons-sec') === sec) {
@@ -753,7 +754,7 @@
     return `<span class="badge badge-neutral">Not in plan</span>`;
   }
 
-  function renderAddons(v, menu, subCanceled) {
+  function renderAddons(v, menu, customs, cartTotalCents, subCanceled) {
     const sec = document.getElementById('tvd-addons-sec');
     if (!sec) return;
     const done = !!(v.completed_date || v.status === 'completed');
@@ -782,21 +783,36 @@
       </div>`;
     }).join('');
 
-    // "Charge now" for performed-but-unbilled catalog add-ons + the custom
-    // charge builder. Charging only ever bills PERFORMED work.
+    // The cart: performed-but-unbilled catalog add-ons (join by "Mark
+    // performed" above) + this visit's custom lines. One Charge for the lot.
     const performed = menu.filter((m) => m.status === 'performed' && m.amount_cents > 0);
-    const performedTotal = performed.reduce((s, m) => s + m.amount_cents, 0);
-    const footer = canAct
-      ? `<div class="tvd-addon-foot">
-          ${performed.length ? `<button type="button" class="btn btn-primary btn-sm" id="tvd-charge-now">Charge now (${money(performedTotal)})</button>` : ''}
-          <button type="button" class="btn btn-secondary btn-sm" id="tvd-custom-charge">+ Custom charge</button>
-        </div>
-        <p class="tvd-addon-hint" style="margin-top:8px;">Charges the card on file &middot; the office is notified.</p>`
+    const cartCount = performed.length + customs.length;
+    const customRows = customs.map((c) => `<div class="tvd-addon-row">
+        <div><div class="tvd-addon-label">${esc(c.description)}</div>
+          <div class="tvd-addon-price">${money(c.amount_cents)}</div></div>
+        <div class="tvd-addon-side"><span class="badge badge-warn">In cart</span>${canAct ? `<button type="button" class="btn btn-ghost btn-sm" data-remove-custom="${esc(c.id)}" data-label="${esc(c.description)}" aria-label="Remove ${esc(c.description)}">Remove</button>` : ''}</div>
+      </div>`).join('');
+    const customBlock = (customs.length || canAct)
+      ? `<div class="tvd-cart-h">Custom charges</div>
+        ${customRows || `<p class="tvd-addon-hint">None yet &mdash; add parts, repairs, or anything off-menu.</p>`}
+        ${canAct ? `<button type="button" class="btn btn-secondary btn-sm" id="tvd-custom-charge">+ Custom charge</button>` : ''}`
       : '';
 
-    sec.innerHTML = `<h3>Add-ons</h3>
-      <p class="tvd-addon-hint">Everything available for this generator, with prices. Adding never charges &mdash; billing happens after the work is performed.</p>
-      ${rows || `<p class="tvd-addon-hint">No add-ons apply to this generator.</p>`}${footer}`;
+    const footer = canAct
+      ? `<div class="tvd-cart-total">
+          <span>${cartCount ? `${cartCount} item${cartCount === 1 ? '' : 's'} to charge` : 'Nothing to charge yet'}</span>
+          <b>${money(cartTotalCents)}</b>
+        </div>
+        <div class="tvd-addon-foot">
+          <button type="button" class="btn btn-primary" id="tvd-charge-cart"${cartCount ? '' : ' disabled'}>Charge ${money(cartTotalCents)}</button>
+        </div>
+        <p class="tvd-addon-hint" style="margin-top:8px;">One charge to the card on file, one receipt &middot; the office is notified. Mark add-ons performed to include them.</p>`
+      : '';
+
+    sec.innerHTML = `<h3>Add-ons &amp; charges</h3>
+      <p class="tvd-addon-hint">Everything available for this generator, with prices. Adding never charges &mdash; performed add-ons and custom lines are billed together with one tap below.</p>
+      ${rows || `<p class="tvd-addon-hint">No add-ons apply to this generator.</p>`}
+      ${customBlock}${footer}`;
 
     sec.querySelectorAll('[data-addon-perform]').forEach((btn) => {
       btn.addEventListener('click', () => performAddon(v, btn.getAttribute('data-addon-perform'), false));
@@ -813,10 +829,13 @@
     sec.querySelectorAll('[data-standing-off]').forEach((btn) => {
       btn.addEventListener('click', () => setStanding(v, btn.getAttribute('data-standing-off'), false, btn.getAttribute('data-label'), 0));
     });
-    const chargeBtn = sec.querySelector('#tvd-charge-now');
-    if (chargeBtn) chargeBtn.addEventListener('click', () => chargePerformedNow(v, performed, performedTotal, chargeBtn));
+    sec.querySelectorAll('[data-remove-custom]').forEach((btn) => {
+      btn.addEventListener('click', () => removeCustomLine(v, btn.getAttribute('data-remove-custom'), btn.getAttribute('data-label')));
+    });
+    const chargeBtn = sec.querySelector('#tvd-charge-cart');
+    if (chargeBtn && cartCount) chargeBtn.addEventListener('click', () => chargeCart(v, performed, customs, cartTotalCents, chargeBtn));
     const customBtn = sec.querySelector('#tvd-custom-charge');
-    if (customBtn) customBtn.addEventListener('click', () => customCharge(v, customBtn));
+    if (customBtn) customBtn.addEventListener('click', () => customCharge(v));
   }
 
   async function performAddon(v, addonId, undo) {
@@ -901,49 +920,17 @@
     return `The card was declined: ${(data && (data.reason || data.error)) || 'unknown error'}. The office can follow up.`;
   }
 
-  // Charge every performed-but-unbilled add-on in ONE payment (one receipt).
-  async function chargePerformedNow(v, performed, totalCents, btn) {
-    if (chargeInFlight) return;
-    const items = performed.map((m) => `${m.label} (${money(m.amount_cents)})`).join(', ');
-    const ok = await openConfirm({
-      title: `Charge ${money(totalCents)} now?`,
-      message: `Charge ${money(totalCents)} to the card on file for ${customerName(v)}: ${items}. One charge, one receipt.`,
-      confirmText: `Charge ${money(totalCents)}`,
-    });
-    if (!ok) return;
-    chargeInFlight = true;
-    btn.disabled = true;
-    btn.textContent = 'Charging…';
-    try {
-      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/charge-performed-addons`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
-      else showStatus(`Charged ${money(data.total_cents)} — the customer gets a receipt and the office was notified.`, 'success');
-    } catch (e) {
-      console.error('charge now failed', e);
-      showStatus(`Failed: ${e.message}`, 'error');
-    }
-    chargeInFlight = false;
-    loadAddons(v); // re-render restores the button state
-  }
-
-  // Full-freedom custom charge: own description + any positive amount (no
-  // cap — the confirm step is the safeguard). Always charges the card on
-  // file immediately.
-  async function customCharge(v, btn) {
-    if (chargeInFlight) return;
+  // Add a custom LINE ITEM to the cart — never charges. The tech reviews the
+  // whole cart with the customer and charges once below.
+  async function customCharge(v) {
     const res = await openPrompt({
-      title: 'Custom charge',
-      message: 'Describe the work and the amount. This charges the customer’s card on file today.',
+      title: 'Add a custom charge',
+      message: 'Adds a line to this visit’s charges. Nothing is billed until you tap Charge.',
       fields: [
         { name: 'description', label: 'Description (shown on the customer’s receipt)', type: 'text', required: true, placeholder: 'e.g. Replaced battery cables' },
         { name: 'amount', label: 'Amount ($)', type: 'number', step: '0.01', min: '0.01', inputmode: 'decimal', required: true, placeholder: 'e.g. 125.50' },
       ],
-      confirmText: 'Continue',
+      confirmText: 'Add to charges',
       validate: (vals) => {
         if (!(vals.description || '').trim()) return 'Enter a description.';
         const num = parseFloat(vals.amount);
@@ -954,27 +941,76 @@
     if (res === null) return;
     const description = (res.description || '').trim();
     const amountCents = Math.round(parseFloat(res.amount) * 100);
-    const ok = await openConfirm({
-      title: `Charge ${money(amountCents)}?`,
-      message: `Charge ${money(amountCents)} to the card on file for ${customerName(v)}: “${description}”`,
-      confirmText: `Charge ${money(amountCents)}`,
-      danger: true,
-    });
-    if (!ok) return;
-    if (chargeInFlight) return;
-    chargeInFlight = true;
-    if (btn) { btn.disabled = true; btn.textContent = 'Charging…'; }
     try {
-      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/adhoc-charge`, {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/custom-charges`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ description, amount_cents: amountCents }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
-      else showStatus(`Charged ${money(data.charge.amount_cents)} — the customer gets a receipt and the office was notified.`, 'success');
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); }
+      else showStatus(`${description} (${money(amountCents)}) added — nothing charged yet.`, 'success');
     } catch (e) {
-      console.error('custom charge failed', e);
+      console.error('custom charge add failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+    loadAddons(v);
+  }
+
+  // Remove a still-uncharged custom line from the cart.
+  async function removeCustomLine(v, chargeId, label) {
+    const ok = await openConfirm({
+      title: 'Remove this line?',
+      message: `${label} comes off this visit’s charges. You can add it again anytime.`,
+      confirmText: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/custom-charges/${chargeId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(data.error || `HTTP ${r.status}`, 'error'); }
+      else showStatus(`${label} removed.`, 'success');
+    } catch (e) {
+      console.error('remove custom line failed', e);
+      showStatus(`Failed: ${e.message}`, 'error');
+    }
+    loadAddons(v);
+  }
+
+  // Charge the whole cart — performed add-ons + custom lines — in ONE payment
+  // with one itemized receipt.
+  async function chargeCart(v, performed, customs, totalCents, btn) {
+    if (chargeInFlight) return;
+    const items = [
+      ...performed.map((m) => `${m.label} (${money(m.amount_cents)})`),
+      ...customs.map((c) => `${c.description} (${money(c.amount_cents)})`),
+    ];
+    const ok = await openConfirm({
+      title: `Charge ${money(totalCents)}?`,
+      message: `Charge ${money(totalCents)} to the card on file for ${customerName(v)} — ${items.length} item${items.length === 1 ? '' : 's'}: ${items.join(', ')}. One charge, one receipt.`,
+      confirmText: `Charge ${money(totalCents)}`,
+      danger: true,
+    });
+    if (!ok) return;
+    if (chargeInFlight) return;
+    chargeInFlight = true;
+    btn.disabled = true;
+    btn.textContent = 'Charging…';
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${v.id}/charge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
+      else showStatus(`Charged ${money(data.total_cents)} — the customer gets one receipt and the office was notified.`, 'success');
+    } catch (e) {
+      console.error('cart charge failed', e);
       showStatus(`Failed: ${e.message}`, 'error');
     }
     chargeInFlight = false;
