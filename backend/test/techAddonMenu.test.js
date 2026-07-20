@@ -38,8 +38,12 @@ const openVisit = (over = {}) => ({
 });
 
 // Resolver builders. The visits table serves two query shapes: assignedVisit
-// (has an eq('assigned_tech_id', ...)) and getOpenVisitId (eq('subscription_id')).
-function visitResolver({ assigned = openVisit(), openVisitId = VISIT_ID } = {}) {
+// (has an eq('assigned_tech_id', ...)) and — pre-Phase-1.2 — getOpenVisitId
+// (eq('subscription_id')). Phase 1.2 anchors everything on the VIEWED visit,
+// so the open-visit branch deliberately returns a DIFFERENT visit id: any
+// code path that still consults it produces 'visit-other' and fails the
+// visit.id assertions below (this is the >1-open-visit field bug pinned).
+function visitResolver({ assigned = openVisit(), openVisitId = 'visit-other' } = {}) {
   return (chain) => {
     if (chain.some((c) => c.method === 'eq' && c.args[0] === 'assigned_tech_id')) {
       return { data: assigned, error: null };
@@ -112,11 +116,34 @@ test('addon-menu: full menu with prices + statuses, plus the cart (custom lines 
   assert.equal(menu.coolant_flush.status, 'not_in_plan');
   assert.equal(menu.coolant_flush.amount_cents, 69500);
   assert.equal(res.body.subscription_canceled, false);
-  // The cart payload (Phase 1.1): pending custom lines + the exact total the
-  // charge endpoint would bill = performed add-ons (11000) + customs (100).
-  // The merely-pending battery is NOT in the total (not performed yet).
+  // The cart payload: pending custom lines + the exact rows/total the charge
+  // endpoint would bill = performed add-ons on THIS visit (11000) + customs
+  // (100). The merely-pending battery is NOT in it (not performed yet).
   assert.deepEqual(res.body.custom_charges, [{ id: 'c1', description: 'Trip charge', amount_cents: 100 }]);
+  assert.deepEqual(res.body.cart_addon_ids, ['a2']);
   assert.equal(res.body.cart_total_cents, 11100);
+});
+
+test('Phase 1.2 anchor: with >1 open visit, the cart counts ONLY the viewed visit — and never consults the open-visit pick', async () => {
+  restore = installMockSupabase({
+    generator_service_visits: visitResolver({ openVisitId: 'visit-other' }),
+    generator_subscriptions: () => ({ data: { id: SUB_ID, gen_class: 'liquid_48_150', standing_addons: [], status: 'active' }, error: null }),
+    generator_pending_addons: () => ({
+      data: [
+        // Performed on the VIEWED visit -> in the cart.
+        { id: 'a1', addon_type: 'battery_replacement', status: 'performed', amount_cents: 26500, service_visit_id: VISIT_ID, date_performed: '2026-07-20', performed_by: 'Chris Tech' },
+        // Performed on ANOTHER open visit -> shows in the menu, NOT in the cart.
+        { id: 'a2', addon_type: 'ats_outage_combined', status: 'performed', amount_cents: 11000, service_visit_id: 'visit-other', date_performed: '2026-07-19', performed_by: 'office' },
+      ],
+      error: null,
+    }),
+    generator_adhoc_charges: () => ({ data: [], error: null }),
+  });
+  const res = makeRes();
+  await menuHandler(techReq(), res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.cart_addon_ids, ['a1'], 'only the viewed visit’s performed row is billable');
+  assert.equal(res.body.cart_total_cents, 26500, 'the button total = exactly what chargeVisitCart bills');
 });
 
 // ---- add a catalog add-on this visit ----

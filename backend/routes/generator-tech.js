@@ -16,7 +16,7 @@ const { completeServiceVisit, generateStandingAddons } = require('../lib/complet
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
 const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon } = require('../lib/generator-catalog');
-const { chargeVisitCart, getVisitCartCharges, getOpenVisitId } = require('../lib/gcCharges');
+const { chargeVisitCart, getVisitCartCharges } = require('../lib/gcCharges');
 const { buildAddonMenu } = require('../lib/addonMenu');
 const { reportError } = require('../middleware/error-reporter');
 
@@ -524,25 +524,36 @@ router.get('/my-visits/:id/addon-menu', async (req, res) => {
     if (aErr) throw aErr;
     if (!sub) return res.status(404).json({ error: 'Subscription not found.' });
 
-    const openVisitId = await getOpenVisitId(visit.subscription_id);
+    // Phase 1.2: the VIEWED assigned visit is the single anchor — the menu's
+    // "this cycle" is visit.id, the same visit the cart totals and the charge
+    // bills. (Previously this used the subscription's earliest open visit,
+    // which on a customer with >1 open visit could differ from the visit on
+    // the tech's screen — add-ons then showed Performed but silently dropped
+    // out of the total and the charge.)
     const menu = buildAddonMenu({
       genClass: sub.gen_class,
       standingAddons: sub.standing_addons,
       pendingAddons: addons,
-      openVisitId,
+      openVisitId: visit.id,
     });
 
-    // Cart total mirrors chargeVisitCart's scope: THIS visit's performed
-    // unbilled add-ons + THIS visit's pending customs.
-    const performedCents = (addons || [])
-      .filter((a) => a.status === 'performed' && a.service_visit_id === visit.id && a.amount_cents > 0)
-      .reduce((s, a) => s + a.amount_cents, 0);
+    // Cart = EXACTLY what POST …/charge will bill, derived from the same
+    // visit-scoped filters chargeVisitCart uses: THIS visit's performed
+    // unbilled add-ons + THIS visit's pending customs. The button total must
+    // always equal the charged total.
+    const cartAddons = (addons || [])
+      .filter((a) => a.status === 'performed' && a.service_visit_id === visit.id && a.amount_cents > 0);
+    const performedCents = cartAddons.reduce((s, a) => s + a.amount_cents, 0);
     const customCents = customs.reduce((s, c) => s + c.amount_cents, 0);
 
     res.json({
       ok: true,
       menu,
       custom_charges: customs.map((c) => ({ id: c.id, description: c.description, amount_cents: c.amount_cents })),
+      // The EXACT add-on rows the charge will bill — the UI renders the cart
+      // from this id set (not from menu status), so an office-performed row
+      // on some other visit can never show "in cart" without being charged.
+      cart_addon_ids: cartAddons.map((a) => a.id),
       cart_total_cents: performedCents + customCents,
       subscription_canceled: sub.status === 'canceled',
     });
@@ -597,7 +608,10 @@ router.post('/my-visits/:id/addons', async (req, res) => {
     if (exErr) throw exErr;
     if (existing) return res.status(409).json({ error: 'That add-on is already on this visit.' });
 
-    const serviceVisitId = await getOpenVisitId(visit.subscription_id);
+    // Phase 1.2: anchor on the VIEWED assigned visit — the tech is billing
+    // the visit on their screen, and the cart/charge are scoped to it. (Was
+    // getOpenVisitId(subscription), which could pick a DIFFERENT earlier open
+    // visit and strand the add-on outside the cart.)
     const { data: inserted, error: insErr } = await supabaseAdmin
       .from('generator_pending_addons')
       .insert({
@@ -606,7 +620,7 @@ router.post('/my-visits/:id/addons', async (req, res) => {
         stripe_price_id: price.price_id,
         amount_cents: price.amount_cents,
         status: 'pending',
-        service_visit_id: serviceVisitId,
+        service_visit_id: visit.id,
       })
       .select('id, addon_type, status')
       .single();
@@ -666,22 +680,25 @@ async function setStandingAddon(req, res, enroll) {
       .eq('id', sub.id);
     if (updErr) throw updErr;
 
-    const openVisitId = await getOpenVisitId(sub.id);
-    if (enroll && openVisitId) {
-      // Materialize on the current cycle so it can be performed today.
+    // Phase 1.2: materialize/undo on the VIEWED assigned visit (visit.id) —
+    // the same anchor the cart totals and the charge use — so an enrolled
+    // add-on is performable and chargeable on the visit on the tech's screen.
+    // (Was getOpenVisitId(subscription), which on a >1-open-visit customer
+    // could hit a different visit.) Enroll and its undo target the same visit.
+    if (enroll) {
       // Idempotent per (visit, type) — a re-tap won't duplicate the row.
       await generateStandingAddons({
         subscriptionId: sub.id,
         genClass: sub.gen_class,
         standingAddons: [addonType],
-        serviceVisitId: openVisitId,
+        serviceVisitId: visit.id,
       });
-    } else if (!enroll && openVisitId) {
+    } else {
       await supabaseAdmin
         .from('generator_pending_addons')
         .update({ status: 'canceled', notes: 'Removed with every-visit unenroll on ' + new Date().toISOString().slice(0, 10) })
         .eq('subscription_id', sub.id)
-        .eq('service_visit_id', openVisitId)
+        .eq('service_visit_id', visit.id)
         .eq('addon_type', addonType)
         .eq('status', 'pending');
     }
