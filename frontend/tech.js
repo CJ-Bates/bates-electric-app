@@ -737,7 +737,10 @@
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       // Identity guard: don't render into a panel that re-rendered meanwhile.
       if (document.getElementById('tvd-addons-sec') !== sec) return;
-      renderAddons(v, data.menu || [], data.custom_charges || [], data.cart_total_cents || 0, !!data.subscription_canceled);
+      // cart_addon_ids = the exact rows the charge bills; null (older API)
+      // falls back to status-based membership.
+      const cartIds = Array.isArray(data.cart_addon_ids) ? new Set(data.cart_addon_ids) : null;
+      renderAddons(v, data.menu || [], data.custom_charges || [], data.cart_total_cents || 0, cartIds, !!data.subscription_canceled);
     } catch (e) {
       console.error('load addon menu failed', e);
       if (document.getElementById('tvd-addons-sec') === sec) {
@@ -754,13 +757,22 @@
     return `<span class="badge badge-neutral">Not in plan</span>`;
   }
 
-  function renderAddons(v, menu, customs, cartTotalCents, subCanceled) {
+  function renderAddons(v, menu, customs, cartTotalCents, cartIds, subCanceled) {
     const sec = document.getElementById('tvd-addons-sec');
     if (!sec) return;
     const done = !!(v.completed_date || v.status === 'completed');
     const canAct = !done && !subCanceled;
 
-    const rows = menu.map((m) => {
+    // Performed add-ons live DOWN IN THE CART (they're part of the bill), not
+    // up in the menu — the menu lists what hasn't been added/performed yet.
+    // Membership comes from the server's cart_addon_ids (the exact rows the
+    // charge bills) so the cart list always matches the total and the charge.
+    const inCart = (m) => m.status === 'performed' && m.amount_cents > 0
+      && (!cartIds || cartIds.has(m.addon_id));
+    const performed = menu.filter(inCart);
+    const menuItems = menu.filter((m) => !inCart(m));
+
+    const rows = menuItems.map((m) => {
       const actions = [];
       if (canAct) {
         if (m.status === 'not_in_plan') {
@@ -772,8 +784,6 @@
           actions.push(`<button type="button" class="btn btn-ghost btn-sm" data-standing-off="${esc(m.addon_type)}" data-label="${esc(m.label)}">Stop</button>`);
         } else if (m.status === 'this_visit') {
           actions.push(`<button type="button" class="btn btn-primary btn-sm" data-addon-perform="${esc(m.addon_id)}">Mark performed</button>`);
-        } else if (m.status === 'performed') {
-          actions.push(`<button type="button" class="btn btn-ghost btn-sm" data-addon-undo="${esc(m.addon_id)}">Undo</button>`);
         }
       }
       return `<div class="tvd-addon-row">
@@ -783,18 +793,23 @@
       </div>`;
     }).join('');
 
-    // The cart: performed-but-unbilled catalog add-ons (join by "Mark
-    // performed" above) + this visit's custom lines. One Charge for the lot.
-    const performed = menu.filter((m) => m.status === 'performed' && m.amount_cents > 0);
+    // The cart: performed add-ons AND custom lines together — the complete
+    // bill the customer reviews, with one Charge for the lot.
     const cartCount = performed.length + customs.length;
+    const performedRows = performed.map((m) => `<div class="tvd-addon-row">
+        <div><div class="tvd-addon-label">${esc(m.label)}</div>
+          <div class="tvd-addon-price">${money(m.amount_cents)}</div></div>
+        <div class="tvd-addon-side"><span class="badge badge-warn">In cart</span>${canAct ? `<button type="button" class="btn btn-ghost btn-sm" data-addon-undo="${esc(m.addon_id)}">Undo</button>` : ''}</div>
+      </div>`).join('');
     const customRows = customs.map((c) => `<div class="tvd-addon-row">
         <div><div class="tvd-addon-label">${esc(c.description)}</div>
           <div class="tvd-addon-price">${money(c.amount_cents)}</div></div>
         <div class="tvd-addon-side"><span class="badge badge-warn">In cart</span>${canAct ? `<button type="button" class="btn btn-ghost btn-sm" data-remove-custom="${esc(c.id)}" data-label="${esc(c.description)}" aria-label="Remove ${esc(c.description)}">Remove</button>` : ''}</div>
       </div>`).join('');
-    const customBlock = (customs.length || canAct)
-      ? `<div class="tvd-cart-h">Custom charges</div>
-        ${customRows || `<p class="tvd-addon-hint">None yet &mdash; add parts, repairs, or anything off-menu.</p>`}
+    const cartBlock = (cartCount || canAct)
+      ? `<div class="tvd-cart-h">In the cart</div>
+        ${performedRows}${customRows}
+        ${cartCount ? '' : `<p class="tvd-addon-hint">Nothing yet &mdash; mark an add-on performed or add a custom charge.</p>`}
         ${canAct ? `<button type="button" class="btn btn-secondary btn-sm" id="tvd-custom-charge">+ Custom charge</button>` : ''}`
       : '';
 
@@ -806,13 +821,13 @@
         <div class="tvd-addon-foot">
           <button type="button" class="btn btn-primary" id="tvd-charge-cart"${cartCount ? '' : ' disabled'}>Charge ${money(cartTotalCents)}</button>
         </div>
-        <p class="tvd-addon-hint" style="margin-top:8px;">One charge to the card on file, one receipt &middot; the office is notified. Mark add-ons performed to include them.</p>`
+        <p class="tvd-addon-hint" style="margin-top:8px;">One charge to the card on file, one receipt &middot; the office is notified.</p>`
       : '';
 
     sec.innerHTML = `<h3>Add-ons &amp; charges</h3>
-      <p class="tvd-addon-hint">Everything available for this generator, with prices. Adding never charges &mdash; performed add-ons and custom lines are billed together with one tap below.</p>
+      <p class="tvd-addon-hint">Everything available for this generator, with prices. Adding never charges &mdash; mark work performed to put it in the cart, then charge once below.</p>
       ${rows || `<p class="tvd-addon-hint">No add-ons apply to this generator.</p>`}
-      ${customBlock}${footer}`;
+      ${cartBlock}${footer}`;
 
     sec.querySelectorAll('[data-addon-perform]').forEach((btn) => {
       btn.addEventListener('click', () => performAddon(v, btn.getAttribute('data-addon-perform'), false));
