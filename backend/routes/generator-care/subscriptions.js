@@ -18,6 +18,7 @@ const {
 const { sendEmail, buildWelcomeEmail, buildCancellationEmail } = require('../../lib/emails');
 const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, upsertSimpleTextingContact, CONSENT_TEXT } = require('../../lib/sms');
 const planChange = require('../../lib/planChange');
+const { buildAddonMenu, openVisitIdFrom } = require('../../lib/addonMenu');
 
 const router = express.Router();
 
@@ -231,11 +232,24 @@ router.get('/subscriptions/:id', async (req, res) => {
       console.log('[generator-care] sms state unavailable (migration pending?):', e && e.message);
     }
 
+    // The complete add-on menu (every catalog add-on that applies to this
+    // generator class, with price + derived status) — same builder the tech
+    // visit panel uses, so office and field always agree.
+    const openVisitId = openVisitIdFrom(visitsR.data);
+    const addonMenu = buildAddonMenu({
+      genClass: subR.data.gen_class,
+      standingAddons: subR.data.standing_addons,
+      pendingAddons: addonsR.data,
+      openVisitId,
+    });
+
     res.json({
       subscription: subR.data,
       visits: visitsR.data || [],
       pending_addons: addonsR.data || [],
       adhoc_charges: adhocR.data || [],
+      addon_menu: addonMenu,
+      open_visit_id: openVisitId,
       visit_preferences: visitPreferences,
       sms_consent: smsConsent,
       visit_sms: visitSms,

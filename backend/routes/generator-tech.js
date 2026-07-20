@@ -1,8 +1,10 @@
 // backend/routes/generator-tech.js
 // Field-tech endpoints for Generator Care. Tech-gated (role='tech'); every query
 // is scoped to visits ASSIGNED to the calling tech (assigned_tech_id = the tech's
-// own user id) — the IDOR boundary. Returns ONLY curated, non-billing fields: a
-// tech never sees Stripe ids, prices, fleet/annual billing, or other customers.
+// own user id) — the IDOR boundary. Techs see the add-on MENU (labels + prices +
+// statuses) and can add/enroll/charge on their assigned visit (add-ons menu
+// redesign, Phase 1) — but responses still never carry Stripe ids, fleet/annual
+// billing, or other customers' data.
 //
 // Mounted at /api/generator-care/tech.
 
@@ -10,10 +12,12 @@ const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { completeServiceVisit } = require('../lib/completeVisit');
+const { completeServiceVisit, generateStandingAddons } = require('../lib/completeVisit');
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
-const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel } = require('../lib/generator-catalog');
+const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon } = require('../lib/generator-catalog');
+const { chargeAdhocImmediate, chargePerformedAddonsForSub, getOpenVisitId } = require('../lib/gcCharges');
+const { buildAddonMenu } = require('../lib/addonMenu');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -21,6 +25,12 @@ const router = express.Router();
 // Internal notifications (tech reschedules) go to the office role mailbox —
 // same recipient convention as the daily digest cron.
 const OFFICE_NOTIFY_TO = (process.env.GENERATOR_DIGEST_TO || 'cjbates@bates-electric.com,generators@bates-electric.com')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+// Tech-initiated CHARGES notify the office inbox (OFFICE_EMAIL — the same
+// mailbox inspection reports go to), so every dollar a tech moves in the field
+// lands in front of the office the same day.
+const CHARGE_NOTIFY_TO = (process.env.OFFICE_EMAIL || 'amyp@bates-electric.com,cjbates@bates-electric.com')
   .split(',').map((s) => s.trim()).filter(Boolean);
 
 const VISIT_PHOTOS_BUCKET = 'generator-visit-photos';
@@ -438,6 +448,324 @@ router.post('/my-visits/:id/addons/:addonId/perform', async (req, res) => {
     res.json({ ok: true, addon: techAddonShape(updated) });
   } catch (err) {
     console.error('[generator-tech] addon perform error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ============================================================================
+// ADD-ONS MENU (Phase 1) — the complete, always-visible menu + on-site
+// add/enroll/charge. Every endpoint here is assignedVisit-gated (the IDOR
+// boundary); the two money endpoints charge through the SHARED cores in
+// lib/gcCharges.js — the exact code path the office uses — and every
+// successful tech-initiated charge emails the office (best-effort, never
+// blocks or reverses the charge).
+// ============================================================================
+
+// Central-time "when it happened" stamp for the office charge email.
+function chargeTimeCentral() {
+  return fmtCentral(new Date().toISOString());
+}
+
+// Best-effort office heads-up for a tech-initiated charge. Fire-and-forget:
+// a mail hiccup must NEVER fail (or reverse) a charge that already succeeded.
+function notifyOfficeOfTechCharge({ techName, customerName, lineItems, totalCents }) {
+  const money = (c) => '$' + ((c || 0) / 100).toFixed(2);
+  const itemLines = (lineItems || []).map((li) => `- ${li.label}: ${money(li.amount_cents)}`);
+  const text = [
+    `${techName} charged ${customerName}'s card on file ${money(totalCents)} on-site (${chargeTimeCentral()}).`,
+    '',
+    ...itemLines,
+    '',
+    'The customer gets a Stripe receipt automatically. Full detail is on their card in the Generator Care dashboard.',
+  ].join('\n');
+  const escapeHtml = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;">
+    <p>${escapeHtml(techName)} charged <b>${escapeHtml(customerName)}</b>&rsquo;s card on file <b>${money(totalCents)}</b> on-site (${escapeHtml(chargeTimeCentral())}).</p>
+    <ul>${(lineItems || []).map((li) => `<li>${escapeHtml(li.label)} &mdash; ${money(li.amount_cents)}</li>`).join('')}</ul>
+    <p>The customer gets a Stripe receipt automatically. Full detail is on their card in the Generator Care dashboard.</p>
+  </div>`;
+  sendEmail({
+    to: CHARGE_NOTIFY_TO,
+    subject: `[Generator Care] ${techName} charged ${customerName} ${money(totalCents)} on-site`,
+    html,
+    text,
+    logTag: '[tech-charge-email]',
+  }).catch((e) => console.error('[tech-charge-email] unexpected:', e && e.message));
+}
+
+// GET /api/generator-care/tech/my-visits/:id/addon-menu
+// The complete add-on menu for this visit's subscription: every catalog add-on
+// that applies to the generator class, with price + derived status
+// (not_in_plan | every_visit | this_visit | performed | charged). Built by the
+// same lib/addonMenu.js builder the office detail endpoint uses.
+router.get('/my-visits/:id/addon-menu', async (req, res) => {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+
+    const [{ data: sub, error: subErr }, { data: addons, error: aErr }] = await Promise.all([
+      supabaseAdmin
+        .from('generator_subscriptions')
+        .select('id, gen_class, standing_addons, status')
+        .eq('id', visit.subscription_id)
+        .single(),
+      supabaseAdmin
+        .from('generator_pending_addons')
+        .select('id, addon_type, status, amount_cents, service_visit_id, date_performed, performed_by')
+        .eq('subscription_id', visit.subscription_id)
+        .order('created_at', { ascending: true }),
+    ]);
+    if (subErr) throw subErr;
+    if (aErr) throw aErr;
+    if (!sub) return res.status(404).json({ error: 'Subscription not found.' });
+
+    const openVisitId = await getOpenVisitId(visit.subscription_id);
+    const menu = buildAddonMenu({
+      genClass: sub.gen_class,
+      standingAddons: sub.standing_addons,
+      pendingAddons: addons,
+      openVisitId,
+    });
+    res.json({ ok: true, menu, subscription_canceled: sub.status === 'canceled' });
+  } catch (err) {
+    console.error('[generator-tech] addon-menu error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/tech/my-visits/:id/addons
+// Body: { addon_type } — add a catalog add-on for THIS visit (a pending row on
+// the open cycle at the catalog price). Never charges; billing happens when the
+// work is performed and "Charge now" runs.
+router.post('/my-visits/:id/addons', async (req, res) => {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+    if (visit.status === 'completed') {
+      return res.status(400).json({ error: 'This visit is completed — the office can add add-ons for the next one.' });
+    }
+
+    const addonType = req.body && req.body.addon_type;
+    if (!addonType || !ADDON_CATALOG[addonType]) {
+      return res.status(400).json({ error: 'Unknown add-on.' });
+    }
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, gen_class, status')
+      .eq('id', visit.subscription_id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'Subscription not found.' });
+    if (sub.status === 'canceled') {
+      return res.status(400).json({ error: 'This subscription is canceled — no add-ons can be added.' });
+    }
+
+    const price = lookupAddonPrice(addonType, sub.gen_class);
+    if (!price) {
+      return res.status(400).json({ error: 'That add-on doesn’t apply to this generator.' });
+    }
+
+    // Double-tap / already-selected guard: one uncharged row of a type at a time.
+    const { data: existing, error: exErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .select('id, status')
+      .eq('subscription_id', visit.subscription_id)
+      .eq('addon_type', addonType)
+      .in('status', ['pending', 'performed'])
+      .limit(1)
+      .maybeSingle();
+    if (exErr) throw exErr;
+    if (existing) return res.status(409).json({ error: 'That add-on is already on this visit.' });
+
+    const serviceVisitId = await getOpenVisitId(visit.subscription_id);
+    const { data: inserted, error: insErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .insert({
+        subscription_id: visit.subscription_id,
+        addon_type: addonType,
+        stripe_price_id: price.price_id,
+        amount_cents: price.amount_cents,
+        status: 'pending',
+        service_visit_id: serviceVisitId,
+      })
+      .select('id, addon_type, status')
+      .single();
+    if (insErr) throw insErr;
+
+    res.json({ ok: true, addon: { id: inserted.id, addon_type: inserted.addon_type, status: inserted.status } });
+  } catch (err) {
+    console.error('[generator-tech] add addon error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST   /api/generator-care/tech/my-visits/:id/standing/:addon_type — enroll
+// DELETE /api/generator-care/tech/my-visits/:id/standing/:addon_type — unenroll
+// Every-visit (standing) add-ons: recurring types only. Enrolling updates the
+// subscription's standing set AND materializes a pending row on the current
+// open visit (via the same generateStandingAddons the cycle roll-forward uses)
+// so it can be performed today. Unenrolling removes it from the set and cancels
+// a still-PENDING materialized row on the open visit (the tech's symmetric
+// undo — performed/charged rows are never touched).
+async function setStandingAddon(req, res, enroll) {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+    if (visit.status === 'completed') {
+      return res.status(400).json({ error: 'This visit is completed — ask the office to change standing add-ons.' });
+    }
+
+    const addonType = req.params.addon_type;
+    if (!ADDON_CATALOG[addonType] || !isRecurringAddon(addonType)) {
+      return res.status(400).json({ error: 'That add-on can’t be set to every visit.' });
+    }
+
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('id, gen_class, status, standing_addons')
+      .eq('id', visit.subscription_id)
+      .single();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'Subscription not found.' });
+    if (sub.status === 'canceled') {
+      return res.status(400).json({ error: 'This subscription is canceled.' });
+    }
+    if (!lookupAddonPrice(addonType, sub.gen_class)) {
+      return res.status(400).json({ error: 'That add-on doesn’t apply to this generator.' });
+    }
+
+    // Same clean rules as the office standing-addons PATCH: recurring types
+    // valid for the gen class, de-duped.
+    const next = new Set((sub.standing_addons || [])
+      .filter((t) => isRecurringAddon(t) && lookupAddonPrice(t, sub.gen_class)));
+    if (enroll) next.add(addonType); else next.delete(addonType);
+
+    const { error: updErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .update({ standing_addons: Array.from(next) })
+      .eq('id', sub.id);
+    if (updErr) throw updErr;
+
+    const openVisitId = await getOpenVisitId(sub.id);
+    if (enroll && openVisitId) {
+      // Materialize on the current cycle so it can be performed today.
+      // Idempotent per (visit, type) — a re-tap won't duplicate the row.
+      await generateStandingAddons({
+        subscriptionId: sub.id,
+        genClass: sub.gen_class,
+        standingAddons: [addonType],
+        serviceVisitId: openVisitId,
+      });
+    } else if (!enroll && openVisitId) {
+      await supabaseAdmin
+        .from('generator_pending_addons')
+        .update({ status: 'canceled', notes: 'Removed with every-visit unenroll on ' + new Date().toISOString().slice(0, 10) })
+        .eq('subscription_id', sub.id)
+        .eq('service_visit_id', openVisitId)
+        .eq('addon_type', addonType)
+        .eq('status', 'pending');
+    }
+
+    res.json({ ok: true, standing: enroll });
+  } catch (err) {
+    console.error('[generator-tech] standing addon error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+router.post('/my-visits/:id/standing/:addon_type', (req, res) => setStandingAddon(req, res, true));
+router.delete('/my-visits/:id/standing/:addon_type', (req, res) => setStandingAddon(req, res, false));
+
+// POST /api/generator-care/tech/my-visits/:id/adhoc-charge
+// Body: { description, amount_cents } — a custom charge built in the field:
+// own description, any positive amount (no cap — the UI confirm is the
+// safeguard), ALWAYS charged immediately to the card on file via the shared
+// core (the same flow as the office's "Charge now" ad-hoc). technician_id is
+// recorded on the row; a successful charge emails the office.
+router.post('/my-visits/:id/adhoc-charge', async (req, res) => {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+
+    const { description, amount_cents } = req.body || {};
+    if (!description || !String(description).trim()) {
+      return res.status(400).json({ error: 'Describe the work so it shows on the customer’s receipt.' });
+    }
+    if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
+      return res.status(400).json({ error: 'Amount must be a positive dollar amount.' });
+    }
+
+    const techName = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'tech';
+    const result = await chargeAdhocImmediate({
+      subscriptionId: visit.subscription_id,
+      description: String(description),
+      amountCents: amount_cents,
+      serviceVisitId: visit.id,
+      technicianId: req.user.id,
+    });
+
+    if (!result.ok) {
+      // Curated failure shape: no Stripe/internal ids in tech-facing JSON.
+      return res.status(result.status).json({
+        error: result.error,
+        reason: result.reason || null,
+        card_update_email_sent: !!result.cardUpdateEmailSent,
+      });
+    }
+
+    notifyOfficeOfTechCharge({
+      techName,
+      customerName: result.customerName,
+      lineItems: [{ label: result.adhocCharge.description, amount_cents: result.adhocCharge.amount_cents }],
+      totalCents: result.adhocCharge.amount_cents,
+    });
+
+    res.json({
+      ok: true,
+      charge: {
+        description: result.adhocCharge.description,
+        amount_cents: result.adhocCharge.amount_cents,
+        date_charged: result.adhocCharge.date_charged,
+      },
+    });
+  } catch (err) {
+    console.error('[generator-tech] adhoc-charge error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/tech/my-visits/:id/charge-performed-addons
+// Charge every performed-but-unbilled catalog add-on for this visit's
+// subscription in ONE invoice/receipt — the shared batch core, same as the
+// office button. A successful charge emails the office.
+router.post('/my-visits/:id/charge-performed-addons', async (req, res) => {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+
+    const techName = (req.profile && req.profile.full_name) || (req.user && req.user.email) || 'tech';
+    const result = await chargePerformedAddonsForSub({ subscriptionId: visit.subscription_id });
+
+    if (!result.ok) {
+      return res.status(result.status).json({
+        error: result.error,
+        reason: result.reason || null,
+        card_update_email_sent: !!result.cardUpdateEmailSent,
+      });
+    }
+
+    notifyOfficeOfTechCharge({
+      techName,
+      customerName: result.customerName,
+      lineItems: result.lineItems,
+      totalCents: result.totalCents,
+    });
+
+    // No invoice/Stripe ids in the tech-facing response.
+    res.json({ ok: true, charged_count: result.chargedCount, total_cents: result.totalCents });
+  } catch (err) {
+    console.error('[generator-tech] charge-performed-addons error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

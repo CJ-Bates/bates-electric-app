@@ -9,12 +9,11 @@ const { supabaseAdmin } = require('../../lib/supabase');
 const catalog = require('../../lib/generator-catalog');
 const {
   stripe,
-  resolveSavedPaymentMethod,
-  emailCardUpdateLinkForSub,
   executeStripeRefund,
   buildRefundNote,
   parseRefundedFromNotes,
 } = require('../../lib/gcShared');
+const { chargePerformedAddonsForSub, getOpenVisitId } = require('../../lib/gcCharges');
 
 const router = express.Router();
 
@@ -63,103 +62,19 @@ router.post('/addons/:id/mark-performed', requirePermission('billing_actions'), 
 // nothing is billed twice. Office-gated; IDOR via optional customer_id.
 router.post('/subscriptions/:id/charge-performed-addons', requirePermission('billing_actions'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const customerId = req.body && req.body.customer_id;
-    const today = new Date().toISOString().slice(0, 10);
-
-    const { data: sub, error: subErr } = await supabaseAdmin
-      .from('generator_subscriptions')
-      .select('id, customer_id, stripe_subscription_id, stripe_customer_id')
-      .eq('id', id)
-      .single();
-    if (subErr) throw subErr;
-    if (!sub) return res.status(404).json({ error: 'subscription not found' });
-    if (customerId && sub.customer_id !== customerId) {
-      return res.status(403).json({ error: 'subscription does not belong to that customer' });
+    // The whole flow lives in the shared charge core (lib/gcCharges.js) — the
+    // SAME code path the tech on-site "Charge now" uses. Responses unchanged.
+    const result = await chargePerformedAddonsForSub({
+      subscriptionId: req.params.id,
+      customerId: req.body && req.body.customer_id,
+    });
+    if (!result.ok) {
+      const body = { error: result.error };
+      if (result.reason) body.reason = result.reason;
+      if (result.cardUpdateEmailSent !== undefined) body.card_update_email_sent = result.cardUpdateEmailSent;
+      return res.status(result.status).json(body);
     }
-    if (!sub.stripe_customer_id || !sub.stripe_subscription_id) {
-      return res.status(400).json({ error: 'no Stripe subscription linked' });
-    }
-
-    const { data: addons, error: addErr } = await supabaseAdmin
-      .from('generator_pending_addons')
-      .select('id, addon_type, amount_cents, stripe_invoice_item_id')
-      .eq('subscription_id', id)
-      .eq('status', 'performed');
-    if (addErr) throw addErr;
-    const billable = (addons || []).filter((a) => a.amount_cents && a.amount_cents > 0);
-    if (!billable.length) return res.status(400).json({ error: 'no performed add-ons to charge' });
-
-    const stripeCustomerId = sub.stripe_customer_id;
-    const labelFor = (t) => (ADDON_CATALOG[t] && ADDON_CATALOG[t].label) || (t || 'add-on').replace(/_/g, ' ');
-    const totalCents = billable.reduce((s, a) => s + a.amount_cents, 0);
-    const descSummary = 'Generator add-ons: ' + billable.map((a) => labelFor(a.addon_type)).join(', ');
-
-    // 1. Card check first (don't disturb renewal items if there's no card).
-    const pmId = await resolveSavedPaymentMethod(sub.stripe_subscription_id, stripeCustomerId);
-    if (!pmId) {
-      const linkResult = await emailCardUpdateLinkForSub(sub.id);
-      return res.status(402).json({ error: 'no saved card on file', reason: 'no saved card on file', card_update_email_sent: !!(linkResult && linkResult.sent) });
-    }
-
-    // 2. Delete any pending at-renewal invoice items so nothing is billed twice.
-    for (const a of billable) {
-      if (a.stripe_invoice_item_id) {
-        try {
-          await stripe.invoiceItems.del(a.stripe_invoice_item_id);
-        } catch (delErr) {
-          return res.status(409).json({
-            error: 'One of these add-ons is already on an invoice (billed at renewal); not charging again. Use the refund control if needed.',
-            reason: delErr.message,
-          });
-        }
-      }
-    }
-
-    // 3. ONE invoice, one line item per add-on, then charge the card on file.
-    let invoice;
-    try {
-      invoice = await stripe.invoices.create({
-        customer: stripeCustomerId,
-        collection_method: 'charge_automatically',
-        default_payment_method: pmId,
-        auto_advance: false,
-        description: descSummary,
-        metadata: { addon_batch: '1', subscription_id: sub.id, addon_count: String(billable.length) },
-      });
-      for (const a of billable) {
-        await stripe.invoiceItems.create({
-          customer: stripeCustomerId,
-          invoice: invoice.id,
-          amount: a.amount_cents,
-          currency: 'usd',
-          description: 'Generator add-on: ' + labelFor(a.addon_type),
-          metadata: { addon_id: a.id, addon_type: a.addon_type, subscription_id: sub.id },
-        });
-      }
-      invoice = await stripe.invoices.finalizeInvoice(invoice.id);
-      invoice = await stripe.invoices.pay(invoice.id);
-    } catch (stripeErr) {
-      const reason = (stripeErr && (stripeErr.message || stripeErr.code)) || 'charge failed';
-      if (invoice && invoice.id) { try { await stripe.invoices.voidInvoice(invoice.id); } catch (e) {} }
-      // Items were deleted; leave the add-ons 'performed' (clear stale item ids) so
-      // the batch can be retried and still charges exactly once.
-      await supabaseAdmin.from('generator_pending_addons')
-        .update({ stripe_invoice_item_id: null })
-        .in('id', billable.map((a) => a.id));
-      return res.status(402).json({ error: 'add-on charge failed', reason });
-    }
-
-    // 4. Mark all included add-ons charged against this one shared payment. (The
-    //    invoice.paid webhook also marks them + sends the one itemized receipt.)
-    const piId = typeof invoice.payment_intent === 'string'
-      ? invoice.payment_intent
-      : (invoice.payment_intent && invoice.payment_intent.id) || null;
-    await supabaseAdmin.from('generator_pending_addons')
-      .update({ status: 'charged', date_charged: today, stripe_payment_intent_id: piId, stripe_invoice_item_id: null })
-      .in('id', billable.map((a) => a.id));
-
-    res.json({ ok: true, charged_count: billable.length, total_cents: totalCents, invoice_id: invoice.id });
+    res.json({ ok: true, charged_count: result.chargedCount, total_cents: result.totalCents, invoice_id: result.invoiceId });
   } catch (err) {
     console.error('[generator-care] charge-performed-addons error:', err);
     if (!res.headersSent) res.status(500).json({ error: 'Server error' });
@@ -303,21 +218,8 @@ router.get('/subscriptions/:id/available-addons', async (req, res) => {
 // POST /api/generator-care/subscriptions/:id/add-addon
 // Add a new pending add-on to an existing subscription mid-cycle.
 // Body: { addon_type }
-// The current OPEN visit a new/active add-on belongs to (the cycle). Earliest
-// not-completed, not-canceled visit; null if none.
-async function getOpenVisitId(subscriptionId) {
-  const { data } = await supabaseAdmin
-    .from('generator_service_visits')
-    .select('id')
-    .eq('subscription_id', subscriptionId)
-    .is('completed_date', null)
-    .neq('status', 'canceled')
-    .order('scheduled_date', { ascending: true, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  return data ? data.id : null;
-}
-
+// (Open-visit resolution now lives in lib/gcCharges.js getOpenVisitId, shared
+// with the tech add/standing endpoints so every surface picks the same cycle.)
 router.post('/subscriptions/:id/add-addon', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
