@@ -8,7 +8,85 @@ const Stripe = require('stripe');
 const { supabaseAdmin } = require('./supabase');
 const { sendEmail, buildCardUpdateLinkEmail } = require('./emails');
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// Pinned so Stripe behavior can't shift under us on an SDK bump. Basil
+// (2025-03-31+) removed Invoice.payment_intent / Invoice.charge — paid
+// invoices surface their payment through the `payments` list instead; the
+// resolvers below handle both generations.
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-08-27.basil' });
+
+// The PaymentIntent id inside an InvoicePayment list ({ data: [...] }).
+// Prefers paid entries (Basil allows multiple partial payments; ours have
+// exactly one — the default payment created at finalization).
+function paymentIntentIdFromPayments(payments) {
+  const data = (payments && payments.data) || [];
+  const ranked = [...data.filter((p) => p && p.status === 'paid'), ...data];
+  for (const p of ranked) {
+    const pi = p && p.payment && p.payment.payment_intent;
+    if (pi) return typeof pi === 'string' ? pi : pi.id || null;
+  }
+  return null;
+}
+
+// Payment-intent id of a paid invoice, across API generations: pre-Basil
+// top-level payment_intent -> Basil payments list (present when the invoice
+// was fetched with expand:['payments']) -> the invoice_payments endpoint.
+// Never throws (callers run after money has already moved).
+async function resolveInvoicePaymentIntentId(invoice) {
+  if (!invoice) return null;
+  const legacy = typeof invoice.payment_intent === 'string'
+    ? invoice.payment_intent
+    : (invoice.payment_intent && invoice.payment_intent.id) || null;
+  if (legacy) return legacy;
+  const inline = paymentIntentIdFromPayments(invoice.payments);
+  if (inline) return inline;
+  if (!invoice.id) return null;
+  try {
+    const payments = await stripe.invoicePayments.list({ invoice: invoice.id, limit: 100 });
+    return paymentIntentIdFromPayments(payments);
+  } catch (e) {
+    console.error('[gc-shared] invoicePayments.list failed for', invoice.id, '-', e && e.message);
+    return null;
+  }
+}
+
+// The settling charge of a paid invoice (amounts/refund state/card), across
+// API generations: legacy expanded invoice.charge -> PaymentIntent's
+// latest_charge. Returns the charge OBJECT or null; never throws.
+async function resolveInvoiceCharge(invoice) {
+  if (!invoice) return null;
+  if (invoice.charge && typeof invoice.charge === 'object') return invoice.charge;
+  const piId = await resolveInvoicePaymentIntentId(invoice);
+  if (!piId) return null;
+  try {
+    const pi = await stripe.paymentIntents.retrieve(piId, { expand: ['latest_charge'] });
+    const ch = pi && pi.latest_charge;
+    return ch && typeof ch === 'object' ? ch : null;
+  } catch (e) {
+    console.error('[gc-shared] latest_charge resolve failed for', invoice.id, '-', e && e.message);
+    return null;
+  }
+}
+
+// Resolve the PaymentIntent for a charged row that predates the Basil
+// PI-capture fix (stripe_payment_intent_id null): scan the customer's paid
+// invoices for the line item carrying this row's id in its metadata (the same
+// metadata the invoice.paid webhook keys on), then resolve that invoice's
+// PaymentIntent. Returns pi_... or null; never throws.
+async function findChargedRowPaymentIntent({ stripeCustomerId, metadataKey, rowId }) {
+  if (!stripeCustomerId || !metadataKey || !rowId) return null;
+  try {
+    const invoices = await stripe.invoices.list({ customer: stripeCustomerId, status: 'paid', limit: 100, expand: ['data.payments'] });
+    for (const inv of (invoices && invoices.data) || []) {
+      const lines = (inv.lines && inv.lines.data) || [];
+      if (lines.some((l) => l && l.metadata && l.metadata[metadataKey] === rowId)) {
+        return await resolveInvoicePaymentIntentId(inv);
+      }
+    }
+  } catch (e) {
+    console.error('[gc-shared] charged-row PI lookup failed for', rowId, '-', e && e.message);
+  }
+  return null;
+}
 
 // ===== REFUND HELPERS (shared by /addons/:id/refund + /adhoc-charges/:id/refund) =====
 
@@ -134,6 +212,10 @@ async function emailCardUpdateLinkForSub(subscriptionId) {
 
 module.exports = {
   stripe,
+  paymentIntentIdFromPayments,
+  resolveInvoicePaymentIntentId,
+  resolveInvoiceCharge,
+  findChargedRowPaymentIntent,
   executeStripeRefund,
   buildRefundNote,
   parseRefundedFromNotes,

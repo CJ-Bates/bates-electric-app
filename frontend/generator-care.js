@@ -3396,7 +3396,9 @@
       });
       const data = await r.json();
       if (!r.ok) {
-        showStatus(`Refund failed: ${data.error || `HTTP ${r.status}`}`, 'error');
+        // A refund that did NOT happen must never hide in the corner toast —
+        // block with a must-acknowledge dialog (Stripe shows no refund).
+        await openAlert({ title: 'Refund NOT issued', message: `${label}: ${data.error || `HTTP ${r.status}`}`, danger: true });
         return;
       }
       showStatus(`Refunded $${(data.amount_cents / 100).toFixed(2)}.`, 'success');
@@ -3404,7 +3406,7 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Refund failed:', err);
-      showStatus(`Refund failed: ${err.message}`, 'error');
+      await openAlert({ title: 'Refund NOT issued', message: `${label}: ${err.message}`, danger: true });
     }
   }
 
@@ -3434,14 +3436,14 @@
       });
       const data = await r.json();
       if (!r.ok) {
-        showStatus(`Refund failed: ${data.error || `HTTP ${r.status}`}`, 'error');
+        await openAlert({ title: 'Refund NOT issued', message: data.error || `HTTP ${r.status}`, danger: true });
         return;
       }
       showStatus(`Refunded $${(data.amount_cents / 100).toFixed(2)} to the customer's card.`, 'success');
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Invoice refund failed:', err);
-      showStatus(`Refund failed: ${err.message}`, 'error');
+      await openAlert({ title: 'Refund NOT issued', message: err.message, danger: true });
     }
   }
 

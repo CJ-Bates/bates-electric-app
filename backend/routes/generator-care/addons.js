@@ -12,6 +12,7 @@ const {
   executeStripeRefund,
   buildRefundNote,
   parseRefundedFromNotes,
+  findChargedRowPaymentIntent,
 } = require('../../lib/gcShared');
 const { chargePerformedAddonsForSub, getOpenVisitId } = require('../../lib/gcCharges');
 
@@ -147,15 +148,37 @@ router.post('/addons/:id/refund', requirePermission('refunds'), async (req, res)
     if (addon.status !== 'charged') {
       return res.status(400).json({ error: `cannot refund addon with status '${addon.status}' (must be 'charged')` });
     }
-    if (!addon.stripe_payment_intent_id) {
-      return res.status(400).json({ error: 'addon has no stripe_payment_intent_id; refund must be issued from Stripe Dashboard' });
+    // Rows charged before the Basil PI-capture fix stored a null PI — resolve
+    // it from the Stripe invoice whose line metadata carries this addon's id,
+    // then self-heal the row so the lookup happens once.
+    let paymentIntentId = addon.stripe_payment_intent_id;
+    if (!paymentIntentId) {
+      const { data: sub } = await supabaseAdmin
+        .from('generator_subscriptions')
+        .select('stripe_customer_id')
+        .eq('id', addon.subscription_id)
+        .maybeSingle();
+      paymentIntentId = await findChargedRowPaymentIntent({
+        stripeCustomerId: sub && sub.stripe_customer_id,
+        metadataKey: 'addon_id',
+        rowId: addon.id,
+      });
+      if (paymentIntentId) {
+        await supabaseAdmin
+          .from('generator_pending_addons')
+          .update({ stripe_payment_intent_id: paymentIntentId })
+          .eq('id', id);
+      }
+    }
+    if (!paymentIntentId) {
+      return res.status(400).json({ error: 'no Stripe payment found for this add-on; refund must be issued from Stripe Dashboard' });
     }
 
     const alreadyRefundedCents = parseRefundedFromNotes(addon.notes);
     let result;
     try {
       result = await executeStripeRefund({
-        paymentIntentId: addon.stripe_payment_intent_id,
+        paymentIntentId,
         originalAmountCents: addon.amount_cents,
         alreadyRefundedCents,
         requestedAmountCents: amount_cents,

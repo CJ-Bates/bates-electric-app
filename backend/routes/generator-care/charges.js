@@ -11,6 +11,8 @@ const {
   executeStripeRefund,
   buildRefundNote,
   parseRefundedFromNotes,
+  findChargedRowPaymentIntent,
+  resolveInvoiceCharge,
 } = require('../../lib/gcShared');
 const { chargeAdhocImmediate } = require('../../lib/gcCharges');
 
@@ -211,15 +213,38 @@ router.post('/adhoc-charges/:id/refund', requirePermission('refunds'), async (re
     if (charge.status !== 'charged') {
       return res.status(400).json({ error: `cannot refund charge with status '${charge.status}' (must be 'charged')` });
     }
-    if (!charge.stripe_payment_intent_id) {
-      return res.status(400).json({ error: 'charge has no stripe_payment_intent_id; refund must be issued from Stripe Dashboard' });
+    // Cart lines charged before the Basil PI-capture fix stored a null PI —
+    // resolve it from the Stripe invoice whose line metadata carries this
+    // row's id, then self-heal the row so the lookup happens once. (Immediate
+    // ad-hoc charges always stored a real PI and never take this path.)
+    let paymentIntentId = charge.stripe_payment_intent_id;
+    if (!paymentIntentId) {
+      const { data: sub } = await supabaseAdmin
+        .from('generator_subscriptions')
+        .select('stripe_customer_id')
+        .eq('id', charge.subscription_id)
+        .maybeSingle();
+      paymentIntentId = await findChargedRowPaymentIntent({
+        stripeCustomerId: sub && sub.stripe_customer_id,
+        metadataKey: 'adhoc_charge_id',
+        rowId: charge.id,
+      });
+      if (paymentIntentId) {
+        await supabaseAdmin
+          .from('generator_adhoc_charges')
+          .update({ stripe_payment_intent_id: paymentIntentId })
+          .eq('id', id);
+      }
+    }
+    if (!paymentIntentId) {
+      return res.status(400).json({ error: 'no Stripe payment found for this charge; refund must be issued from Stripe Dashboard' });
     }
 
     const alreadyRefundedCents = parseRefundedFromNotes(charge.notes);
     let result;
     try {
       result = await executeStripeRefund({
-        paymentIntentId: charge.stripe_payment_intent_id,
+        paymentIntentId,
         originalAmountCents: charge.amount_cents,
         alreadyRefundedCents,
         requestedAmountCents: amount_cents,
@@ -260,16 +285,14 @@ router.post('/invoices/:invoiceId/refund', requirePermission('refunds'), async (
 
     let invoice;
     try {
-      invoice = await stripe.invoices.retrieve(invoiceId, { expand: ['charge'] });
+      // No expand:['charge'] — Basil removed Invoice.charge (the expand now
+      // errors); the settling charge is resolved below via the payments list.
+      invoice = await stripe.invoices.retrieve(invoiceId, { expand: ['payments'] });
     } catch (e) {
       return res.status(404).json({ error: 'invoice not found in Stripe: ' + (e && e.message ? e.message : 'unknown') });
     }
     if (invoice.status !== 'paid') {
       return res.status(400).json({ error: `cannot refund invoice with status '${invoice.status}' (must be 'paid')` });
-    }
-    const charge = invoice.charge && typeof invoice.charge === 'object' ? invoice.charge : null;
-    if (!charge || !charge.id) {
-      return res.status(400).json({ error: 'invoice has no captured charge to refund' });
     }
 
     // Ownership guard (prevent IDOR): only refund invoices that belong to a
@@ -287,6 +310,11 @@ router.post('/invoices/:invoiceId/refund', requirePermission('refunds'), async (
     if (ownerErr) throw ownerErr;
     if (!invoiceCustomerId || !ownerSub) {
       return res.status(403).json({ error: 'invoice does not belong to a Generator Care customer' });
+    }
+
+    const charge = await resolveInvoiceCharge(invoice);
+    if (!charge || !charge.id) {
+      return res.status(400).json({ error: 'invoice has no captured charge to refund' });
     }
 
     const originalAmountCents = charge.amount;

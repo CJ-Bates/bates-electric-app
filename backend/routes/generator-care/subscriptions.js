@@ -11,6 +11,7 @@ const catalog = require('../../lib/generator-catalog');
 const { sendReceiptEmail } = require('../../lib/receipts');
 const {
   stripe,
+  resolveInvoiceCharge,
   resolveSavedPaymentMethod,
   emailCardUpdateLinkForSub,
   sendCardUpdateLinkEmail,
@@ -358,9 +359,11 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
     // exceed it the lifetime total just slightly under-counts.
     const [pmResult, invoiceResult, subResult] = await Promise.allSettled([
       stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 }),
-      // Expand the charge so we can report refund status per invoice (for the
-      // dashboard Refund button + Refunded/Partial chips).
-      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 100, expand: ['data.charge'] }),
+      // expand data.payments: refund status per invoice (for the dashboard
+      // Refund button + Refunded/Partial chips) now comes from the payments
+      // list -> PaymentIntent -> latest_charge — Basil removed invoice.charge
+      // (the old expand:['data.charge'] errors and killed this whole list).
+      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 100, expand: ['data.payments'] }),
       sub.stripe_subscription_id
         ? stripe.subscriptions.retrieve(sub.stripe_subscription_id, { expand: ['schedule'] })
         : Promise.resolve(null),
@@ -389,8 +392,11 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
       const all = invoiceResult.value.data || [];
       lifetime_billed_cents = all.reduce((sum, inv) => sum + (inv.amount_paid || 0), 0);
       if (all.length) signup_charge_cents = all[all.length - 1].amount_paid || 0;
-      recent_invoices = all.slice(0, 5).map((inv) => {
-        const ch = inv.charge && typeof inv.charge === 'object' ? inv.charge : null;
+      recent_invoices = await Promise.all(all.slice(0, 5).map(async (inv) => {
+        // Settling charge (refund state + card): resolved per invoice via
+        // payments -> PI -> latest_charge (max 5 lazy reads; falls back to a
+        // chargeless row — never fails the endpoint).
+        const ch = await resolveInvoiceCharge(inv);
         const chargeAmount = ch ? ch.amount : (inv.amount_paid || 0);
         const amountRefunded = ch ? (ch.amount_refunded || 0) : 0;
         // Card the charge settled on — what the refund posts back to. Shown in
@@ -410,7 +416,7 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
           // Refundable: a paid invoice with a charge that isn't already fully refunded.
           refundable: inv.status === 'paid' && !!ch && amountRefunded < chargeAmount,
         };
-      });
+      }));
     } else {
       console.error('[stripe-data] invoices.list failed:', invoiceResult.reason && invoiceResult.reason.message);
     }

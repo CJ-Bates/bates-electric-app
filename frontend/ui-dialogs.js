@@ -6,6 +6,7 @@
 // Globals exposed:
 //   openConfirm({ title, message, confirmText, cancelText, danger }) -> Promise<boolean>
 //   openPrompt({ title, message, fields, validate, confirmText, cancelText, danger }) -> Promise<values|null>
+//   openAlert({ title, message, buttonText, danger }) -> Promise<void>  // must-see notice (no cancel)
 //   showStatus(message, kind)   // kind: 'success' | 'error' | 'info' | 'warning'
 //   BatesUI.escapeHtml(s)       // the one shared HTML escaper (quote-safe) —
 //                               // page scripts alias it instead of re-defining it
@@ -59,6 +60,31 @@
       cancelEl.addEventListener('click', () => close(false));
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
       submitEl.addEventListener('click', () => close(true));
+      setTimeout(() => submitEl.focus(), 30);
+    });
+  }
+
+  // Must-acknowledge notice (replaces window.alert) for outcomes too important
+  // for the corner toast — e.g. a refund that did NOT go through. One button.
+  function openAlert({ title = 'Notice', message = '', buttonText = 'OK', danger = false } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay';
+      overlay.innerHTML = `
+        <div class="gc-rd-panel" role="alertdialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+          <h3 class="gc-rd-title">${escapeHtml(title)}</h3>
+          ${message ? `<div class="gc-rd-sub">${escapeHtml(message)}</div>` : ''}
+          <div class="gc-rd-actions">
+            <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'} gc-rd-submit">${escapeHtml(buttonText)}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const submitEl = overlay.querySelector('.gc-rd-submit');
+      function close() { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(); }
+      function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') close(); }
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      submitEl.addEventListener('click', close);
       setTimeout(() => submitEl.focus(), 30);
     });
   }
@@ -191,6 +217,7 @@
 
   window.openConfirm = openConfirm;
   window.openPrompt = openPrompt;
+  window.openAlert = openAlert;
   window.openQrDialog = openQrDialog;
   window.showStatus = showStatus;
   window.BatesUI = { escapeHtml };
