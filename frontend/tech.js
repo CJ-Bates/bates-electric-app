@@ -493,6 +493,16 @@
     const c = sub.customer || {};
     const done = !!(v.completed_date || v.status === 'completed');
 
+    // Per-visit service checklist state (null when this gen class has no list,
+    // e.g. an on-demand visit on an unknown class — the section isn't shown).
+    checklist = (v.checklist_items && v.checklist_items.length) ? {
+      visitId: v.id,
+      items: v.checklist_items,
+      done: new Set(v.completed_checklist || []),
+      readOnly: done,
+      busy: new Set(),
+    } : null;
+
     const addrFull = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
     const mapUrl = addrFull ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addrFull)}` : null;
     const telDigits = c.phone ? String(c.phone).replace(/[^\d+]/g, '') : null;
@@ -519,6 +529,8 @@
         <div class="tvd-row"><span class="k">Status</span><span class="v">${esc(when)}</span></div>
         ${!done ? `<div class="tvd-row" style="justify-content:flex-end;"><button type="button" class="btn btn-ghost btn-sm" id="tvd-resched-btn">${v.appointment_at ? 'Reschedule' : 'Book time'}</button></div>` : ''}
       </div>
+
+      ${checklist ? `<div class="tvd-sec" id="tvd-checklist-sec"></div>` : ''}
 
       ${(v.notes || v.internal_note) ? `<div class="tvd-sec">
         <h3>Notes</h3>
@@ -560,9 +572,75 @@
     if (btn) btn.addEventListener('click', () => completeVisit(v.id));
     const reschedBtn = document.getElementById('tvd-resched-btn');
     if (reschedBtn) reschedBtn.addEventListener('click', () => rescheduleVisit(v));
+    renderChecklist();
     wirePhotoUpload(v.id);
     loadPhotos(v.id);
     loadAddons(v);
+  }
+
+  // ---- Service checklist (per-visit) ----
+  // The "Included in your plan" list for this generator class as the tech's
+  // WORK LIST: tick each service as it's done. Every tick saves immediately
+  // (optimistic UI, reverted on a failed save) so a reload keeps state. Once
+  // the visit is completed the list is a read-only snapshot of what was done.
+  let checklist = null; // { visitId, items, done: Set, readOnly, busy: Set }
+
+  function renderChecklist() {
+    const sec = document.getElementById('tvd-checklist-sec');
+    if (!sec || !checklist) return;
+    const { items, done, readOnly } = checklist;
+    const doneCount = items.filter((i) => done.has(i)).length;
+    const allDone = doneCount === items.length;
+
+    const rows = items.map((item, idx) => {
+      const isDone = done.has(item);
+      const box = `<span class="tvd-check-box">${BatesIcons.icon('check', 14)}</span>`;
+      const label = `<span class="tvd-check-label">${esc(item)}</span>`;
+      if (readOnly) return `<div class="tvd-check-row${isDone ? ' is-done' : ''}">${box}${label}</div>`;
+      return `<button type="button" class="tvd-check-row${isDone ? ' is-done' : ''}" data-check-item="${idx}" role="checkbox" aria-checked="${isDone}">${box}${label}</button>`;
+    }).join('');
+
+    sec.innerHTML = `
+      <div class="tvd-check-head">
+        <h3>Service checklist</h3>
+        <span class="tvd-check-progress${allDone ? ' is-all' : ''}">${allDone ? '&#10003; ' : ''}${doneCount} of ${items.length} done</span>
+      </div>
+      ${readOnly
+        ? `<p class="tvd-addon-hint">What was checked off on this visit.</p>`
+        : `<p class="tvd-addon-hint">Included in this customer’s plan — tick each service as you go. Saves automatically.</p>`}
+      ${rows}`;
+
+    sec.querySelectorAll('[data-check-item]').forEach((row) => {
+      row.addEventListener('click', () => toggleChecklistItem(items[parseInt(row.getAttribute('data-check-item'), 10)]));
+    });
+  }
+
+  async function toggleChecklistItem(item) {
+    const cl = checklist;
+    if (!cl || cl.readOnly || cl.busy.has(item)) return;
+    const nowDone = !cl.done.has(item);
+    // Optimistic: flip immediately, revert if the save fails.
+    if (nowDone) cl.done.add(item); else cl.done.delete(item);
+    cl.busy.add(item);
+    renderChecklist();
+    try {
+      const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${cl.visitId}/checklist`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item, done: nowDone }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      // The server's stored set is canonical (covers a race with completion).
+      if (Array.isArray(data.completed_checklist)) cl.done = new Set(data.completed_checklist);
+      if (data.read_only) cl.readOnly = true;
+    } catch (e) {
+      console.error('checklist save failed', e);
+      if (nowDone) cl.done.delete(item); else cl.done.add(item);
+      showStatus(`That didn’t save — ${e.message}`, 'error');
+    }
+    cl.busy.delete(item);
+    if (checklist === cl) renderChecklist(); // panel may have moved to another visit meanwhile
   }
 
   // ---- Photos (phase 2) ----
@@ -1044,7 +1122,18 @@
       internal_note: (val('tvd-done-internal') || '').trim() || null,
       parts_note: (val('tvd-done-parts') || '').trim() || null,
     };
-    const ok = await openConfirm({
+    // Soft, non-blocking checklist nudge: unchecked items get a friendlier
+    // confirm (a forget-me-not for newer techs — never a hard block; skipping
+    // an item can be legitimate). All checked (or no checklist) = the normal
+    // confirm.
+    const unchecked = (checklist && !checklist.readOnly)
+      ? checklist.items.filter((i) => !checklist.done.has(i)).length : 0;
+    const ok = await openConfirm(unchecked ? {
+      title: `${unchecked} service item${unchecked === 1 ? ' isn’t' : 's aren’t'} checked off yet`,
+      message: 'If the work’s done, go back and tick it off first so the record’s complete — or finish up now if it didn’t apply today.',
+      confirmText: 'Complete anyway',
+      cancelText: 'Go back',
+    } : {
       title: 'Mark visit complete?',
       message: 'Records the date and the notes above. The next visit is auto-scheduled on the plan cadence (the office will assign it).',
       confirmText: 'Mark complete',

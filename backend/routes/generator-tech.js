@@ -15,7 +15,7 @@ const { requirePermission } = require('../middleware/permissions');
 const { completeServiceVisit, generateStandingAddons } = require('../lib/completeVisit');
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
-const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon } = require('../lib/generator-catalog');
+const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon, planVisitItems } = require('../lib/generator-catalog');
 const { chargeVisitCart, getVisitCartCharges } = require('../lib/gcCharges');
 const { buildAddonMenu } = require('../lib/addonMenu');
 const { reportError } = require('../middleware/error-reporter');
@@ -135,20 +135,90 @@ router.get('/my-visits', async (req, res) => {
   }
 });
 
+// Stored checklist labels, normalized against the CURRENT catalog list for the
+// gen class: catalog order, de-duped, anything no longer on the list dropped.
+// Label-based storage means a later PLAN_VISIT_ITEMS edit never corrupts old
+// records — this intersection is the whole read-side tolerance.
+function normalizeChecklist(stored, items) {
+  const done = new Set(Array.isArray(stored) ? stored.filter((l) => typeof l === 'string') : []);
+  return items.filter((l) => done.has(l));
+}
+
 // GET /api/generator-care/tech/my-visits/:id — one assigned visit (IDOR-scoped).
+// The detail (not the list) also carries the per-visit SERVICE CHECKLIST: the
+// full included-services list for the generator class (checklist_items) plus
+// which of them the tech has ticked off (completed_checklist).
 router.get('/my-visits/:id', async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('generator_service_visits')
-      .select(TECH_VISIT_SELECT)
+      .select(TECH_VISIT_SELECT + ', completed_checklist')
       .eq('id', req.params.id)
       .eq('assigned_tech_id', req.user.id)
       .maybeSingle();
     if (error) throw error;
     if (!data) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+    const items = planVisitItems(data.subscription && data.subscription.gen_class);
+    data.checklist_items = items;
+    data.completed_checklist = normalizeChecklist(data.completed_checklist, items);
     res.json({ visit: data });
   } catch (err) {
     console.error('[generator-tech] my-visit detail error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /api/generator-care/tech/my-visits/:id/checklist
+// Body: { item, done } (toggle one label) OR { completed_checklist: [labels] }
+// (replace the whole set). assignedVisit-gated. Every stored label MUST be a
+// member of planVisitItems(gen_class) — a single-item toggle of an unknown
+// label is a 400, and a full-set save silently drops unknowns (deploy-skew
+// tolerance: a stale client echoing a since-removed label shouldn't lose the
+// rest of its save). Never free text. Once the visit is completed the
+// checklist is a read-only snapshot of what was done — the stored set comes
+// back untouched with read_only: true.
+router.patch('/my-visits/:id/checklist', async (req, res) => {
+  try {
+    const visit = await assignedVisit(req, 'completed_checklist, subscription:generator_subscriptions(gen_class)');
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+
+    const items = planVisitItems(visit.subscription && visit.subscription.gen_class);
+    const stored = normalizeChecklist(visit.completed_checklist, items);
+    if (visit.status === 'completed' || visit.completed_date) {
+      return res.json({ ok: true, read_only: true, completed_checklist: stored });
+    }
+
+    const body = req.body || {};
+    let next;
+    if (Array.isArray(body.completed_checklist)) {
+      const submitted = new Set(body.completed_checklist.filter((l) => typeof l === 'string'));
+      next = items.filter((l) => submitted.has(l));
+    } else if (typeof body.item === 'string') {
+      if (!items.includes(body.item)) {
+        return res.status(400).json({ error: 'That item isn’t on this visit’s checklist.' });
+      }
+      const set = new Set(stored);
+      if (body.done === false) set.delete(body.item); else set.add(body.item);
+      next = items.filter((l) => set.has(l)); // canonical: catalog order, de-duped
+    } else {
+      return res.status(400).json({ error: 'Send { item, done } or { completed_checklist: [...] }.' });
+    }
+
+    // Completion guard repeated in the WRITE itself — a visit completed between
+    // the read above and this update can't have its snapshot rewritten.
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('generator_service_visits')
+      .update({ completed_checklist: next })
+      .eq('id', visit.id)
+      .neq('status', 'completed')
+      .select('id')
+      .maybeSingle();
+    if (updErr) throw updErr;
+    if (!updated) return res.json({ ok: true, read_only: true, completed_checklist: stored });
+
+    res.json({ ok: true, completed_checklist: next });
+  } catch (err) {
+    console.error('[generator-tech] checklist error:', err && err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });
