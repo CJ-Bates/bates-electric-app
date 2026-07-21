@@ -21,6 +21,9 @@ const { supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { stripe } = require('../lib/gcShared');
 const catalog = require('../lib/generator-catalog');
+const { buildAddonMenu } = require('../lib/addonMenu');
+const { getOpenVisitId } = require('../lib/gcCharges');
+const { generateStandingAddons } = require('../lib/completeVisit');
 const { computePlanBilling, changePlanAtRenewal } = require('../lib/planChange');
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildCancellationEmail } = require('../lib/emails');
@@ -642,6 +645,53 @@ router.post('/change-plan', writeLimiter, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/my/addon-menu — the SAME add-on menu the office and tech surfaces
+// render (lib/addonMenu.js), for the authenticated customer's own subscription:
+// every catalog add-on that applies to their generator class, with price and
+// derived status (not_in_plan | every_visit | this_visit | performed | charged).
+// The subscription is resolved from the caller's email — no client-sent ids.
+// Customer-safe projection: no performed_by (staff ids never reach customers).
+// ---------------------------------------------------------------------------
+router.get('/addon-menu', readLimiter, async (req, res) => {
+  try {
+    const ctx = await ctxOr403(req, res);
+    if (!ctx) return;
+    const { sub } = ctx;
+
+    const [openVisitId, addonsResult] = await Promise.all([
+      getOpenVisitId(sub.id),
+      supabaseAdmin
+        .from('generator_pending_addons')
+        .select('id, addon_type, status, amount_cents, service_visit_id, date_performed')
+        .eq('subscription_id', sub.id)
+        .order('created_at', { ascending: true }),
+    ]);
+    if (addonsResult.error) throw addonsResult.error;
+
+    const menu = buildAddonMenu({
+      genClass: sub.gen_class,
+      standingAddons: sub.standing_addons,
+      pendingAddons: addonsResult.data,
+      openVisitId,
+    }).map((m) => ({
+      addon_type: m.addon_type,
+      label: m.label,
+      recurring: m.recurring,
+      amount_cents: m.amount_cents,
+      status: m.status,
+      // Only a still-pending one-off row can be self-removed (DELETE /addons/:id);
+      // every_visit rows un-enroll via DELETE /standing/:type instead.
+      addon_id: m.status === 'this_visit' ? m.addon_id : null,
+    }));
+
+    res.json({ ok: true, menu, subscription_canceled: sub.status === 'canceled' });
+  } catch (err) {
+    console.error('[my] addon-menu error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/my/addons — add a pre-authorized add-on (pending; billed only when
 // performed — never charges here). Mirrors the office add-addon handler.
 // ---------------------------------------------------------------------------
@@ -658,16 +708,23 @@ router.post('/addons', writeLimiter, async (req, res) => {
     const price = catalog.lookupAddonPrice(addonType, sub.gen_class);
     if (!price) return res.status(400).json({ error: 'That service is not available for your generator.' });
 
-    // Same open-visit attachment the office uses.
-    const { data: openVisit } = await supabaseAdmin
-      .from('generator_service_visits')
-      .select('id')
+    // Idempotency / double-tap guard (same rule as the tech add): one
+    // uncharged row of a type at a time — a second add is a friendly 409,
+    // never a duplicate pending row.
+    const { data: existing, error: exErr } = await supabaseAdmin
+      .from('generator_pending_addons')
+      .select('id, status')
       .eq('subscription_id', sub.id)
-      .is('completed_date', null)
-      .neq('status', 'canceled')
-      .order('scheduled_date', { ascending: true, nullsFirst: false })
+      .eq('addon_type', addonType)
+      .in('status', ['pending', 'performed'])
       .limit(1)
       .maybeSingle();
+    if (exErr) throw exErr;
+    if (existing) return res.status(409).json({ error: 'That service is already on your next visit.' });
+
+    // Same open-visit attachment the office uses (getOpenVisitId in
+    // lib/gcCharges — the shared "this cycle" resolver).
+    const openVisitId = await getOpenVisitId(sub.id);
 
     const { data: inserted, error: insErr } = await supabaseAdmin
       .from('generator_pending_addons')
@@ -677,8 +734,9 @@ router.post('/addons', writeLimiter, async (req, res) => {
         stripe_price_id: price.price_id,
         amount_cents: price.amount_cents,
         status: 'pending',
-        service_visit_id: openVisit ? openVisit.id : null,
-        notes: 'Added by customer via dashboard on ' + new Date().toISOString().slice(0, 10),
+        service_visit_id: openVisitId,
+        // Consent record: source + timestamp of the customer's opt-in.
+        notes: 'Added by customer via dashboard (customer_portal) at ' + new Date().toISOString(),
       })
       .select('id, addon_type, amount_cents, status')
       .single();
@@ -727,6 +785,90 @@ router.delete('/addons/:id', writeLimiter, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// ---------------------------------------------------------------------------
+// POST   /api/my/standing/:addon_type — opt INTO an every-visit add-on
+// DELETE /api/my/standing/:addon_type — opt back out
+// Customer self-service mirror of the tech/office standing controls: recurring
+// catalog types only, valid for THEIR generator class, scoped to THEIR
+// subscription (resolved from the authenticated email — no client ids).
+// Opting in updates the standing set AND materializes a pending row on the
+// current open visit via the SAME generateStandingAddons the cycle
+// roll-forward uses; each later cycle it returns automatically. NEVER charges
+// — money moves only when the work is performed, through Phase 1's one charge
+// path. Opting out removes it from the set and cancels only a still-PENDING
+// materialized row on the open visit (performed/charged rows are untouched).
+// The opt-in/out is recorded on the subscription notes (source + timestamp).
+// ---------------------------------------------------------------------------
+async function setMyStandingAddon(req, res, enroll) {
+  try {
+    const ctx = await ctxOr403(req, res);
+    if (!ctx) return;
+    const { sub } = ctx;
+
+    if (sub.status === 'canceled') {
+      return res.status(400).json({ error: 'Your plan is canceled — call the office to change services.' });
+    }
+    const addonType = str(req.params.addon_type, 60);
+    if (!catalog.ADDON_CATALOG[addonType] || !catalog.isRecurringAddon(addonType)) {
+      return res.status(400).json({ error: 'That service can’t be set to every visit.' });
+    }
+    if (!catalog.lookupAddonPrice(addonType, sub.gen_class)) {
+      return res.status(400).json({ error: 'That service is not available for your generator.' });
+    }
+
+    // Same clean rules as the office/tech standing set: recurring types valid
+    // for the gen class, de-duped.
+    const next = new Set((sub.standing_addons || [])
+      .filter((t) => catalog.isRecurringAddon(t) && catalog.lookupAddonPrice(t, sub.gen_class)));
+    if (enroll) next.add(addonType); else next.delete(addonType);
+
+    // Consent trail: who opted in/out of what, when — durable on the sub even
+    // after the materialized rows churn through cycles.
+    const stamp = new Date().toISOString();
+    const label = (catalog.ADDON_CATALOG[addonType] && catalog.ADDON_CATALOG[addonType].label) || addonType;
+    const noteLine = (enroll
+      ? 'Customer opted into every-visit '
+      : 'Customer opted out of every-visit ') + label + ' via dashboard (customer_portal) at ' + stamp;
+    const { error: updErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .update({
+        standing_addons: Array.from(next),
+        notes: sub.notes ? sub.notes + '\n' + noteLine : noteLine,
+      })
+      .eq('id', sub.id);
+    if (updErr) throw updErr;
+
+    const openVisitId = await getOpenVisitId(sub.id);
+    if (enroll) {
+      if (openVisitId) {
+        // Idempotent per (visit, type) — a re-tap won't duplicate the row.
+        await generateStandingAddons({
+          subscriptionId: sub.id,
+          genClass: sub.gen_class,
+          standingAddons: [addonType],
+          serviceVisitId: openVisitId,
+        });
+      }
+    } else if (openVisitId) {
+      const { error: cancelErr } = await supabaseAdmin
+        .from('generator_pending_addons')
+        .update({ status: 'canceled', notes: 'Removed with every-visit opt-out by customer via dashboard at ' + stamp })
+        .eq('subscription_id', sub.id)
+        .eq('service_visit_id', openVisitId)
+        .eq('addon_type', addonType)
+        .eq('status', 'pending');
+      if (cancelErr) throw cancelErr;
+    }
+
+    res.json({ ok: true, standing: enroll });
+  } catch (err) {
+    console.error('[my] standing addon error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+router.post('/standing/:addon_type', writeLimiter, (req, res) => setMyStandingAddon(req, res, true));
+router.delete('/standing/:addon_type', writeLimiter, (req, res) => setMyStandingAddon(req, res, false));
 
 // ---------------------------------------------------------------------------
 // GET /api/my/billing-portal — Stripe-hosted card & billing management.
