@@ -1276,6 +1276,16 @@
     return RECURRING_ADDONS.filter(r => !r.liquidOnly || liquid).map(r => r.type);
   }
 
+  // Empty placeholder tying a charged add-on/adhoc row to its invoice.
+  // loadStripeData fills it ("&middot; on the Jul 20 invoice ($86.00)") once
+  // recent_invoices land, matching by the shared PaymentIntent id — so a
+  // bundled cart charge (add-on + custom billed as ONE payment) visibly points
+  // at the one invoice instead of reading as separate money. Rows with no
+  // match (older data, invoice outside the recent 5) keep an empty span.
+  function invoiceTagSpan(paymentIntentId) {
+    return paymentIntentId ? `<span class="gc-meta-label" data-invoice-tag-pi="${escapeHtml(paymentIntentId)}"></span>` : '';
+  }
+
   // Render one add-on row (used for the current cycle + history).
   function addonRowHtml(a) {
     const amtStr = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
@@ -1302,6 +1312,7 @@
         chip = `<span class="badge badge-ok">Charged ${amtStr}${chargedOn}</span>`;
         action = `<button class="btn btn-ghost btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
       }
+      chip += invoiceTagSpan(a.stripe_payment_intent_id);
     } else if (a.status === 'failed') {
       chip = `<span class="badge badge-danger">Failed</span>`;
       action = `<button class="btn btn-danger-soft btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
@@ -1376,6 +1387,7 @@
       if (refunded >= row.amount_cents) chip = `<span class="badge badge-neutral">Refunded</span>`;
       else if (refunded > 0) chip = `<span class="badge badge-warn">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
       else chip = `<span class="badge" style="background:var(--ok);color:#fff;">Charged${chargedOn}</span>`;
+      chip += invoiceTagSpan(row.stripe_payment_intent_id);
     }
     const standingTag = (isStanding && (m.status === 'performed' || m.status === 'charged'))
       ? ` <span class="badge badge-info">Every visit</span>`
@@ -1492,6 +1504,7 @@
           chip = `<span class="badge badge-ok">${c.date_charged ? 'Charged ' + escapeHtml(c.date_charged) : 'Charged'}</span>`;
           action = `<button class="btn btn-ghost btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${desc}">Refund</button>`;
         }
+        chip += invoiceTagSpan(c.stripe_payment_intent_id);
       } else if (c.status === 'failed') {
         chip = `<span class="badge badge-danger">Failed</span>`;
       } else {
@@ -2914,9 +2927,9 @@
       }
 
       // Invoices card body
+      const invoices = data.recent_invoices || [];
       const invEl = body.querySelector('#gc-invoices-body');
       if (invEl) {
-        const invoices = data.recent_invoices || [];
         if (invoices.length === 0) {
           invEl.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">No invoices yet.</div>`;
         } else {
@@ -2938,10 +2951,20 @@
             const refundBtn = inv.refundable
               ? `<button class="btn btn-ghost btn-sm" data-refund-invoice="${inv.id}" data-charge-amount="${chargeAmt}" data-refunded="${refunded}" data-amount="${amt}" data-card-brand="${escapeHtml(inv.card_brand || '')}" data-card-last4="${escapeHtml(inv.card_last4 || '')}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`
               : '';
+            // Itemized breakdown, so a bundled charge (add-on + custom billed
+            // as ONE payment) reads as one invoice with its pieces — not as
+            // possibly-separate money. Single-line invoices (plan renewals,
+            // lone ad-hoc charges) render exactly as before, no breakdown.
+            const lineItems = inv.line_items || [];
+            const breakdown = lineItems.length >= 2
+              ? `<div style="margin-top:4px;">${lineItems.map(li =>
+                  `<div class="gc-meta-label">${escapeHtml(li.description || 'Item')} &mdash; $${((li.amount_cents || 0) / 100).toFixed(2)}</div>`).join('')}</div>`
+              : '';
             return `<div class="gc-card-row">
               <div>
                 <div class="gc-meta-value">${escapeHtml(dateStr)} <span style="color:var(--ink-2);font-weight:500;">&middot; ${amt}</span></div>
                 <div style="margin-top:4px;"><span class="badge ${chipCls}">${escapeHtml(inv.status || '')}</span>${refundChip}</div>
+                ${breakdown}
               </div>
               <div style="display:flex;gap:6px;align-items:center;">
                 ${refundBtn}
@@ -2970,6 +2993,22 @@
           stripDeniedActions(invEl);
         }
       }
+
+      // Fill the invoice tags on charged add-on/adhoc rows (placeholders from
+      // invoiceTagSpan): each row whose stored PI matches a recent invoice gets
+      // "on the <date> invoice ($X.XX)" — the $85 add-on and the $1 custom
+      // charge both visibly point at the same $86 invoice. No match = no tag.
+      const invByPi = new Map();
+      invoices.forEach(inv => { if (inv.payment_intent_id) invByPi.set(inv.payment_intent_id, inv); });
+      body.querySelectorAll('[data-invoice-tag-pi]').forEach(el => {
+        const inv = invByPi.get(el.dataset.invoiceTagPi);
+        if (!inv || !inv.created) return;
+        const d = new Date(inv.created * 1000);
+        const dateStr = d.toLocaleDateString('en-US', d.getFullYear() === new Date().getFullYear()
+          ? { month: 'short', day: 'numeric' }
+          : { month: 'short', day: 'numeric', year: 'numeric' });
+        el.innerHTML = ` &middot; on the ${escapeHtml(dateStr)} invoice ($${((inv.amount_paid || 0) / 100).toFixed(2)})`;
+      });
 
       // Refresh the work-order packet with the ACTUAL signup charge (promo-aware)
       // now that Stripe data is in — replaces the plan-price fallback shown at first paint.

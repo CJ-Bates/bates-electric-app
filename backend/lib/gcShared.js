@@ -67,6 +67,19 @@ async function resolveInvoiceCharge(invoice) {
   }
 }
 
+// Display line items of an invoice ({ description, amount_cents }), for the
+// office dashboard's per-invoice breakdown (a bundled cart charge — add-on +
+// custom on ONE invoice — otherwise reads as separate money). All lines,
+// capped; the frontend decides when a breakdown is worth showing.
+const INVOICE_LINE_ITEMS_MAX = 10;
+function invoiceLineItems(invoice) {
+  const lines = (invoice && invoice.lines && invoice.lines.data) || [];
+  return lines.slice(0, INVOICE_LINE_ITEMS_MAX).map((l) => ({
+    description: (l && l.description) || null,
+    amount_cents: (l && l.amount) || 0,
+  }));
+}
+
 // Resolve the PaymentIntent for a charged row that predates the Basil
 // PI-capture fix (stripe_payment_intent_id null): scan the customer's paid
 // invoices for the line item carrying this row's id in its metadata (the same
@@ -215,6 +228,7 @@ module.exports = {
   paymentIntentIdFromPayments,
   resolveInvoicePaymentIntentId,
   resolveInvoiceCharge,
+  invoiceLineItems,
   findChargedRowPaymentIntent,
   executeStripeRefund,
   buildRefundNote,

@@ -12,6 +12,8 @@ const { sendReceiptEmail } = require('../../lib/receipts');
 const {
   stripe,
   resolveInvoiceCharge,
+  resolveInvoicePaymentIntentId,
+  invoiceLineItems,
   resolveSavedPaymentMethod,
   emailCardUpdateLinkForSub,
   sendCardUpdateLinkEmail,
@@ -397,6 +399,12 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
         // payments -> PI -> latest_charge (max 5 lazy reads; falls back to a
         // chargeless row — never fails the endpoint).
         const ch = await resolveInvoiceCharge(inv);
+        // PaymentIntent id ties the charged add-on/adhoc rows (which store the
+        // same PI) to this invoice in the dashboard. The resolved charge
+        // already carries it; otherwise it resolves inline from the expanded
+        // payments list — no Stripe reads beyond what refund state needed.
+        const chPi = ch && (typeof ch.payment_intent === 'string' ? ch.payment_intent : (ch.payment_intent && ch.payment_intent.id) || null);
+        const payment_intent_id = chPi || await resolveInvoicePaymentIntentId(inv) || null;
         const chargeAmount = ch ? ch.amount : (inv.amount_paid || 0);
         const amountRefunded = ch ? (ch.amount_refunded || 0) : 0;
         // Card the charge settled on — what the refund posts back to. Shown in
@@ -413,6 +421,8 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
           amount_refunded_cents: amountRefunded,
           card_brand: card ? (card.brand || null) : null,
           card_last4: card ? (card.last4 || null) : null,
+          payment_intent_id,
+          line_items: invoiceLineItems(inv),
           // Refundable: a paid invoice with a charge that isn't already fully refunded.
           refundable: inv.status === 'paid' && !!ch && amountRefunded < chargeAmount,
         };
