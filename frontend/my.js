@@ -24,6 +24,11 @@
   // Live-Stripe billing (renewal, pending change, receipts) loads SEPARATELY
   // from the fast overview so it never blocks first paint.
   let billingState = 'loading'; // 'loading' | 'done' | 'failed'
+  // The add-on MENU (Phase 2) loads alongside the overview from
+  // /api/my/addon-menu. 'failed' (including a backend without the endpoint
+  // yet) falls back to the pre-menu pending/standing view in renderAddons.
+  let addonMenu = null;
+  let menuState = 'loading'; // 'loading' | 'done' | 'failed'
   // Whether the hero's appointment-preferences form is expanded.
   let prefsFormOpen = false;
 
@@ -279,11 +284,17 @@
   async function loadOverview(quiet) {
     if (!quiet) showView('loading');
     billingState = 'loading';
+    menuState = 'loading';
     prefsFormOpen = false;
-    // Both requests go out together: /overview (our DB — fast) paints the
+    // All three requests go out together: /overview (our DB — fast) paints the
     // page; /billing (live Stripe) fills the renewal line + receipts when it
-    // lands. A billing hiccup degrades those sections, never the page.
+    // lands; /addon-menu fills the services card. A hiccup in either side
+    // request degrades its section, never the page.
     const billingPromise = api('/api/my/billing').then(
+      (r) => ({ ok: true, r }),
+      (err) => ({ ok: false, err })
+    );
+    const menuPromise = api('/api/my/addon-menu').then(
       (r) => ({ ok: true, r }),
       (err) => ({ ok: false, err })
     );
@@ -318,6 +329,17 @@
     renderPlan(overview.plan);
     renderReceipts(overview.invoices || []);
     renderCancelCard(overview.plan);
+
+    const m = await menuPromise;
+    if (m.ok && m.r && m.r.menu) {
+      menuState = 'done';
+      addonMenu = m.r;
+    } else {
+      if (m.err && m.err.expired) return;
+      menuState = 'failed';
+      addonMenu = null;
+    }
+    renderAddons(overview.addons || {});
   }
 
   function applyBranding(branding) {
@@ -669,7 +691,66 @@
       : 'Plan changes take effect at your renewal — no charge today. Card & billing opens our secure Stripe portal.';
   }
 
+  // One menu row: label + friendly status chip + price line + the action that
+  // fits its state. Internal statuses stay internal — the customer-facing
+  // wording maps not_in_plan/every_visit/this_visit/performed/charged to
+  // Not added / On every visit / Added this visit / Done / Charged.
+  function addonMenuRow(m, canceled) {
+    const price = money(m.amount_cents);
+    let badge, meta = '', actions = '';
+    if (m.status === 'charged') {
+      badge = '<span class="badge badge-neutral">Charged</span>';
+      meta = price + ' · charged for this visit';
+    } else if (m.status === 'performed') {
+      badge = '<span class="badge badge-neutral">Done</span>';
+      meta = price + ' · performed — will be billed';
+    } else if (m.status === 'every_visit') {
+      badge = '<span class="badge badge-info">On every visit</span>';
+      meta = price + ' each visit it’s performed'
+        + ' &nbsp;·&nbsp; <a href="#" class="link-danger" data-action="standing-off" data-type="' + esc(m.addon_type) + '" data-label="' + esc(m.label) + '">Remove</a>';
+    } else if (m.status === 'this_visit') {
+      badge = '<span class="badge badge-info">Added this visit</span>';
+      meta = price + ' · billed only when performed';
+      if (m.addon_id) {
+        meta += ' &nbsp;·&nbsp; <a href="#" class="link-danger" data-action="remove-addon" data-id="' + esc(m.addon_id) + '" data-label="' + esc(m.label) + '">Remove</a>';
+      }
+    } else { // not_in_plan
+      badge = '<span class="badge badge-neutral">Not added</span>';
+      meta = price + ' · billed only after it’s performed';
+      if (!canceled) {
+        const btn = 'class="btn btn-secondary" style="padding:5px 12px;font-size:13px"';
+        actions = '<div class="row" style="margin-top:8px">'
+          + (m.recurring
+            ? '<button ' + btn + ' data-action="standing-on" data-type="' + esc(m.addon_type) + '">Add to every visit</button>'
+            : '<button ' + btn + ' data-action="menu-add" data-type="' + esc(m.addon_type) + '">Add to my next visit</button>')
+          + '</div>';
+      }
+    }
+    return '<div class="visit">'
+      + '<div class="head"><span class="date">' + esc(m.label) + '</span>' + badge + '</div>'
+      + '<div class="meta">' + meta + '</div>'
+      + actions
+      + '</div>';
+  }
+
   function renderAddons(addons) {
+    // Phase 2: the full add-on menu (same builder as office + tech). While
+    // it's still loading show skeletons; if the fetch failed — including a
+    // backend that doesn't serve /addon-menu yet — fall back to the pre-menu
+    // pending/standing view below, which keeps the old "+ Add a service" flow.
+    if (menuState !== 'failed') {
+      const el = $('addons');
+      $('btn-add-addon').hidden = true; // menu rows carry their own Add controls
+      if (menuState === 'loading' || !addonMenu) {
+        el.innerHTML = '<span class="skel skel-lg"></span><span class="skel skel-md"></span>';
+        return;
+      }
+      const canceled = !!addonMenu.subscription_canceled;
+      el.innerHTML = (addonMenu.menu || []).map((m) => addonMenuRow(m, canceled)).join('')
+        || '<p class="hint" style="margin:0">No add-on services are available for your generator — call the office.</p>';
+      return;
+    }
+
     const el = $('addons');
     const standing = addons.standing || [];
     const pending = addons.pending || [];
@@ -883,6 +964,71 @@
     } catch (err) { surface(err); }
   }
 
+  function menuItemByType(type) {
+    return ((addonMenu && addonMenu.menu) || []).find((m) => m.addon_type === type) || null;
+  }
+
+  // One-time self-enroll from a menu row. The confirmation states the price
+  // and WHEN it's charged — adding only schedules it; billing happens after
+  // the work is performed at the visit, never here.
+  async function onMenuAdd(type) {
+    const item = menuItemByType(type);
+    if (!item) return;
+    const ok = await openConfirm({
+      title: 'Add ' + item.label + '?',
+      message: 'We’ll add this to your next visit. You’ll be charged ' + money(item.amount_cents)
+        + ' only after it’s performed — never before.',
+      confirmText: 'Add to my next visit',
+      cancelText: 'Not now',
+    });
+    if (!ok) return;
+    try {
+      await api('/api/my/addons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addon_type: type }),
+      });
+      showStatus('Added — we’ll take care of it at your next visit.', 'success');
+      loadOverview(true);
+    } catch (err) { surface(err); }
+  }
+
+  // Every-visit (standing) self-enroll: returns automatically each cycle,
+  // billed each visit it's performed.
+  async function onStandingOn(type) {
+    const item = menuItemByType(type);
+    if (!item) return;
+    const ok = await openConfirm({
+      title: 'Add ' + item.label + ' to every visit?',
+      message: 'We’ll include this on every visit. You’ll be charged ' + money(item.amount_cents)
+        + ' each visit it’s performed — never before the work is done.',
+      confirmText: 'Add to every visit',
+      cancelText: 'Not now',
+    });
+    if (!ok) return;
+    try {
+      await api('/api/my/standing/' + encodeURIComponent(type), { method: 'POST' });
+      showStatus('Done — ' + item.label + ' is now part of every visit.', 'success');
+      loadOverview(true);
+    } catch (err) { surface(err); }
+  }
+
+  async function onStandingOff(type, label) {
+    const ok = await openConfirm({
+      title: 'Remove ' + (label || 'this service') + ' from every visit?',
+      message: 'It won’t be added to future visits, and it comes off your upcoming visit too if it hasn’t been done yet. No charge involved.',
+      confirmText: 'Remove',
+      cancelText: 'Keep it',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api('/api/my/standing/' + encodeURIComponent(type), { method: 'DELETE' });
+      showStatus('Removed — it won’t be on future visits.', 'success');
+      loadOverview(true);
+    } catch (err) { surface(err); }
+  }
+
   async function onRemoveAddon(id, label) {
     const ok = await openConfirm({
       title: 'Remove ' + (label || 'this service') + '?',
@@ -973,6 +1119,9 @@
       const action = el.dataset.action;
       if (el.tagName === 'A') e.preventDefault();
       if (action === 'remove-addon') onRemoveAddon(el.dataset.id, el.dataset.label);
+      else if (action === 'menu-add') onMenuAdd(el.dataset.type);
+      else if (action === 'standing-on') onStandingOn(el.dataset.type);
+      else if (action === 'standing-off') onStandingOff(el.dataset.type, el.dataset.label);
       else if (action === 'resend-receipt') onResendReceipt(el.dataset.id);
       else if (action === 'cancel-plan') onCancelPlan();
       else if (action === 'retry') loadOverview();
