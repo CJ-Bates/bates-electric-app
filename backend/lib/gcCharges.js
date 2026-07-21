@@ -17,6 +17,7 @@ const { supabaseAdmin } = require('./supabase');
 const catalog = require('./generator-catalog');
 const {
   stripe,
+  resolveInvoicePaymentIntentId,
   resolveSavedPaymentMethod,
   emailCardUpdateLinkForSub,
 } = require('./gcShared');
@@ -166,20 +167,25 @@ async function payOneInvoice({ stripeCustomerId, pmId, description, invoiceMetad
       });
     }
     invoice = await stripe.invoices.finalizeInvoice(invoice.id);
-    invoice = await stripe.invoices.pay(invoice.id);
-    return { ok: true, invoice };
+    // expand payments: Basil removed invoice.payment_intent — the paid
+    // invoice's PI now lives in the payments list, and we must capture it or
+    // dashboard refunds have nothing to refund against.
+    invoice = await stripe.invoices.pay(invoice.id, { expand: ['payments'] });
   } catch (stripeErr) {
     const reason = (stripeErr && (stripeErr.message || stripeErr.code)) || 'charge failed';
     if (invoice && invoice.id) { try { await stripe.invoices.voidInvoice(invoice.id); } catch (e) {} }
     return { ok: false, reason };
   }
-}
-
-// Payment-intent id off a paid invoice (string or expanded object).
-function invoicePaymentIntentId(invoice) {
-  return typeof invoice.payment_intent === 'string'
-    ? invoice.payment_intent
-    : (invoice.payment_intent && invoice.payment_intent.id) || null;
+  // Past this point the card HAS been charged — nothing may throw or return
+  // ok:false (the callers' failure path resets rows for a retry, which would
+  // double-charge). resolveInvoicePaymentIntentId never throws; a null PI
+  // still charges fine, it just leaves the row dashboard-unrefundable, so be loud.
+  const paymentIntentId = await resolveInvoicePaymentIntentId(invoice);
+  if (!paymentIntentId) {
+    console.error('[gc-charges] could not resolve payment_intent for paid invoice', invoice.id,
+      '- rows will store a null PI and dashboard refunds will fall back to invoice lookup');
+  }
+  return { ok: true, invoice, paymentIntentId };
 }
 
 // Delete any pending at-renewal invoice items on add-on rows so nothing is
@@ -271,7 +277,7 @@ async function chargePerformedAddonsForSub({ subscriptionId, customerId = null }
 
   // 4. Mark all included add-ons charged against this one shared payment. (The
   //    invoice.paid webhook also marks them + sends the one itemized receipt.)
-  const piId = invoicePaymentIntentId(paid.invoice);
+  const piId = paid.paymentIntentId;
   await supabaseAdmin.from('generator_pending_addons')
     .update({ status: 'charged', date_charged: today, stripe_payment_intent_id: piId, stripe_invoice_item_id: null })
     .in('id', billable.map((a) => a.id));
@@ -393,7 +399,7 @@ async function chargeVisitCart({ subscriptionId, serviceVisitId }) {
   // 4. Mark BOTH tables' rows charged against the one shared payment
   //    (belt-and-suspenders — the invoice.paid webhook also marks by line
   //    metadata; both writes are idempotent).
-  const piId = invoicePaymentIntentId(paid.invoice);
+  const piId = paid.paymentIntentId;
   if (billableAddons.length) {
     await supabaseAdmin.from('generator_pending_addons')
       .update({ status: 'charged', date_charged: today, stripe_payment_intent_id: piId, stripe_invoice_item_id: null })

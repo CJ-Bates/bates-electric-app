@@ -229,7 +229,12 @@ test('cart happy path: add-ons + customs on ONE invoice, both tables marked with
   const invCreate = stubStripe('invoices', 'create', () => ({ id: 'inv_1' }));
   const itemCreate = stubStripe('invoiceItems', 'create', () => ({ id: 'ii_x' }));
   stubStripe('invoices', 'finalizeInvoice', () => ({ id: 'inv_1' }));
-  stubStripe('invoices', 'pay', () => ({ id: 'inv_1', payment_intent: 'pi_9' }));
+  // Basil pay shape: the PI lives in the payments list (invoice.payment_intent
+  // is gone) — this pins the capture path real invoices take on stripe v18.
+  const payCalls = stubStripe('invoices', 'pay', () => ({
+    id: 'inv_1',
+    payments: { data: [{ status: 'paid', payment: { type: 'payment_intent', payment_intent: 'pi_9' } }] },
+  }));
 
   const res = makeRes();
   await chargeHandler(techReq(), res);
@@ -237,6 +242,7 @@ test('cart happy path: add-ons + customs on ONE invoice, both tables marked with
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, { ok: true, total_cents: 16700, charged_addon_count: 1, charged_custom_count: 2 });
+  assert.deepEqual(payCalls[0][1], { expand: ['payments'] }, 'pay expands payments so the PI is capturable');
 
   // Exactly ONE invoice, three lines, right metadata for the webhook.
   assert.equal(invCreate.length, 1);
@@ -281,6 +287,7 @@ test('only-custom cart charges fine (no add-ons required)', async () => {
   stubStripe('invoices', 'create', () => ({ id: 'inv_1' }));
   const itemCreate = stubStripe('invoiceItems', 'create', () => ({ id: 'ii_x' }));
   stubStripe('invoices', 'finalizeInvoice', () => ({ id: 'inv_1' }));
+  // Legacy pre-Basil pay shape — deliberately kept to pin the payment_intent fallback.
   stubStripe('invoices', 'pay', () => ({ id: 'inv_1', payment_intent: 'pi_9' }));
 
   const res = makeRes();

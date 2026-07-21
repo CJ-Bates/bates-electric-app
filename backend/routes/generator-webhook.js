@@ -18,7 +18,10 @@ const router = express.Router();
 
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const stripe = new Stripe(STRIPE_SECRET);
+// Same pinned API version as lib/gcShared.js so behavior can't drift between
+// the charge path and the webhook.
+const stripe = new Stripe(STRIPE_SECRET, { apiVersion: '2025-08-27.basil' });
+const { resolveInvoicePaymentIntentId } = require('../lib/gcShared');
 
 // Helper: fetch a Stripe object by ID
 async function stripeGet(path) {
@@ -616,8 +619,19 @@ async function handleCustomerUpdated(customer) {
 
 async function handleInvoicePaid(invoice) {
   if (!invoice || !invoice.lines || !invoice.lines.data) return;
-  const paymentIntentId = invoice.payment_intent || null;
   const today = new Date().toISOString().slice(0, 10);
+
+  // Basil event payloads no longer carry invoice.payment_intent, so resolve
+  // the PI through the payments list (one extra Stripe read, only when a line
+  // actually needs marking). If it can't be resolved, mark the rows charged
+  // WITHOUT touching stripe_payment_intent_id — the charge core stores the PI
+  // itself, and a null here must never clobber it.
+  const needsPi = invoice.lines.data.some((l) => {
+    const m = (l && l.metadata) || {};
+    return m.addon_id || m.adhoc_charge_id;
+  });
+  const paymentIntentId = needsPi ? await resolveInvoicePaymentIntentId(invoice) : null;
+  const piPatch = paymentIntentId ? { stripe_payment_intent_id: paymentIntentId } : {};
 
   for (const line of invoice.lines.data) {
     const meta = (line.metadata || {});
@@ -629,7 +643,7 @@ async function handleInvoicePaid(invoice) {
         .update({
           status: 'charged',
           date_charged: today,
-          stripe_payment_intent_id: paymentIntentId,
+          ...piPatch,
         })
         .eq('id', addonId);
       if (error) {
@@ -642,7 +656,7 @@ async function handleInvoicePaid(invoice) {
         .update({
           status: 'charged',
           date_charged: today,
-          stripe_payment_intent_id: paymentIntentId,
+          ...piPatch,
         })
         .eq('id', adhocId);
       if (error) {
@@ -1097,4 +1111,4 @@ async function sendCancellationEmail({ customer }) {
 module.exports = router;
 // Test seam only (offline unit tests with Stripe/Supabase mocked) — server.js
 // mounts the router; nothing at runtime reaches in through _test.
-module.exports._test = { handleSubscriptionCreated, attributeLeadConversion, handleInvoiceUpcoming, maybeSendScheduleNudge, NUDGE_TERMINAL_STATUSES };
+module.exports._test = { handleSubscriptionCreated, attributeLeadConversion, handleInvoicePaid, handleInvoiceUpcoming, maybeSendScheduleNudge, NUDGE_TERMINAL_STATUSES };

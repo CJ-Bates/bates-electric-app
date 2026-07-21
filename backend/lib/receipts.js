@@ -24,7 +24,10 @@ const { supabaseAdmin: supabase } = require('./supabase');
 const { buildReceiptEmail, sendEmail } = require('./emails');
 const { reportError } = require('../middleware/error-reporter');
 const Stripe = require('stripe');
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// Same pinned API version as lib/gcShared.js so receipt enrichment can't
+// drift from the charge path.
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-08-27.basil' });
+const { resolveInvoicePaymentIntentId } = require('./gcShared');
 
 // How fresh an invoice must be for the "customer not in DB yet" fallback. The
 // subscription.created handler normally lands within seconds of invoice.paid;
@@ -176,7 +179,18 @@ async function sendReceiptEmail(invoice, opts = {}) {
     let cardBrand = null;
     let cardLast4 = null;
     try {
-      const chargeId = typeof invoice.charge === 'string' ? invoice.charge : (invoice.charge && invoice.charge.id);
+      // Basil removed invoice.charge — resolve the settling charge through the
+      // payments list -> PaymentIntent -> latest_charge. Legacy field kept as
+      // the first try for pre-Basil payloads. Best-effort either way.
+      let chargeId = typeof invoice.charge === 'string' ? invoice.charge : (invoice.charge && invoice.charge.id);
+      if (!chargeId) {
+        const piId = await resolveInvoicePaymentIntentId(invoice);
+        if (piId) {
+          const pi = await stripe.paymentIntents.retrieve(piId);
+          const lc = pi && pi.latest_charge;
+          chargeId = typeof lc === 'string' ? lc : (lc && lc.id) || null;
+        }
+      }
       if (chargeId) {
         const ch = await stripe.charges.retrieve(chargeId);
         const card = ch && ch.payment_method_details && ch.payment_method_details.card;
