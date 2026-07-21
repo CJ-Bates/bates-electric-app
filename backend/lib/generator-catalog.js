@@ -158,6 +158,17 @@ function planVisitItems(genClass) {
   return PLAN_VISIT_ITEMS[genClass] || [];
 }
 
+// Stored completed_checklist labels (sql/029) normalized against the CURRENT
+// checklist for the gen class: catalog order, de-duped, anything no longer on
+// the list dropped. Label-based storage means a later PLAN_VISIT_ITEMS edit
+// never corrupts old visit records — this intersection is the whole read-side
+// tolerance. (routes/generator-tech.js predates this export and carries its
+// own identical local copy.)
+function normalizeChecklist(stored, items) {
+  const done = new Set(Array.isArray(stored) ? stored.filter((l) => typeof l === 'string') : []);
+  return items.filter((l) => done.has(l));
+}
+
 // Arrival windows -- the 2-hour windows Amy books generator visits in (never
 // exact clock times). SINGLE SOURCE OF TRUTH for the backend; the browser
 // pages load the mirror in frontend/arrival-windows.js (no bundler, separate
@@ -219,6 +230,7 @@ module.exports = {
   ADDON_CATALOG,
   PLAN_VISIT_ITEMS,
   planVisitItems,
+  normalizeChecklist,
   lookupAddonPrice,
   isRecurringAddon,
   recurringAddonTypes,
