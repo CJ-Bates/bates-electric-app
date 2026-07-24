@@ -8,8 +8,33 @@ const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { stripe } = require('../../lib/gcShared');
 const { reportError } = require('../../middleware/error-reporter');
+const { withTimeout, mapPool } = require('../../lib/asyncGuards');
 
 const router = express.Router();
+
+// --- Reliability bounds (stuck-I/O hardening) ---------------------------------
+// This endpoint is the heaviest in the app: it fans out many Stripe calls and
+// holds large result sets in memory on a 512 MB instance. Left unbounded it can
+// exhaust the connection pool (the 2026-07-24 stall). Three bounds keep it safe:
+//   MAX_RANGE_DAYS        — clamp absurdly wide ranges (degrade + note, not 500)
+//   STRIPE_FANOUT_CONCURRENCY — cap simultaneous Stripe sockets per fan-out
+//   dbTimeoutMs()         — bound the Supabase joins so a wedged query rejects
+// The Stripe calls themselves are additionally bounded by the client-level 20s
+// timeout (lib/stripeConfig.js).
+const MAX_RANGE_DAYS = 400; // ~13 months — covers a full-year reconciliation with headroom
+const STRIPE_FANOUT_CONCURRENCY = 8;
+const dbTimeoutMs = () => Number(process.env.ACCOUNTING_DB_TIMEOUT_MS) || 15000;
+
+// Clamp an over-wide range to the most recent MAX_RANGE_DAYS so a huge report
+// degrades gracefully instead of exhausting the instance. Returns the (possibly
+// moved) fromDate plus a flag callers surface to the office as an honest note.
+function clampRange(fromDate, toDate) {
+  const maxMs = MAX_RANGE_DAYS * 24 * 60 * 60 * 1000;
+  if (toDate.getTime() - fromDate.getTime() > maxMs) {
+    return { fromDate: new Date(toDate.getTime() - maxMs), rangeCapped: true };
+  }
+  return { fromDate, rangeCapped: false };
+}
 
 // ---- Accounting helpers (shared by the date-range and payout views) ----
 // Issuer card authorization (approval) code on a charge — what Brenda reconciles
@@ -53,9 +78,10 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
   try {
     const today = new Date();
     const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const fromDate = req.query.from ? parseYmdParam(req.query.from, 'T00:00:00Z') : defaultFrom;
+    const rawFrom = req.query.from ? parseYmdParam(req.query.from, 'T00:00:00Z') : defaultFrom;
     const toDate = req.query.to ? parseYmdParam(req.query.to, 'T23:59:59Z') : today;
-    if (!fromDate || !toDate) return res.status(400).json({ error: 'Invalid date range' });
+    if (!rawFrom || !toDate) return res.status(400).json({ error: 'Invalid date range' });
+    const { fromDate, rangeCapped } = clampRange(rawFrom, toDate);
     const fromTs = Math.floor(fromDate.getTime() / 1000);
     const toTs = Math.floor(toDate.getTime() / 1000);
 
@@ -134,10 +160,14 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
     const customerIds = [...new Set([...allCharges.map(c => c.customer), ...refundCustomerIds].filter(Boolean))];
     let customerMap = {};
     if (customerIds.length > 0) {
-      const { data: subs, error: subErr } = await supabaseAdmin
-        .from('generator_subscriptions')
-        .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
-        .in('stripe_customer_id', customerIds);
+      const { data: subs, error: subErr } = await withTimeout(
+        supabaseAdmin
+          .from('generator_subscriptions')
+          .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
+          .in('stripe_customer_id', customerIds),
+        dbTimeoutMs(),
+        'accounting customer lookup',
+      );
       if (subErr) throw subErr;
       (subs || []).forEach(s => {
         if (s.customer) customerMap[s.stripe_customer_id] = s.customer;
@@ -174,7 +204,7 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
     if (needRetrieve.size > RETRIEVE_CAP) {
       console.warn(`[accounting] auth-code retrieve capped at ${RETRIEVE_CAP}; ${needRetrieve.size - RETRIEVE_CAP} charges will have no code`);
     }
-    await Promise.all(toRetrieve.map(async (id) => {
+    await mapPool(toRetrieve, STRIPE_FANOUT_CONCURRENCY, async (id) => {
       try {
         const full = await stripe.charges.retrieve(id);
         const code = authCodeOf(full);
@@ -182,7 +212,7 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
       } catch (e) {
         console.error('[accounting] charge retrieve for auth code failed:', id, e && e.message);
       }
-    }));
+    });
 
     const chargeTxns = allCharges
       .filter(c => c.status === 'succeeded')
@@ -260,6 +290,8 @@ router.get('/accounting/transactions', requirePermission('accounting'), async (r
     res.json({
       from: fromDate.toISOString().slice(0, 10),
       to: toDate.toISOString().slice(0, 10),
+      range_capped: rangeCapped,
+      ...(rangeCapped ? { note: `Range was wider than ${MAX_RANGE_DAYS} days; showing the most recent ${MAX_RANGE_DAYS} days.` } : {}),
       transactions,
       totals: {
         count: transactions.length,
@@ -303,9 +335,10 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
   try {
     const today = new Date();
     const defaultFrom = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const fromDate = req.query.from ? parseYmdParam(req.query.from, 'T00:00:00Z') : defaultFrom;
+    const rawFrom = req.query.from ? parseYmdParam(req.query.from, 'T00:00:00Z') : defaultFrom;
     const toDate = req.query.to ? parseYmdParam(req.query.to, 'T23:59:59Z') : today;
-    if (!fromDate || !toDate) return res.status(400).json({ error: 'Invalid date range' });
+    if (!rawFrom || !toDate) return res.status(400).json({ error: 'Invalid date range' });
+    const { fromDate, rangeCapped } = clampRange(rawFrom, toDate);
     const fromTs = Math.floor(fromDate.getTime() / 1000);
     const toTs = Math.floor(toDate.getTime() / 1000);
 
@@ -361,7 +394,7 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
     if (listingOrder.length > LISTING_CAP) {
       console.warn(`[payouts] reconciliation listings capped at ${LISTING_CAP} of ${listingOrder.length} payouts; Pending may overstate for very wide ranges`);
     }
-    await Promise.all(listingOrder.slice(0, LISTING_CAP).map(async (p) => {
+    await mapPool(listingOrder.slice(0, LISTING_CAP), STRIPE_FANOUT_CONCURRENCY, async (p) => {
       try {
         let after; let guard = 0;
         do {
@@ -388,7 +421,7 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
         listingFailed.add(p.id);
         console.warn('[payouts] reconciliation listing fell back for', p.id, '—', e && e.message);
       }
-    }));
+    });
 
     // 3) Balance-transaction window for the Pending bucket and the auto-debit
     //    fallback pool. Pending = genuinely unsettled only: anything that
@@ -431,10 +464,10 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
     {
       const bankScope = [...payouts, ...allPayouts.filter((p) => !inRange.has(p.id) && listingFailed.has(p.id))];
       const needPbt = bankScope.filter((p) => p.balance_transaction && !btById[p.balance_transaction]);
-      await Promise.all(needPbt.slice(0, 100).map(async (p) => {
+      await mapPool(needPbt.slice(0, 100), STRIPE_FANOUT_CONCURRENCY, async (p) => {
         try { btById[p.balance_transaction] = await stripe.balanceTransactions.retrieve(p.balance_transaction); }
         catch (e) { note('balanceTransactions.retrieve ' + p.balance_transaction, e); }
-      }));
+      });
       bankScope.forEach((p) => {
         const pbt = p.balance_transaction ? btById[p.balance_transaction] : null;
         if (pbt && typeof pbt.amount === 'number') payoutBankCents[p.id] = -pbt.amount;
@@ -482,17 +515,17 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
 
     const RETRIEVE_CAP = 300;
     // Refunds not already resolved via expansion -> originating charge id
-    await Promise.all([...refundIds].filter((rid) => !refundToCharge[rid]).slice(0, RETRIEVE_CAP).map(async (rid) => {
+    await mapPool([...refundIds].filter((rid) => !refundToCharge[rid]).slice(0, RETRIEVE_CAP), STRIPE_FANOUT_CONCURRENCY, async (rid) => {
       try {
         const rf = await stripe.refunds.retrieve(rid);
         const cid = typeof rf.charge === 'string' ? rf.charge : (rf.charge && rf.charge.id);
         if (cid) { refundToCharge[rid] = cid; chargeIds.add(cid); }
       } catch (e) { note('refunds.retrieve ' + rid, e); }
-    }));
+    });
 
     // Charges without a definitive auth code yet -> retrieve fills code,
     // customer, and description in one call.
-    await Promise.all([...chargeIds].filter((cid) => !(cid in authByChargeId)).slice(0, RETRIEVE_CAP).map(async (cid) => {
+    await mapPool([...chargeIds].filter((cid) => !(cid in authByChargeId)).slice(0, RETRIEVE_CAP), STRIPE_FANOUT_CONCURRENCY, async (cid) => {
       try {
         const ch = await stripe.charges.retrieve(cid);
         const code = authCodeOf(ch);
@@ -501,17 +534,21 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
         if (custId) chargeCustomerId[cid] = custId;
         chargeDescById[cid] = chargeDescription(ch);
       } catch (e) { note('charges.retrieve ' + cid, e); }
-    }));
+    });
 
     // Customer directory (one query for all stripe customers seen).
     const customerIds = [...new Set(Object.values(chargeCustomerId).filter(Boolean))];
     let customerMap = {};
     if (customerIds.length) {
       try {
-        const { data: subs, error: subErr } = await supabaseAdmin
-          .from('generator_subscriptions')
-          .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
-          .in('stripe_customer_id', customerIds);
+        const { data: subs, error: subErr } = await withTimeout(
+          supabaseAdmin
+            .from('generator_subscriptions')
+            .select('stripe_customer_id, customer:generator_customers(name, install_address, install_city, install_state, install_zip)')
+            .in('stripe_customer_id', customerIds),
+          dbTimeoutMs(),
+          'payouts customer lookup',
+        );
         if (subErr) throw subErr;
         (subs || []).forEach((s) => { if (s.customer) customerMap[s.stripe_customer_id] = s.customer; });
       } catch (e) { note('supabase customer lookup', e); }
@@ -650,6 +687,8 @@ router.get('/accounting/payouts', requirePermission('accounting'), async (req, r
     res.json({
       from: fromDate.toISOString().slice(0, 10),
       to: toDate.toISOString().slice(0, 10),
+      range_capped: rangeCapped,
+      ...(rangeCapped ? { note: `Range was wider than ${MAX_RANGE_DAYS} days; showing the most recent ${MAX_RANGE_DAYS} days.` } : {}),
       payouts: payoutGroups,
       pending: {
         net_cents: pendingNet,

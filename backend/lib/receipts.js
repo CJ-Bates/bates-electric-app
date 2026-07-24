@@ -24,9 +24,11 @@ const { supabaseAdmin: supabase } = require('./supabase');
 const { buildReceiptEmail, sendEmail } = require('./emails');
 const { reportError } = require('../middleware/error-reporter');
 const Stripe = require('stripe');
-// Same pinned API version as lib/gcShared.js so receipt enrichment can't
-// drift from the charge path.
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-08-27.basil' });
+// Same client options as lib/gcShared.js (API version pin + 20s reliability
+// timeout) via the shared config, so receipt enrichment can't drift from the
+// charge path.
+const { STRIPE_CLIENT_OPTIONS } = require('./stripeConfig');
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, STRIPE_CLIENT_OPTIONS);
 const { resolveInvoicePaymentIntentId } = require('./gcShared');
 
 // How fresh an invoice must be for the "customer not in DB yet" fallback. The

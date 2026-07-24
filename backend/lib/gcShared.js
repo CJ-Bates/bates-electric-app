@@ -7,12 +7,15 @@
 const Stripe = require('stripe');
 const { supabaseAdmin } = require('./supabase');
 const { sendEmail, buildCardUpdateLinkEmail } = require('./emails');
+const { STRIPE_CLIENT_OPTIONS } = require('./stripeConfig');
 
-// Pinned so Stripe behavior can't shift under us on an SDK bump. Basil
-// (2025-03-31+) removed Invoice.payment_intent / Invoice.charge — paid
+// The one office/tech/cron Stripe client (everything imports `stripe` from
+// here). Options — API version pin + the 20s reliability timeout — live in
+// lib/stripeConfig.js so the receipts + webhook clients share them verbatim.
+// Basil (2025-03-31+) removed Invoice.payment_intent / Invoice.charge — paid
 // invoices surface their payment through the `payments` list instead; the
 // resolvers below handle both generations.
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-08-27.basil' });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, STRIPE_CLIENT_OPTIONS);
 
 // The PaymentIntent id inside an InvoicePayment list ({ data: [...] }).
 // Prefers paid entries (Basil allows multiple partial payments; ours have
