@@ -18,9 +18,12 @@ const router = express.Router();
 
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-// Same pinned API version as lib/gcShared.js so behavior can't drift between
-// the charge path and the webhook.
-const stripe = new Stripe(STRIPE_SECRET, { apiVersion: '2025-08-27.basil' });
+// Same client options as lib/gcShared.js (API version pin + 20s reliability
+// timeout) via the shared config, so behavior can't drift between the charge
+// path and the webhook. Signature verification (constructEvent) is local and
+// unaffected; the timeout only bounds the object-fetch calls this handler makes.
+const { STRIPE_CLIENT_OPTIONS } = require('../lib/stripeConfig');
+const stripe = new Stripe(STRIPE_SECRET, STRIPE_CLIENT_OPTIONS);
 const { resolveInvoicePaymentIntentId } = require('../lib/gcShared');
 
 // Helper: fetch a Stripe object by ID

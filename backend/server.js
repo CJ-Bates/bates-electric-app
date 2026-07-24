@@ -15,7 +15,9 @@ const customerRouter = require('./routes/customer');
 const membersRouter = require('./routes/members');
 const smsInboundRouter = require('./routes/sms-inbound');
 const magicShortlinkRouter = require('./routes/magic-shortlink');
+const healthRouter = require('./routes/health');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
+const { createRequestTimeout } = require('./middleware/request-timeout');
 const { requireAuth } = require('./middleware/auth');
 const { CONTACTS_DIRECTORY } = require('./lib/contactsDirectory');
 
@@ -55,6 +57,12 @@ app.use(cors({
   },
 }));
 
+// Liveness + readiness probes. Mounted before all heavier middleware and before
+// the per-request timeout below so a probe is never itself delayed or aborted.
+// Unauthenticated by necessity (Render's prober carries no token). See
+// routes/health.js: /health is static liveness, /readyz is a bounded DB check.
+app.use(healthRouter);
+
 // Stripe webhook must receive raw body for signature verification
 app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), generatorWebhookRouter);
 
@@ -65,12 +73,15 @@ app.use('/inspections', express.json({ limit: '1mb' }), inspectionRoutes);
 
 app.use(express.json({ limit: '10mb' }));
 
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'Bates Electric API is running!',
-    timestamp: new Date().toISOString(),
-  });
-});
+// Global per-request timeout: any request past the ceiling is answered 503 so a
+// single wedged request can't tie up a worker forever (the 2026-07-24 stall).
+// Webhook + cron are exempt — they retry / legitimately run longer — and the
+// /readyz probe above is the backstop that gets a truly stuck process
+// restarted. Generous ceiling so normal requests are never affected.
+app.use(createRequestTimeout({
+  ms: Number(process.env.REQUEST_TIMEOUT_MS) || 90000,
+  exempt: [/^\/webhooks\/stripe/, /^\/api\/cron\//],
+}));
 
 app.get('/config', (req, res) => {
   res.json({
