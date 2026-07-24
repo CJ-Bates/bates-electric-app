@@ -1239,6 +1239,13 @@
             <button class="btn btn-primary btn-sm" data-complete-visit="${v.id}">Mark complete</button>
           </div>`;
       }
+      // What the tech CHECKED OFF on a completed visit (service checklist).
+      // Only checked items are listed — an unchecked item is simply absent
+      // (same rule as the customer dashboard). Legacy visits have none.
+      const services = (completed && v.completed_services && v.completed_services.length)
+        ? `<div class="gc-meta-label" style="margin-top:4px;">Services completed (${v.completed_services.length}): ${v.completed_services.map(escapeHtml).join(' &middot; ')}</div>`
+        : '';
+
       // Notes: customer-visible (on completed) + internal (office/tech only).
       const noteLines = [];
       if (completed && v.notes) noteLines.push(`<div class="gc-meta-label" style="margin-top:4px;">Customer note: ${escapeHtml(v.notes)}</div>`);
@@ -1254,7 +1261,7 @@
           </div>
           <div style="flex-shrink:0;">${badge}</div>
         </div>
-        ${noteLines.join('')}
+        ${services}${noteLines.join('')}
         <!-- TECH-DASHBOARD PHASE 2 (additive): tech photo strip mounts here; filled by the loader in showDetail -->
         <div class="gc-visit-photos" data-visit-photos="${v.id}" style="margin-top:6px;"></div>
         ${actions}

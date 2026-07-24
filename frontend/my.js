@@ -563,12 +563,16 @@
 
   function visitRowHtml(v) {
     if (v.status === 'completed') {
-      // Itemize the visit: the standard plan checklist, add-on services
-      // performed that day, then the tech's notes and photos. On-demand
-      // visits skip the checklist — it's the PLAN visits that include it.
-      const items = v.is_plan_visit ? ((overview && overview.plan && overview.plan.visit_items) || []) : [];
+      // Itemize the visit: the services the tech checked off (or, for legacy
+      // visits with no checklist, the static plan list), add-on services
+      // performed that day, then the tech's notes and photos. Only CHECKED
+      // services are ever listed — an unchecked item is simply absent, never
+      // shown as "not done". On-demand visits skip the static fallback — it's
+      // the PLAN visits that include the full service list.
+      const checked = (v.completed_services && v.completed_services.length) ? v.completed_services : null;
+      const items = checked || (v.is_plan_visit ? ((overview && overview.plan && overview.plan.visit_items) || []) : []);
       const planBlock = items.length
-        ? '<div class="plan-items"><b>Included in your plan</b><ul>'
+        ? '<div class="plan-items"><b>' + (checked ? 'Services completed this visit' : 'Included in your plan') + '</b><ul>'
           + items.map((it) => '<li>' + CHECK_SVG + '<span>' + esc(it) + '</span></li>').join('')
           + '</ul></div>'
         : '';

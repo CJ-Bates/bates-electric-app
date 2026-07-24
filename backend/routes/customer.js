@@ -124,7 +124,7 @@ router.get('/overview', readLimiter, async (req, res) => {
     // Visits (customer-visible fields ONLY — never internal_note).
     const { data: visitRows, error: vErr } = await supabaseAdmin
       .from('generator_service_visits')
-      .select('id, visit_type, status, scheduled_date, appointment_at, arrival_window, completed_date, notes')
+      .select('id, visit_type, status, scheduled_date, appointment_at, arrival_window, completed_date, notes, completed_checklist')
       .eq('subscription_id', sub.id)
       .neq('status', 'canceled')
       .order('completed_date', { ascending: false, nullsFirst: true })
@@ -254,6 +254,11 @@ router.get('/overview', readLimiter, async (req, res) => {
       ? 'Semi-Annual — 2 visits/year'
       : (sub.plan === 'annual' ? 'Annual — 1 visit/year' : sub.plan);
 
+    // Current plan checklist for this gen class — the static "Included in your
+    // plan" list AND the reference each visit's checked-off services are
+    // intersected against (so a removed catalog label never resurfaces).
+    const planItems = catalog.planVisitItems(sub.gen_class);
+
     res.json({
       branding: {
         company_name: companyName(customer.install_state),
@@ -285,8 +290,9 @@ router.get('/overview', readLimiter, async (req, res) => {
         billing: null, // live Stripe billing arrives via GET /api/my/billing
         other_plan: sub.plan === 'annual' ? 'semi_annual' : 'annual',
         // Standard services performed on every plan visit (keyed by gen class)
-        // — the "Included in your plan" checklist on completed visits.
-        visit_items: catalog.planVisitItems(sub.gen_class),
+        // — the "Included in your plan" checklist on completed visits. Kept as
+        // the frontend's fallback for legacy visits with no completed_services.
+        visit_items: planItems,
       },
       next_visit: nextVisit && {
         id: nextVisit.id,
@@ -296,21 +302,29 @@ router.get('/overview', readLimiter, async (req, res) => {
         status: nextVisit.status,
         preferences, // { slots, note, created_at } | null — pending only
       },
-      visits: visits.map((v) => ({
-        id: v.id,
-        // The plan checklist only applies to regular plan visits — an
-        // on-demand trip didn't include the full service list.
-        is_plan_visit: v.visit_type === 'regular_service',
-        status: (v.completed_date || v.status === 'completed') ? 'completed'
-          : (v.appointment_at ? 'scheduled' : 'upcoming'),
-        appointment_at: v.appointment_at,
-        arrival_window: v.arrival_window || null,
-        due_date: v.scheduled_date,
-        completed_date: v.completed_date,
-        notes: v.notes || null,
-        photos: photosByVisit[v.id] || [],
-        performed_addons: performedByVisit[v.id] || [],
-      })),
+      visits: visits.map((v) => {
+        const completed = !!(v.completed_date || v.status === 'completed');
+        return {
+          id: v.id,
+          // The plan checklist only applies to regular plan visits — an
+          // on-demand trip didn't include the full service list.
+          is_plan_visit: v.visit_type === 'regular_service',
+          status: completed ? 'completed' : (v.appointment_at ? 'scheduled' : 'upcoming'),
+          appointment_at: v.appointment_at,
+          arrival_window: v.arrival_window || null,
+          due_date: v.scheduled_date,
+          completed_date: v.completed_date,
+          notes: v.notes || null,
+          photos: photosByVisit[v.id] || [],
+          performed_addons: performedByVisit[v.id] || [],
+          // The services the tech actually CHECKED OFF on this visit — only
+          // checked labels, normalized against the current plan list. Empty
+          // for open visits and pre-checklist history; the frontend then falls
+          // back to the static plan.visit_items display, so old visits never
+          // render blank.
+          completed_services: completed ? catalog.normalizeChecklist(v.completed_checklist, planItems) : [],
+        };
+      }),
       addons: { pending: addons, standing, available: availableAddons },
     });
   } catch (err) {

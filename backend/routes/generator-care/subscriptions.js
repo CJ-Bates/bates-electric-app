@@ -246,9 +246,18 @@ router.get('/subscriptions/:id', async (req, res) => {
       openVisitId,
     });
 
+    // The services the tech checked off on each visit (sql/029) — only checked
+    // labels, normalized against the current plan list so a removed catalog
+    // item never resurfaces. QA surface for the visit rows.
+    const planItems = catalog.planVisitItems(subR.data.gen_class);
+    const visits = (visitsR.data || []).map((v) => ({
+      ...v,
+      completed_services: catalog.normalizeChecklist(v.completed_checklist, planItems),
+    }));
+
     res.json({
       subscription: subR.data,
-      visits: visitsR.data || [],
+      visits,
       pending_addons: addonsR.data || [],
       adhoc_charges: adhocR.data || [],
       addon_menu: addonMenu,
