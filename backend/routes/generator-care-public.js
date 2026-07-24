@@ -93,7 +93,8 @@ router.get('/unsubscribe', async (req, res) => {
     // A DB hiccup must not strand the customer on an error page mid-opt-out;
     // show the page anyway and let the error report tell us to re-check.
     console.error('[generator-care] unsubscribe error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method }).catch(() => {});
+    // req.path, not req.originalUrl — the unsubscribe token rides in ?token=.
+    reportError(err, { route: req.path, method: req.method }).catch(() => {});
     res.status(200).type('html').send(unsubscribePage());
   }
 });

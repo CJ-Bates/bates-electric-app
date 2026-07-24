@@ -1,0 +1,31 @@
+# Netlify security headers for app./my./generator.bates-electric.com.
+# Netlify (not Render) serves these static PWA files, so the CSP + clickjacking
+# defenses have to live here — server.js runs helmet with CSP disabled on the
+# assumption the edge sets one. Verify against every surface (office dashboard,
+# tech app, customer portal, inspection form + photo upload, PDF viewer) before
+# shipping — a missing origin breaks a real page.
+#
+# External origins were enumerated from the code, not guessed:
+#   script  : cdnjs.cloudflare.com (pdf.js), cdn.jsdelivr.net (Chart.js, EmailJS)
+#   style   : fonts.googleapis.com (Google Fonts CSS)
+#   font    : fonts.gstatic.com (Google Fonts binaries)
+#   img     : *.supabase.co (Storage signed URLs), res.cloudinary.com (site-visit photos), data:/blob: previews
+#   connect : Render API, *.supabase.co (auth/storage/PostgREST), cdnjs (pdf.js worker fetch),
+#             api.open-meteo.com + api.bigdatacloud.net (weather), api.cloudinary.com (uploads)
+#   worker  : blob: (pdf.js spins a blob worker) + self (the PWA service worker)
+# generator.bates-electric.com / www.google.com / dashboard.stripe.com are <a href>
+# navigation only (not fetched/embedded), so they need no directive.
+#
+# Framing: SAMEORIGIN / frame-ancestors 'self' — NOT 'none'/DENY. The desktop
+# PDF viewer (pdf-viewer.html) renders PDFs in a SAME-ORIGIN <iframe>
+# (frame.src = the .pdf), which 'none'/DENY would block, breaking the safety
+# manual + SDS booklet for office staff on desktop. Clickjacking is inherently
+# cross-origin, so 'self'/SAMEORIGIN defends against it just as fully.
+#
+# TODO: script-src still needs 'unsafe-inline' because pages use inline <script>
+# blocks and inline event handlers. Migrate to nonces/hashes and drop it.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co https://res.cloudinary.com; connect-src 'self' https://*.supabase.co https://bates-electric-app.onrender.com https://cdnjs.cloudflare.com https://api.open-meteo.com https://api.cloudinary.com https://api.bigdatacloud.net; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; object-src 'none'
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff

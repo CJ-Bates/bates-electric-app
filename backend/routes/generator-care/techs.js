@@ -53,6 +53,15 @@ router.post('/techs', requirePermission('tech_manage'), async (req, res) => {
       });
     }
 
+    // The invite row is the signup authorization (migration 030), mirroring the
+    // office flow: written only here with the service role, so a tech account
+    // can't be self-provisioned with the public anon key. The signup trigger
+    // requires this row for the tech domain and stamps claimed_at on creation.
+    const { error: inviteErr } = await supabaseAdmin
+      .from('tech_invites')
+      .upsert({ email, invited_by: req.profile.id }, { onConflict: 'email' });
+    if (inviteErr) throw inviteErr;
+
     // Create the auth user; the on_auth_user_created trigger inserts the profile
     // with role='tech' and full_name from user_metadata. email_confirm:true so
     // they don't need to click a confirm link before setting a password.

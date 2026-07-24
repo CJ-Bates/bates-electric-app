@@ -126,7 +126,9 @@ function errorReporter(err, req, res, next) {
   if (clientStatus >= 400 && clientStatus < 500) {
     console.warn(
       `[error-reporter] client error ${clientStatus} on ` +
-      `${(req && req.method) || '?'} ${(req && (req.originalUrl || req.url)) || '?'}: ` +
+      // req.path (never req.originalUrl) so query strings — which can carry
+      // secrets/tokens (SMS webhook secret, unsubscribe token) — never reach logs.
+      `${(req && req.method) || '?'} ${(req && (req.path || req.url)) || '?'}: ` +
       ((err && err.message) || err)
     );
     if (res.headersSent) return next(err);
@@ -137,7 +139,9 @@ function errorReporter(err, req, res, next) {
   }
 
   reportError(err, {
-    route: (req && (req.originalUrl || req.url)) || undefined,
+    // req.path, not req.originalUrl — keep query-string secrets/tokens out of
+    // the console/Sentry/alert-email sinks.
+    route: (req && (req.path || req.url)) || undefined,
     method: req && req.method,
     user: (req && req.profile && req.profile.email)
       || (req && req.user && req.user.email)

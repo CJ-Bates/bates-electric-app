@@ -129,11 +129,35 @@
   </div>
 
   <script>
+    // Same-origin relative-path allow-list for the two navigable params (file,
+    // back). This page is unauthenticated static HTML, so a crafted `file` such
+    // as `javascript:...` would run same-origin with the authenticated PWA and
+    // could read the auth tokens in local/sessionStorage; `back` is an open
+    // redirect. We ALLOW-LIST (not a javascript: denylist): reject anything with
+    // a scheme (":"), a backslash, or a protocol-relative "//" prefix, and
+    // require a normal path char at the start. Real callers pass either a bare
+    // filename ("SafetyManual2026.pdf") or a root-relative path ("/safety-
+    // manual"), so both shapes must pass; javascript:, data:, //evil.com,
+    // \\evil, \evil and http(s):// are all rejected.
+    function safeLocalPath(s) {
+      if (typeof s !== 'string' || s === '') return false;
+      if (s.indexOf(':') !== -1) return false;                       // no scheme
+      if (s.indexOf('\\') !== -1) return false;                      // no backslashes / UNC
+      if (s.charAt(0) === '/' && s.charAt(1) === '/') return false;  // no protocol-relative //
+      if (!/^[A-Za-z0-9/._-]/.test(s)) return false;                 // must start with a path char
+      return true;
+    }
+
     var params = new URLSearchParams(location.search);
-    var file = params.get('file') || '';
+    var rawFile = params.get('file') || '';
     var page = params.get('page') || '';
     var title = params.get('title') || 'Document';
-    var back = params.get('back') || '';
+    var rawBack = params.get('back') || '';
+
+    var fileOk = safeLocalPath(rawFile);
+    var file = fileOk ? rawFile : '';
+    // A rejected `back` simply falls back to history/`/documents` — never a redirect.
+    var back = safeLocalPath(rawBack) ? rawBack : '';
 
     // Set header title
     document.getElementById('viewer-title').textContent = title;
@@ -162,7 +186,13 @@
     var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     var frame = document.getElementById('pdf-frame');
 
-    if (isMobile) {
+    if (!fileOk) {
+      // Rejected document link — render a plain message and load nothing.
+      frame.style.display = 'none';
+      document.getElementById('pdfjs-container').style.display = 'block';
+      document.getElementById('pdfjs-status').textContent = 'This document link is invalid.';
+      document.getElementById('viewer-title').textContent = 'Invalid document';
+    } else if (isMobile) {
       // Mobile: render PDF inline via PDF.js so the in-app Back button stays visible.
       frame.style.display = 'none';
       document.getElementById('pdfjs-container').style.display = 'block';

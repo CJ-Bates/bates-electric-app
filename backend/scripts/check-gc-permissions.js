@@ -23,7 +23,8 @@ const ALLOWLIST = {
     '/subscriptions/:id/work-order-created/undo',
     '/subscriptions/:id/tier-change-preview',
     '/subscriptions/:id/resend-receipt',
-    '/subscriptions/:id/portal-session',
+    // portal-session now requires billing_actions (a Portal session URL is a
+    // bearer credential for the customer's billing) — no longer a no-flag route.
     '/subscriptions/:id/resend-welcome',
   ],
   'visits.js': ['/visits/:id/complete', '/visits/:id/schedule'],
