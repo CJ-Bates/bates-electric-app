@@ -68,6 +68,16 @@ const fmtDate = (d) => {
 // then newest signup.
 // ---------------------------------------------------------------------------
 const SUB_RANK = { active: 0, past_due: 1 };
+
+// Case-insensitive EXACT email match. generator_customers.email is stored with
+// whatever casing Stripe/office entered (not normalized on write), so we keep
+// the case-insensitive ILIKE but escape the LIKE metacharacters (\ % _) so the
+// authenticated email is matched literally. Without this, a customer whose own
+// email contains `_` (e.g. john_smith@gmail.com — `_` is a LIKE single-char
+// wildcard) could resolve to a DIFFERENT customer's row: the IDOR anchor for
+// the whole portal. Emails can't contain `*`, so only \ % _ need escaping.
+const likeEscape = (s) => String(s == null ? '' : s).replace(/[\\%_]/g, '\\$&');
+
 async function resolveCustomer(req) {
   const email = (req.user && req.user.email) || '';
   if (!email) return null;
@@ -75,7 +85,7 @@ async function resolveCustomer(req) {
   const { data: customers, error: cErr } = await supabaseAdmin
     .from('generator_customers')
     .select('id, name, email, phone, install_address, install_city, install_state, install_zip, stripe_customer_id')
-    .ilike('email', email);
+    .ilike('email', likeEscape(email));
   if (cErr) throw cErr;
   if (!customers || !customers.length) return null;
 

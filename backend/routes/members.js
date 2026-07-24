@@ -27,6 +27,11 @@ function isOfficeEmail(email) {
   return !!email && /@bates-electric\.com$/i.test(String(email).trim());
 }
 
+// Escape LIKE metacharacters (\ % _) so an email is matched literally by ILIKE
+// (case-insensitive but no wildcards). generator_customers.email is stored with
+// its original casing, so we keep ILIKE rather than a case-sensitive .eq.
+const likeEscape = (s) => String(s == null ? '' : s).replace(/[\\%_]/g, '\\$&');
+
 // Map of auth.users id -> last_sign_in_at. The user count is tiny (staff +
 // techs + a handful of portal customers), so one page is plenty.
 async function lastSignInMap() {
@@ -364,7 +369,7 @@ router.post('/customers/:id/resend-signin', async (req, res) => {
       const { data: gc } = await supabaseAdmin
         .from('generator_customers')
         .select('name, install_state')
-        .ilike('email', customer.email)
+        .ilike('email', likeEscape(customer.email))
         .maybeSingle();
       if (gc) {
         companyState = gc.install_state || null;

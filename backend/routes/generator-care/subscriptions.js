@@ -1218,7 +1218,7 @@ router.post('/subscriptions/:id/cancel', requirePermission('refunds'), async (re
 // Creates a Stripe Customer Portal session for the subscription's customer.
 // Returns a one-time URL that the customer can use to update their card,
 // see invoice history, or change their email/phone/address.
-router.post('/subscriptions/:id/portal-session', async (req, res) => {
+router.post('/subscriptions/:id/portal-session', requirePermission('billing_actions'), async (req, res) => {
   try {
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
@@ -1253,14 +1253,20 @@ router.post('/subscriptions/:id/portal-session', async (req, res) => {
       emailReason = r.reason || (r.sent ? 'sent' : 'failed');
     }
 
-    res.json({
-      url: session.url,
+    // A Billing Portal session URL is a bearer credential for this customer's
+    // billing. When we successfully emailed it to the customer, do NOT return it
+    // to the caller — the office UI's success path doesn't use it. Only surface
+    // the URL when the email did NOT go out (no email on file / mail provider
+    // down), so Amy can still deliver the link manually (frontend fallback).
+    const body = {
       customer_email: customerEmail,
       customer_name: customerName,
       expires_at: session.expires_at,
       email_sent: emailSent,
       email_status: emailReason,
-    });
+    };
+    if (!emailSent) body.url = session.url;
+    res.json(body);
   } catch (err) {
     console.error('[portal-session] error:', err);
     res.status(500).json({ error: 'Server error' });

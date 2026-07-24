@@ -2,9 +2,11 @@
 // PUBLIC (no-auth) webhook SimpleTexting calls for each inbound text on the
 // shared company number, plus platform unsubscribe reports. Deliberately
 // outside every authed router — SimpleTexting can't hold a session — but NOT
-// open: every request must carry the shared secret (?secret=<SMS_WEBHOOK_SECRET>,
-// part of the webhook URL CJ configures in the SimpleTexting account), and the
-// route is rate-limited. Fails closed when the env var isn't set.
+// open: every request must carry the shared secret in the X-Webhook-Secret
+// header (preferred) or, for the classic GET forwarding integration that can
+// only send a fixed URL, the ?secret=<SMS_WEBHOOK_SECRET> query param CJ
+// configures in the SimpleTexting account. The route is rate-limited. Fails
+// closed when the env var isn't set.
 //
 // Payload (confirmed against api-doc.simpletexting.com, 2026-07-15): v2
 // webhooks POST JSON { type: 'INCOMING_MESSAGE', values: { contactPhone,
@@ -28,6 +30,7 @@
 // as unmatched and do nothing.
 
 const express = require('express');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendEmail, DASHBOARD_URL, escHtml } = require('../lib/emails');
@@ -53,8 +56,18 @@ const inboundLimiter = rateLimit({
   message: { error: 'Too many requests' },
 });
 
-// Constant-ish comparison is overkill for a long random secret, but keep the
-// check strict: missing env = fail closed, never "open while unconfigured".
+// Constant-time secret check. Preferred delivery is the X-Webhook-Secret header
+// (kept out of URLs, access logs, and error reports). The ?secret= query form is
+// still accepted ONLY because the classic "forward incoming messages" GET
+// integration can send just a fixed URL, not headers — but the query string is
+// no longer logged anywhere (error-reporter / request-timeout now log req.path).
+// Missing env = fail closed, never "open while unconfigured".
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a == null ? '' : a));
+  const bb = Buffer.from(String(b == null ? '' : b));
+  if (ba.length !== bb.length) return false;      // timingSafeEqual requires equal length
+  return crypto.timingSafeEqual(ba, bb);
+}
 function verifySecret(req, res) {
   const expected = process.env.SMS_WEBHOOK_SECRET;
   if (!expected) {
@@ -62,7 +75,12 @@ function verifySecret(req, res) {
     res.status(403).json({ error: 'not configured' });
     return false;
   }
-  if ((req.query.secret || '') !== expected) {
+  // Read the header off req.headers (Node lowercases header names) rather than
+  // req.get(), so this works with plain req objects too. Header preferred; the
+  // query param is the fallback for the classic GET forwarding integration.
+  const headerSecret = (req.headers && req.headers['x-webhook-secret']) || '';
+  const provided = headerSecret || (req.query && req.query.secret) || '';
+  if (!safeEqual(provided, expected)) {
     res.status(403).json({ error: 'forbidden' });
     return false;
   }

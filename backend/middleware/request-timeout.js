@@ -24,7 +24,9 @@ function createRequestTimeout({ ms = 90000, exempt = [] } = {}) {
 
     const timer = setTimeout(() => {
       if (res.headersSent) return;
-      console.error(`[request-timeout] ${req.method} ${req.originalUrl || req.url} exceeded ${ms}ms — responding 503`);
+      // Log req.path (already computed above as `p`) not req.originalUrl, so a
+      // query-string secret/token can't leak into logs on a timeout.
+      console.error(`[request-timeout] ${req.method} ${p} exceeded ${ms}ms — responding 503`);
       try {
         res.status(503).json({ error: 'Request timed out' });
       } catch (_) {

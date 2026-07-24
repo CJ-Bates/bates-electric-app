@@ -136,7 +136,7 @@ router.get('/leads', async (req, res) => {
     res.json({ leads });
   } catch (err) {
     console.error('[generator-care] list leads error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -154,7 +154,7 @@ router.get('/leads/:id', async (req, res) => {
     res.json({ lead: data });
   } catch (err) {
     console.error('[generator-care] get lead error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -199,7 +199,7 @@ router.post('/leads', async (req, res) => {
     res.json({ ok: true, lead: data });
   } catch (err) {
     console.error('[generator-care] create lead error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -268,7 +268,7 @@ router.patch('/leads/:id', async (req, res) => {
     res.json({ ok: true, lead: data });
   } catch (err) {
     console.error('[generator-care] update lead error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -291,7 +291,7 @@ router.delete('/leads/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[generator-care] delete lead error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -343,7 +343,7 @@ router.post('/leads/:id/send-signup', async (req, res) => {
         emailError = 'The email could not be sent \u2014 copy the link and send it yourself.';
         reportError(
           new Error(`signup-link email send failed for lead ${lead.id} to ${lead.customer_email}: ${(result && result.reason) || 'unknown'}`),
-          { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }
+          { route: req.path, method: req.method, user: req.profile && req.profile.email }
         ).catch(() => {});
       }
     }
@@ -362,7 +362,7 @@ router.post('/leads/:id/send-signup', async (req, res) => {
     res.json({ ok: true, url, emailed, email_error: emailError, lead: updated || lead });
   } catch (err) {
     console.error('[generator-care] send-signup error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -487,7 +487,7 @@ router.post('/leads/send-invites', async (req, res) => {
       } catch (err) {
         failed++;
         console.error('[generator-care] send-invites lead error:', err && err.message);
-        reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+        reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
       }
     }
 
@@ -495,7 +495,7 @@ router.post('/leads/send-invites', async (req, res) => {
     res.json({ sent, skipped, failed });
   } catch (err) {
     console.error('[generator-care] send-invites error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -534,7 +534,7 @@ router.post('/leads/:id/convert', async (req, res) => {
     res.json({ ok: true, lead: data });
   } catch (err) {
     console.error('[generator-care] convert lead error:', err && err.message);
-    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    reportError(err, { route: req.path, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     res.status(500).json({ error: 'Server error' });
   }
 });

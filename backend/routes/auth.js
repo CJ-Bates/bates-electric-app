@@ -48,6 +48,10 @@ function isOfficeDomainEmail(email) {
   return !!email && email.toLowerCase().trim().endsWith('@bates-electric.com');
 }
 
+function isTechDomainEmail(email) {
+  return !!email && /\.bateselectric@gmail\.com$/.test(email.toLowerCase().trim());
+}
+
 // POST /auth/signup  { email, password, full_name?, phone? }
 router.post('/signup', strictAuthLimiter, async (req, res) => {
   const { email, password, full_name, phone } = req.body || {};
@@ -66,6 +70,17 @@ router.post('/signup', strictAuthLimiter, async (req, res) => {
     return res.status(403).json({
       error:
         'Office accounts are created by invitation. Ask an administrator to invite you from the Members page \u2014 you\u2019ll get a set-password email.',
+    });
+  }
+  // Tech accounts are also provisioned office-side (POST /api/generator-care/techs
+  // -> admin.createUser + set-password email), so the tech gmail domain never
+  // self-signs-up either. Without this, the dot-insensitivity of Gmail let anyone
+  // register e.g. acme.bateselectric@gmail.com and self-grant role='tech'. The
+  // signup trigger (migration 030) enforces the same rule at the DB layer.
+  if (isTechDomainEmail(email)) {
+    return res.status(403).json({
+      error:
+        'Technician accounts are created by the office. Ask an administrator to add you from the Members / Techs page \u2014 you\u2019ll get a set-password email.',
     });
   }
   if (!allowedBatesEmail(email)) {
