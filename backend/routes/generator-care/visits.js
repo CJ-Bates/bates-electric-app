@@ -12,6 +12,8 @@ const { arrivalWindow, arrivalWindowLabel } = require('../../lib/generator-catal
 const { sendEmail, buildVisitScheduledEmail, DASHBOARD_URL } = require('../../lib/emails');
 const { sendSms, buildBookingConfirmationSms } = require('../../lib/sms');
 const { reportError } = require('../../middleware/error-reporter');
+// Tighter limiter for the email-sending endpoint in this file.
+const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
 
 const router = express.Router();
 
@@ -25,6 +27,19 @@ function planLabelFor(plan) {
 router.post('/visits/:id/complete', async (req, res) => {
   try {
     const { notes, internal_note, addons_performed, technician_id } = req.body || {};
+    // Audit integrity: technician_id becomes the recorded actor, so a
+    // client-supplied value must be a real, active tech (mirrors the /assign
+    // route). An unknown/inactive/non-tech id is rejected rather than trusted.
+    if (technician_id) {
+      const { data: tech, error: techErr } = await supabaseAdmin
+        .from('profiles')
+        .select('id, role, active')
+        .eq('id', technician_id)
+        .single();
+      if (techErr || !tech) return res.status(400).json({ error: 'tech not found' });
+      if (tech.role !== 'tech') return res.status(400).json({ error: 'that user is not a tech' });
+      if (tech.active === false) return res.status(400).json({ error: 'that tech is deactivated' });
+    }
     const result = await completeServiceVisit({
       visitId: req.params.id,
       completedDate: (req.body && req.body.completed_date) || null,
@@ -52,7 +67,7 @@ router.post('/visits/:id/complete', async (req, res) => {
 // intended seam for a future SMS confirmation/reminder (NOT built here).
 // Office-gated; the actor is recorded (not hard-coded), so a future
 // field-tech role could reuse this endpoint without a rewrite.
-router.post('/visits/:id/schedule', async (req, res) => {
+router.post('/visits/:id/schedule', sensitiveLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { appointment_at, arrival_window } = req.body || {};

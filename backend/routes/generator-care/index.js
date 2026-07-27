@@ -6,12 +6,17 @@
 
 const express = require('express');
 const { requireAuth, requireRole } = require('../../middleware/auth');
+const { makeGeneralLimiter } = require('../../middleware/limiters');
 
 const router = express.Router();
 
 // All routes require office role — applied ONCE here, before every sub-router,
 // exactly as the monolith's single router.use() did.
 router.use(requireAuth, requireRole('office'));
+
+// Generous abuse backstop over the whole office API (reads + writes). The
+// tighter money/email limiter is applied per-route in the sub-routers below.
+router.use(makeGeneralLimiter());
 
 // Sub-routers mount at the router root and keep their full unchanged paths
 // (e.g. '/subscriptions/:id/change-plan'). No two routes share a method +

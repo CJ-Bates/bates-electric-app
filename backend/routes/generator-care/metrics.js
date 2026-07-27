@@ -4,6 +4,7 @@
 
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
+const { requirePermission } = require('../../middleware/permissions');
 const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
@@ -112,7 +113,9 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const INVITED_STATUSES = ['signup_sent', 'converted'];
 const CONTACTED_STATUSES = ['contacted', 'signup_sent', 'converted'];
 
-router.get('/metrics', async (req, res) => {
+// Revenue/ARR/plan-mix/conversion data — same sensitivity as the accounting
+// endpoints, so it requires the same flag (was office-role only).
+router.get('/metrics', requirePermission('accounting'), async (req, res) => {
   try {
     const toStr = isYmd(req.query.to) ? req.query.to : todayYmd();
     const fromStr = isYmd(req.query.from) ? req.query.from : ymdMonthsAgo(toStr, 12);

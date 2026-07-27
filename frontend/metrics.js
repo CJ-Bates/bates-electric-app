@@ -50,6 +50,14 @@
 
   // ---- Helpers ----
   const $ = (id) => document.getElementById(id);
+  // SEC-P1 §5: escape server-derived labels before they hit innerHTML. Values
+  // are constrained today (addon_type/gen_class/source), so this is defense in
+  // depth for consistency. BatesUI.escapeHtml is loaded on the host page.
+  const esc = (s) => (window.BatesUI && window.BatesUI.escapeHtml)
+    ? window.BatesUI.escapeHtml(s)
+    : String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const fmtInt = (n) => (n || 0).toLocaleString('en-US');
   const fmtMoneyWhole = (cents) =>
     '$' + Math.round((cents || 0) / 100).toLocaleString('en-US');
@@ -283,7 +291,7 @@
         const meta = SOURCE_META[s.source] || { label: s.source, color: '--neutral' };
         const w = Math.max(3, Math.round(100 * s.rate / maxRate));
         return `<div class="m-hbar">
-          <span class="nm" title="${fmtInt(s.converted)} of ${fmtInt(s.invited)} invited">${meta.label}</span>
+          <span class="nm" title="${fmtInt(s.converted)} of ${fmtInt(s.invited)} invited">${esc(meta.label)}</span>
           <div class="track"><div class="fill" style="width:${w}%;background:var(${meta.color});"></div></div>
           <span class="pct">${fmtPct(s.rate)}</span>
         </div>`;
@@ -357,7 +365,7 @@
         const share = p.count / activeCount;
         const w = Math.max(3, Math.round(100 * share / maxShare));
         return `<div class="m-hbar">
-          <span class="nm" title="${fmtInt(p.count)} sub${p.count === 1 ? '' : 's'}">${p.label}</span>
+          <span class="nm" title="${fmtInt(p.count)} sub${p.count === 1 ? '' : 's'}">${esc(p.label)}</span>
           <div class="track"><div class="fill" style="width:${w}%;background:var(--money);"></div></div>
           <span class="pct">${fmtPct(share)}</span>
         </div>`;
@@ -453,7 +461,7 @@
       options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } },
     });
     legendEl.innerHTML = mix.map((p, i) => `
-      <div class="row"><span class="dot" style="background:${colors[i]};"></span><b>${fmtPct(p.count / total)}</b> ${p.label}</div>`).join('');
+      <div class="row"><span class="dot" style="background:${colors[i]};"></span><b>${fmtPct(p.count / total)}</b> ${esc(p.label)}</div>`).join('');
   }
 
   // ---- Init ----

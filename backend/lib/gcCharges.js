@@ -25,6 +25,36 @@ const {
 const addonLabel = (t) =>
   (catalog.ADDON_CATALOG[t] && catalog.ADDON_CATALOG[t].label) || (t || 'add-on').replace(/_/g, ' ');
 
+// SEC-P1 §2: server-side backstops on a single charge. This is a fat-finger /
+// abuse guard set FAR above any real field ticket or office ad-hoc charge — NOT
+// a workflow limit (CJ wanted no cap on the tech's custom-charge UX). The same
+// ceiling also caps a whole per-visit cart total. Env-overridable.
+const MAX_CHARGE_CENTS = Number(process.env.MAX_CHARGE_CENTS) || 1000000; // $10,000
+const MAX_DESCRIPTION_LEN = 200;
+
+// Human dollar string for the ceiling, used in 400 messages (e.g. "$10,000").
+function maxChargeDollars() {
+  return '$' + Math.round(MAX_CHARGE_CENTS / 100).toLocaleString('en-US');
+}
+
+// Cap + tidy a customer-facing charge description before it reaches Stripe, the
+// DB, or receipt HTML. Trims and hard-caps length; never returns null.
+function sanitizeChargeDescription(desc) {
+  return String(desc == null ? '' : desc).trim().slice(0, MAX_DESCRIPTION_LEN);
+}
+
+// Returns a 400 error string if `cents` is not a valid single charge amount at
+// or below the ceiling, else null. Shared by both charge entry points.
+function chargeAmountError(cents) {
+  if (!Number.isInteger(cents) || cents <= 0) {
+    return 'amount_cents must be a positive integer';
+  }
+  if (cents > MAX_CHARGE_CENTS) {
+    return `Amount exceeds the ${maxChargeDollars()} per-charge maximum. Split it into separate charges or contact the office.`;
+  }
+  return null;
+}
+
 // The current OPEN visit new/active add-on rows belong to (the cycle): earliest
 // not-completed, not-canceled visit; null if none. Shared by the office
 // add-addon route and the tech menu/add/standing endpoints so every surface
@@ -50,6 +80,12 @@ async function chargeAdhocImmediate({
   subscriptionId, description, amountCents,
   serviceVisitId = null, datePerformed = null, technicianId = null,
 }) {
+  // Backstop: no caller (present or future) may exceed the ceiling, and the
+  // description is capped before it touches Stripe/DB/receipt.
+  const amountErr = chargeAmountError(amountCents);
+  if (amountErr) return { ok: false, status: 400, error: amountErr };
+  const safeDescription = sanitizeChargeDescription(description);
+
   const { data: sub, error: subErr } = await supabaseAdmin
     .from('generator_subscriptions')
     .select('id, stripe_subscription_id, stripe_customer_id, status, customer:generator_customers(name, email)')
@@ -62,7 +98,7 @@ async function chargeAdhocImmediate({
   const today = new Date().toISOString().slice(0, 10);
   const customerName = (sub.customer && sub.customer.name) || 'customer';
   const customerEmail = (sub.customer && sub.customer.email) || null;
-  const stripeDescription = 'Bates Electric: ' + description.trim();
+  const stripeDescription = 'Bates Electric: ' + safeDescription;
 
   // 1. Insert the row first as 'pending' (insert-then-charge idempotency: a
   //    crash after this point leaves an auditable row, never an untracked charge).
@@ -71,7 +107,7 @@ async function chargeAdhocImmediate({
     .insert({
       subscription_id: subscriptionId,
       service_visit_id: serviceVisitId || null,
-      description: description.trim(),
+      description: safeDescription,
       amount_cents: amountCents,
       billing_method: 'immediate',
       status: 'pending',
@@ -349,6 +385,16 @@ async function chargeVisitCart({ subscriptionId, serviceVisitId }) {
   ];
   const totalCents = lineItems.reduce((s, l) => s + l.amount_cents, 0);
 
+  // Backstop: a whole-cart total above the ceiling is a fat-finger/abuse signal,
+  // not a real visit. Reject before charging (individual customs are capped at
+  // insert; this guards their sum).
+  if (totalCents > MAX_CHARGE_CENTS) {
+    return {
+      ok: false, status: 400,
+      error: `This visit's charges total more than the ${maxChargeDollars()} maximum. Review the line items or contact the office.`,
+    };
+  }
+
   // 1. Card check first (don't disturb renewal items if there's no card).
   const pmId = await resolveSavedPaymentMethod(sub.stripe_subscription_id, sub.stripe_customer_id);
   if (!pmId) {
@@ -429,4 +475,8 @@ module.exports = {
   getVisitCartCharges,
   getOpenVisitId,
   addonLabel,
+  // SEC-P1 §2 charge bounds (shared with the two charge entry points):
+  MAX_CHARGE_CENTS,
+  sanitizeChargeDescription,
+  chargeAmountError,
 };

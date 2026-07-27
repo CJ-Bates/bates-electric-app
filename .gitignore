@@ -1,0 +1,22 @@
+# Repo-root ignores (SEC-P1 §6). backend/ keeps its own .gitignore too; this
+# covers the root and any other subtree (e.g. frontend/) so a stray secret or
+# dependency folder can't be committed from outside backend/.
+
+# Secrets — never commit any env file
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

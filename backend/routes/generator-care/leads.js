@@ -15,6 +15,8 @@ const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { sendEmail, buildSignupLinkEmail, buildEnrollmentInviteEmail, BRAND, CONTACT_TYPES } = require('../../lib/emails');
 const { reportError } = require('../../middleware/error-reporter');
+// Tighter limiter for the email-sending endpoints in this file.
+const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
 
 const router = express.Router();
 
@@ -120,9 +122,16 @@ router.get('/leads', async (req, res) => {
       if (source) query = query.eq('source', source);
       if (month) query = query.eq('maintenance_month', month);
       if (q) {
-        // PostgREST .or() parses commas/parens as syntax — strip them from the
-        // needle rather than 400ing on names like "Smith, John".
-        const needle = String(q).replace(/[,()]/g, ' ').trim();
+        // Neutralize BOTH layers before interpolating the needle:
+        //   * PostgREST .or() parses , ( ) as syntax — strip them (rather than
+        //     400ing on names like "Smith, John").
+        //   * SQL LIKE treats \ % _ as wildcards — escape them so the text is
+        //     matched literally. Without this a search for "%" returned every
+        //     row, and an underscore in an email matched any character.
+        const needle = String(q)
+          .replace(/[,()]/g, ' ')
+          .replace(/[\\%_]/g, '\\$&')
+          .trim();
         if (needle) {
           query = query.or(`customer_name.ilike.%${needle}%,customer_email.ilike.%${needle}%`);
         }
@@ -305,7 +314,7 @@ router.delete('/leads/:id', async (req, res) => {
 // No granular requirePermission, same basis as the rest of this file: sends
 // a public signup URL to a prospect — no money moved, no Stripe object
 // created, no existing customer's data touched.
-router.post('/leads/:id/send-signup', async (req, res) => {
+router.post('/leads/:id/send-signup', sensitiveLimiter, async (req, res) => {
   try {
     const { data: lead, error } = await supabaseAdmin
       .from('generator_leads')
@@ -387,7 +396,7 @@ router.post('/leads/:id/send-signup', async (req, res) => {
 // No granular requirePermission, same basis as the rest of this file: emails
 // prospects a public signup URL — no money moved, no Stripe object created,
 // no existing customer's data touched. The 100-id cap bounds the blast radius.
-router.post('/leads/send-invites', async (req, res) => {
+router.post('/leads/send-invites', sensitiveLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const ids = body.lead_ids;

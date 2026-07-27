@@ -14,8 +14,13 @@
 const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { reportError } = require('../middleware/error-reporter');
+const { makePublicLimiter } = require('../middleware/limiters');
 
 const router = express.Router();
+
+// Public + unauthenticated, and it performs a DB write (email_opt_out), so it
+// gets an anti-enumeration limiter like the other public routes.
+const publicLimiter = makePublicLimiter();
 
 // Minimal branded confirmation page. Standalone (no app shell/auth), inline
 // styles only, light/dark via prefers-color-scheme. No emoji.
@@ -70,7 +75,7 @@ function unsubscribePage() {
 // the lead already opted out and just re-renders the page (opt_out_at keeps
 // its original timestamp). Unknown/missing token still shows the neutral
 // confirmation — never an error that reveals whether the token existed.
-router.get('/unsubscribe', async (req, res) => {
+router.get('/unsubscribe', publicLimiter, async (req, res) => {
   try {
     const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
     if (token) {

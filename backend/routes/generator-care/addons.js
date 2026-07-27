@@ -15,6 +15,8 @@ const {
   findChargedRowPaymentIntent,
 } = require('../../lib/gcShared');
 const { chargePerformedAddonsForSub, getOpenVisitId } = require('../../lib/gcCharges');
+// Tighter limiter for the money-moving endpoints in this file.
+const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
 
 const router = express.Router();
 
@@ -61,7 +63,7 @@ router.post('/addons/:id/mark-performed', requirePermission('billing_actions'), 
 // line item per add-on -> one payment -> one itemized state-branded receipt + one
 // Accounting entry). Any pending at-renewal invoice items are DELETED first so
 // nothing is billed twice. Office-gated; IDOR via optional customer_id.
-router.post('/subscriptions/:id/charge-performed-addons', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/charge-performed-addons', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     // The whole flow lives in the shared charge core (lib/gcCharges.js) — the
     // SAME code path the tech on-site "Charge now" uses. Responses unchanged.
@@ -133,7 +135,7 @@ router.post('/addons/:id/unmark-performed', requirePermission('billing_actions')
 // Body: { amount_cents?, reason? }
 // amount_cents omitted = full refund. Stripe supports multiple partial refunds
 // up to the original total; we don't enforce that here -- Stripe will reject.
-router.post('/addons/:id/refund', requirePermission('refunds'), async (req, res) => {
+router.post('/addons/:id/refund', sensitiveLimiter, requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
     const { amount_cents, reason } = req.body || {};
@@ -243,7 +245,7 @@ router.get('/subscriptions/:id/available-addons', async (req, res) => {
 // Body: { addon_type }
 // (Open-visit resolution now lives in lib/gcCharges.js getOpenVisitId, shared
 // with the tech add/standing endpoints so every surface picks the same cycle.)
-router.post('/subscriptions/:id/add-addon', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/add-addon', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { addon_type } = req.body || {};

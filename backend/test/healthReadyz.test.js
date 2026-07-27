@@ -64,6 +64,8 @@ test('/readyz returns 503 — promptly — when the DB ping hangs', async () => 
   const res = makeRes();
   await readyz(makeReq(), res);
   assert.equal(res.statusCode, 503, 'a stuck DB ping must fail readiness');
-  assert.match(res.body.error, /timed out/);
+  // SEC-P1 §6: the raw driver/timeout detail is logged, not returned — the
+  // unauthenticated caller only sees a generic message (no dependency leak).
+  assert.equal(res.body.error, 'dependency check failed');
   assert.ok(Date.now() - started < 2000, 'must fail at the timeout, not hang');
 });

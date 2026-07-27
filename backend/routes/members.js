@@ -18,10 +18,16 @@ const {
   ALL_FLAGS,
 } = require('../middleware/permissions');
 const { sendEmail, sendSetPasswordEmail, DASHBOARD_URL } = require('../lib/emails');
+const { makeGeneralLimiter, makeSensitiveLimiter } = require('../middleware/limiters');
 
 const router = express.Router();
 
 router.use(requireAuth, requireRole('office'), requireAdmin);
+
+// Generous abuse backstop over the whole admin API; the tighter limiter below
+// guards the invite/resend endpoints that send email.
+router.use(makeGeneralLimiter());
+const sensitiveLimiter = makeSensitiveLimiter();
 
 function isOfficeEmail(email) {
   return !!email && /@bates-electric\.com$/i.test(String(email).trim());
@@ -92,7 +98,7 @@ router.get('/', async (req, res) => {
 // trigger accepts), create the auth user (the trigger inserts the office
 // profile + default permissions), and email a set-password link — the same
 // flow techs get. The office never sets the password.
-router.post('/invite', async (req, res) => {
+router.post('/invite', sensitiveLimiter, async (req, res) => {
   try {
     const name = ((req.body && req.body.name) || '').trim();
     const email = ((req.body && req.body.email) || '').trim().toLowerCase();
@@ -145,7 +151,7 @@ router.post('/invite', async (req, res) => {
 });
 
 // POST /api/members/:id/resend-invite — resend the set-password link (office).
-router.post('/:id/resend-invite', async (req, res) => {
+router.post('/:id/resend-invite', sensitiveLimiter, async (req, res) => {
   try {
     const { data: member, error } = await supabaseAdmin
       .from('profiles')
@@ -347,7 +353,7 @@ router.patch('/customers/:id', async (req, res) => {
 // POST /api/members/customers/:id/resend-signin — email the customer their
 // portal sign-in instructions via Brevo. No server-side magic-link generation:
 // the portal itself emails the link when they enter their address.
-router.post('/customers/:id/resend-signin', async (req, res) => {
+router.post('/customers/:id/resend-signin', sensitiveLimiter, async (req, res) => {
   try {
     const { data: customer, error } = await supabaseAdmin
       .from('profiles')

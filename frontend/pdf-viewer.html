@@ -198,10 +198,16 @@
       document.getElementById('pdfjs-container').style.display = 'block';
       renderPdfInline();
 
-      function loadScript(src) {
+      function loadScript(src, integrity) {
         return new Promise(function(resolve, reject) {
           var s = document.createElement('script');
           s.src = src;
+          // SEC-P1 §5: pin the CDN payload with Subresource Integrity so a
+          // compromised/altered cdnjs file is rejected by the browser.
+          if (integrity) {
+            s.integrity = integrity;
+            s.crossOrigin = 'anonymous';
+          }
           s.onload = resolve;
           s.onerror = function() { reject(new Error('Failed to load ' + src)); };
           document.head.appendChild(s);
@@ -213,8 +219,10 @@
         var pagesEl = document.getElementById('pdfjs-pages');
         var containerEl = document.getElementById('pdfjs-container');
         var pdfJsBase = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+        // cdnjs-published SRI for pdf.js 3.11.174 (api.cdnjs.com/libraries/pdf.js).
+        var PDFJS_SRI = 'sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==';
 
-        loadScript(pdfJsBase + 'pdf.min.js').then(function() {
+        loadScript(pdfJsBase + 'pdf.min.js', PDFJS_SRI).then(function() {
           window['pdfjs-dist/build/pdf'].GlobalWorkerOptions.workerSrc =
             pdfJsBase + 'pdf.worker.min.js';
           var pdfjsLib = window['pdfjs-dist/build/pdf'];

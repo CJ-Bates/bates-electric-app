@@ -18,6 +18,9 @@ const { reportError } = require('../../middleware/error-reporter');
 
 const router = express.Router();
 
+// Tighter limiter for this email-sending endpoint.
+const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
+
 // POST /api/generator-care/admin/send-test-email
 // Renders one of the customer-facing templates with fixture data and sends
 // it to the supplied address. Lets us visually verify templates before
@@ -100,7 +103,7 @@ function buildTestTemplate(template) {
   return null;
 }
 
-router.post('/admin/send-test-email', async (req, res) => {
+router.post('/admin/send-test-email', sensitiveLimiter, async (req, res) => {
   try {
     const { template, to } = req.body || {};
     if (!template || !TEST_EMAIL_TEMPLATES.includes(template)) {
@@ -108,6 +111,12 @@ router.post('/admin/send-test-email', async (req, res) => {
     }
     if (!to || typeof to !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to.trim())) {
       return res.status(400).json({ error: 'to must be a valid email address' });
+    }
+    // This tool renders Bates-branded templates with fixture data; it must not
+    // become an open relay to arbitrary inboxes. Restrict delivery to the
+    // company domain (office members preview to their own @bates-electric.com).
+    if (!/@bates-electric\.com$/i.test(to.trim())) {
+      return res.status(400).json({ error: 'Test emails can only be sent to a @bates-electric.com address.' });
     }
     const built = buildTestTemplate(template);
     if (!built) {

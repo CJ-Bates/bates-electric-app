@@ -14,7 +14,9 @@ const {
   findChargedRowPaymentIntent,
   resolveInvoiceCharge,
 } = require('../../lib/gcShared');
-const { chargeAdhocImmediate } = require('../../lib/gcCharges');
+const { chargeAdhocImmediate, chargeAmountError, sanitizeChargeDescription } = require('../../lib/gcCharges');
+// Tighter limiter for the money-moving endpoints in this file.
+const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
 
 const router = express.Router();
 
@@ -23,7 +25,7 @@ const router = express.Router();
 // Body: { description, amount_cents, billing_method: 'immediate' | 'renewal', service_visit_id?, date_performed? }
 // 'immediate': charges the saved card now via PaymentIntent (off-session).
 // 'renewal':   adds a Stripe invoice item that bills at next subscription renewal.
-router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/adhoc-charge', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { description, amount_cents, billing_method, service_visit_id, date_performed } = req.body || {};
@@ -32,12 +34,16 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
     if (!description || !description.trim()) {
       return res.status(400).json({ error: 'description required' });
     }
-    if (!amount_cents || !Number.isInteger(amount_cents) || amount_cents <= 0) {
-      return res.status(400).json({ error: 'amount_cents must be a positive integer' });
+    // Positive integer AND at/below the per-charge ceiling (SEC-P1 §2).
+    const amountErr = chargeAmountError(amount_cents);
+    if (amountErr) {
+      return res.status(400).json({ error: amountErr });
     }
     if (!['immediate', 'renewal'].includes(billing_method)) {
       return res.status(400).json({ error: "billing_method must be 'immediate' or 'renewal'" });
     }
+    // Cap the free-text description before it reaches Stripe/DB/receipt HTML.
+    const safeDescription = sanitizeChargeDescription(description);
 
     // 'immediate' runs through the shared charge core (lib/gcCharges.js) — the
     // SAME code path the tech on-site charge uses, so field and office charges
@@ -79,7 +85,7 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
     const today = new Date().toISOString().slice(0, 10);
     const performedDate = date_performed || today;
     const customerName = (sub.customer && sub.customer.name) || 'customer';
-    const stripeDescription = 'Bates Electric: ' + description.trim();
+    const stripeDescription = 'Bates Electric: ' + safeDescription;
 
     // Insert the row first as 'pending'
     const { data: row, error: insErr } = await supabaseAdmin
@@ -87,7 +93,7 @@ router.post('/subscriptions/:id/adhoc-charge', requirePermission('billing_action
       .insert({
         subscription_id: id,
         service_visit_id: service_visit_id || null,
-        description: description.trim(),
+        description: safeDescription,
         amount_cents,
         billing_method,
         status: 'pending',
@@ -198,7 +204,7 @@ router.post('/adhoc-charges/:id/cancel', requirePermission('billing_actions'), a
 // POST /api/generator-care/adhoc-charges/:id/refund
 // Body: { amount_cents?, reason? }
 // amount_cents omitted = full refund.
-router.post('/adhoc-charges/:id/refund', requirePermission('refunds'), async (req, res) => {
+router.post('/adhoc-charges/:id/refund', sensitiveLimiter, requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
     const { amount_cents, reason } = req.body || {};
@@ -278,7 +284,7 @@ router.post('/adhoc-charges/:id/refund', requirePermission('refunds'), async (re
 // amount_cents omitted = full refund of the remaining (un-refunded) balance.
 // NOTE: refunding an invoice does NOT cancel the subscription — they're
 // independent actions (the customer keeps their plan unless separately canceled).
-router.post('/invoices/:invoiceId/refund', requirePermission('refunds'), async (req, res) => {
+router.post('/invoices/:invoiceId/refund', sensitiveLimiter, requirePermission('refunds'), async (req, res) => {
   try {
     const { invoiceId } = req.params;
     const { amount_cents, reason } = req.body || {};
