@@ -18,7 +18,7 @@ const magicShortlinkRouter = require('./routes/magic-shortlink');
 const healthRouter = require('./routes/health');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
 const { createRequestTimeout } = require('./middleware/request-timeout');
-const { requireAuth } = require('./middleware/auth');
+const { requireAuth, requireRole } = require('./middleware/auth');
 const { CONTACTS_DIRECTORY } = require('./lib/contactsDirectory');
 
 // Initialize Sentry as early as possible, gated on the env var so it's a no-op
@@ -90,10 +90,11 @@ app.get('/config', (req, res) => {
   });
 });
 
-// Internal team directory for the Contacts page. Any authenticated user
-// (office or tech) may read it; it is deliberately NOT in the static HTML so
-// names/emails aren't public. Data lives in lib/contactsDirectory.js.
-app.get('/contacts-directory', requireAuth, (req, res) => {
+// Internal team directory for the Contacts page. STAFF only (office or tech) —
+// customer-role portal accounts must not read internal names/emails. It is also
+// deliberately NOT in the static HTML so names/emails aren't public. Data lives
+// in lib/contactsDirectory.js.
+app.get('/contacts-directory', requireAuth, requireRole('office', 'tech'), (req, res) => {
   res.json({ directory: CONTACTS_DIRECTORY });
 });
 

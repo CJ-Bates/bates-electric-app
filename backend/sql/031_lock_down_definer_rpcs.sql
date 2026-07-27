@@ -1,0 +1,59 @@
+-- 031_lock_down_definer_rpcs.sql
+-- Stop PostgREST from exposing SECURITY DEFINER helper functions as public RPCs.
+-- Run manually in the Supabase SQL Editor (idempotent — safe to re-run).
+-- No app code depends on this migration; it only narrows EXECUTE grants.
+--
+-- WHY: PostgreSQL grants EXECUTE to PUBLIC on every new function by default, and
+-- Supabase exposes any callable (non-trigger) function at /rest/v1/rpc/<name>.
+-- member_has_permission(uuid, text) (014) is SECURITY DEFINER and takes a profile
+-- UID + a flag name, so an UNAUTHENTICATED caller who knows or guesses a profile
+-- UUID can probe is_admin and every permission flag:
+--   POST /rest/v1/rpc/member_has_permission {"uid":"<uuid>","flag":"accounting"}
+-- Read-only reconnaissance (no write path), but it should not be reachable by the
+-- anon/authenticated roles. Nothing in the app calls this RPC from the browser —
+-- the backend evaluates permissions in JS under the service role
+-- (backend/middleware/permissions.js); the SQL helper exists only for RLS policies,
+-- which run as the table owner and are unaffected by these REVOKEs.
+--
+-- AUDIT of the other SECURITY DEFINER functions (why each is or isn't revoked):
+--   * member_has_permission(uuid, text) — REVOKED below. Definer, callable, leaks flags.
+--   * bates_role_for_email(text)        — REVOKED below. Not SECURITY DEFINER, but a
+--        callable helper with no legitimate public-RPC use. It only pattern-matches an
+--        email domain to a role string (no DB access, no secret), so exposure was
+--        low-value; revoking tidies the reconnaissance surface. Its callers
+--        (handle_new_user, enforce_signup_domain) are SECURITY DEFINER and run as the
+--        owner, so they keep working.
+--   * current_role()                    — DELIBERATELY LEFT ALONE. It is SECURITY
+--        DEFINER *and referenced inside RLS policies* (e.g. "profiles self read",
+--        001). RLS policy expressions execute with the privileges of the querying
+--        role, so `authenticated` MUST retain EXECUTE or every policy that calls
+--        current_role() would fail and break normal signed-in reads. Do not revoke.
+--   * handle_new_user(), enforce_signup_domain(), touch_updated_at() — trigger
+--        functions (RETURNS trigger). PostgREST does not expose trigger-returning
+--        functions as RPC, and triggers fire regardless of EXECUTE grants. No action.
+--
+-- After running, record it in the ledger (see backend/sql/README.md):
+--   insert into public.schema_migrations (id) values ('031_lock_down_definer_rpcs.sql') on conflict do nothing;
+--
+-- VERIFY after running (expected values in comments):
+--   -- (a) member_has_permission is no longer executable by anon/authenticated
+--   select coalesce(bool_or(grantee in ('anon','authenticated')), false) as still_public
+--     from information_schema.role_routine_grants
+--    where routine_schema = 'public' and routine_name = 'member_has_permission';   -- expect f
+--   -- (b) bates_role_for_email likewise
+--   select coalesce(bool_or(grantee in ('anon','authenticated')), false) as still_public
+--     from information_schema.role_routine_grants
+--    where routine_schema = 'public' and routine_name = 'bates_role_for_email';     -- expect f
+--   -- (c) current_role is STILL executable by authenticated (RLS depends on it)
+--   select bool_or(grantee = 'authenticated') as authenticated_can_exec
+--     from information_schema.role_routine_grants
+--    where routine_schema = 'public' and routine_name = 'current_role';             -- expect t
+
+-- ============================================================================
+-- Revoke public execute on the two callable helpers that don't need it.
+-- Signatures must match exactly (revoke is per-overload).
+-- ============================================================================
+revoke execute on function public.member_has_permission(uuid, text) from anon, authenticated;
+revoke execute on function public.bates_role_for_email(text)        from anon, authenticated;
+
+-- current_role() is intentionally NOT revoked — see the AUDIT note above.

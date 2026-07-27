@@ -5,7 +5,7 @@
 // Auth (requireAuth + office role) is applied by ./index.js.
 
 const express = require('express');
-const { requirePermission } = require('../../middleware/permissions');
+const { requirePermission, effectivePermissions } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const catalog = require('../../lib/generator-catalog');
 const { sendReceiptEmail } = require('../../lib/receipts');
@@ -22,6 +22,8 @@ const { sendEmail, buildWelcomeEmail, buildCancellationEmail } = require('../../
 const { normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, upsertSimpleTextingContact, CONSENT_TEXT } = require('../../lib/sms');
 const planChange = require('../../lib/planChange');
 const { buildAddonMenu, openVisitIdFrom } = require('../../lib/addonMenu');
+// Tighter limiter for the money-moving + email-sending endpoints in this file.
+const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
 
 const router = express.Router();
 
@@ -570,7 +572,7 @@ router.get('/billing-snapshot', async (req, res) => {
 // current price through the period end, then starts the new price/interval. If
 // Fleet Monitoring is attached, its price is swapped to the matching cadence too
 // (Stripe can't mix billing intervals in one subscription).
-router.post('/subscriptions/:id/change-plan', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/change-plan', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { new_plan } = req.body || {};
@@ -738,7 +740,7 @@ router.get('/subscriptions/:id/fleet-preview', async (req, res) => {
 // invoicing the proration NOW (charges the card on file) and aligning Fleet to the
 // existing renewal date. Body: { customer_id?, proration_date? } — proration_date
 // is echoed from fleet-preview so the charge equals the previewed amount exactly.
-router.post('/subscriptions/:id/add-fleet', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/add-fleet', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { customer_id, proration_date } = req.body || {};
@@ -772,7 +774,7 @@ router.post('/subscriptions/:id/add-fleet', requirePermission('billing_actions')
 // no refund — fleet stays active through the paid period, then drops off). Mirrors
 // the change-plan "at renewal" pattern; undo via revert-plan-change (release).
 // Body: { customer_id? } (IDOR guard).
-router.post('/subscriptions/:id/remove-fleet', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/remove-fleet', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     const { id } = req.params;
     const { customer_id } = req.body || {};
@@ -864,7 +866,7 @@ router.post('/subscriptions/:id/tier-change-preview', async (req, res) => {
 // with proration_behavior:'none' (no time-proration line). Cadence + Fleet are
 // unchanged. Persists gen_class. The charged amount equals the catalog delta the
 // preview showed.
-router.post('/subscriptions/:id/tier-change', requirePermission('billing_actions'), async (req, res) => {
+router.post('/subscriptions/:id/tier-change', sensitiveLimiter, requirePermission('billing_actions'), async (req, res) => {
   try {
     const loaded = await loadTierChangeRow(req, res);
     if (!loaded) return;
@@ -896,7 +898,7 @@ router.post('/subscriptions/:id/tier-change', requirePermission('billing_actions
 // amount/date/last-4/description/receipt number; branded by the customer's CURRENT
 // install_state; sent to their CURRENT email). Does NOT resend a Stripe-hosted
 // invoice. Office-gated; ownership-checked.
-router.post('/subscriptions/:id/resend-receipt', async (req, res) => {
+router.post('/subscriptions/:id/resend-receipt', sensitiveLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { invoice_id } = req.body || {};
@@ -948,6 +950,16 @@ router.patch('/subscriptions/:id', requirePermission('customer_edit'), async (re
   try {
     const { id } = req.params;
     const { next_visit_due, status, notes, gen_model, gen_serial, customer_id } = req.body || {};
+
+    // Changing `status` is a billing-state change (e.g. flipping canceled->active
+    // with no Stripe mutation), so it needs billing_actions — not the lighter
+    // customer_edit this route runs on. Other fields stay under customer_edit.
+    if (status !== undefined) {
+      const perms = effectivePermissions(req.profile, req._memberPermRow || null);
+      if (perms.billing_actions !== true) {
+        return res.status(403).json({ error: 'Changing subscription status requires billing permission. Ask an administrator.' });
+      }
+    }
 
     // Build update payload (only include fields user actually passed)
     const updates = {};
@@ -1122,7 +1134,7 @@ router.post('/customers/:id/sms-consent', requirePermission('customer_edit'), as
 // Cancel subscription at the end of the current billing period.
 // Customer keeps service through paid-through date; Stripe stops auto-renewal.
 // DB marks 'canceled' with optional reason in notes.
-router.post('/subscriptions/:id/cancel', requirePermission('refunds'), async (req, res) => {
+router.post('/subscriptions/:id/cancel', sensitiveLimiter, requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body || {};
@@ -1278,7 +1290,7 @@ router.post('/subscriptions/:id/portal-session', requirePermission('billing_acti
 // it to the customer on file. Same template that fires from
 // customer.subscription.created. Useful when a customer says they never got
 // the original or accidentally deleted it.
-router.post('/subscriptions/:id/resend-welcome', async (req, res) => {
+router.post('/subscriptions/:id/resend-welcome', sensitiveLimiter, async (req, res) => {
   try {
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')

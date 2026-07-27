@@ -2,14 +2,21 @@ const express = require('express');
 const archiver = require('archiver');
 const { sendViaBrevo } = require('../lib/mailer');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { buildInspectionPdf } = require('../lib/buildPdf');
 const { SECTIONS, UPSELL_ITEMS, JOB_FIELDS } = require('../lib/inspectionFields');
+const { makeGeneralLimiter, makeSensitiveLimiter } = require('../middleware/limiters');
 
 const PHOTOS_BUCKET = 'inspection-photos';
 const PDF_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 const router = express.Router();
+
+// Generous abuse backstop over all inspection routes. The tighter limiter below
+// guards the PDF/zip-generating and email-sending endpoints (outbound-reputation
+// and CPU/cost surface).
+router.use(makeGeneralLimiter());
+const sensitiveLimiter = makeSensitiveLimiter();
 
 // Inspection report emails go out via Brevo. The From must be on a Brevo-
 // authenticated domain (bates-electric.com), so we use no-reply@bates-electric.com
@@ -68,7 +75,10 @@ function validateInspectionData(data) {
 }
 
 // POST /inspections  { data: {...}, status?: 'draft' | 'submitted' }
-router.post('/', requireAuth, async (req, res) => {
+// STAFF only: creating an inspection sends a Bates-branded email to a
+// client-supplied job_email, so customer-role portal accounts must not reach it
+// (RLS migration 032 enforces the same role check at the data layer).
+router.post('/', requireAuth, requireRole('office', 'tech'), sensitiveLimiter, async (req, res) => {
   const { data, status } = req.body || {};
   if (!data || typeof data !== 'object') {
     return res.status(400).json({ error: 'Missing form data' });
@@ -97,7 +107,7 @@ router.post('/', requireAuth, async (req, res) => {
 
   if (error) {
     console.error('inspection insert failed', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Server error' });
   }
 
   // Generate the PDF, upload it to storage, and email it (best-effort).
@@ -119,8 +129,11 @@ router.post('/', requireAuth, async (req, res) => {
         .split(',').map(s => s.trim()).filter(Boolean);
 
       const toAddresses = [...officeRecipients];
-      if (custEmail && custEmail.trim()) {
-        toAddresses.push(custEmail.trim());
+      // Only add the client-supplied recipient when it's a well-formed address,
+      // so a malformed/spoofed job_email can't inject a bad To or break the send.
+      const trimmedCust = custEmail.trim();
+      if (trimmedCust && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedCust)) {
+        toAddresses.push(trimmedCust);
       }
 
       const sendResult = await sendViaBrevo({
@@ -302,7 +315,10 @@ router.get('/', requireAuth, async (req, res) => {
   }
 
   const { data, error } = await q;
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('inspections list failed', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
 
   // Resolve technician_id -> display name so the dashboard doesn't show raw
   // UUIDs. Admin client is fine here: it only reads names for rows RLS already
@@ -330,7 +346,7 @@ router.get('/', requireAuth, async (req, res) => {
 // GET /inspections/:id/files
 // Returns signed URLs for the report PDF and every photo in the bucket.
 // Regenerates the PDF on the fly if it's missing (covers older inspections).
-router.get('/:id/files', requireAuth, async (req, res) => {
+router.get('/:id/files', requireAuth, sensitiveLimiter, async (req, res) => {
   const inspectionId = req.params.id;
 
   // Verify caller can read this inspection (RLS does the work).
@@ -390,12 +406,12 @@ router.get('/:id/files', requireAuth, async (req, res) => {
     res.json({ pdfUrl: pdfSigned.signedUrl, photos });
   } catch (err) {
     console.error('files endpoint failed', err);
-    res.status(500).json({ error: err.message || 'Failed to gather files' });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
 // GET /inspections/:id/photos.zip  — streams a zip of all photos.
-router.get('/:id/photos.zip', requireAuth, async (req, res) => {
+router.get('/:id/photos.zip', requireAuth, sensitiveLimiter, async (req, res) => {
   const inspectionId = req.params.id;
 
   const userClient = supabaseForUser(req.token);
@@ -447,7 +463,7 @@ router.get('/:id/photos.zip', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('zip endpoint failed', err);
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message || 'Failed to build zip' });
+      res.status(500).json({ error: 'Server error' });
     } else {
       try { res.end(); } catch (_) {}
     }
@@ -465,7 +481,8 @@ router.get('/:id', requireAuth, async (req, res) => {
 
   if (error) {
     if (error.code === 'PGRST116') return res.status(404).json({ error: 'Not found' });
-    return res.status(500).json({ error: error.message });
+    console.error('inspection read failed', error);
+    return res.status(500).json({ error: 'Server error' });
   }
   res.json({ inspection: data });
 });
@@ -496,7 +513,10 @@ router.patch('/:id', requireAuth, async (req, res) => {
     .select()
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('inspection update failed', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
   res.json({ inspection: data });
 });
 
@@ -510,7 +530,8 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
   if (error) {
     if (error.code === 'PGRST116') return res.status(404).json({ error: 'Not found' });
-    return res.status(500).json({ error: error.message });
+    console.error('inspection delete failed', error);
+    return res.status(500).json({ error: 'Server error' });
   }
   res.json({ ok: true });
 });

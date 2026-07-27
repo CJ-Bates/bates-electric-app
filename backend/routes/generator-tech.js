@@ -16,11 +16,16 @@ const { completeServiceVisit, generateStandingAddons } = require('../lib/complet
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
 const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
 const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon, planVisitItems } = require('../lib/generator-catalog');
-const { chargeVisitCart, getVisitCartCharges } = require('../lib/gcCharges');
+const { chargeVisitCart, getVisitCartCharges, chargeAmountError, sanitizeChargeDescription } = require('../lib/gcCharges');
 const { buildAddonMenu } = require('../lib/addonMenu');
 const { reportError } = require('../middleware/error-reporter');
+const { makeGeneralLimiter, makeSensitiveLimiter } = require('../middleware/limiters');
 
 const router = express.Router();
+
+// Tighter limiter for the money/email endpoints (charge, schedule, perform,
+// enroll); the generous general limiter covers everything else (see below).
+const sensitiveLimiter = makeSensitiveLimiter();
 
 // Internal notifications (tech reschedules) go to the office role mailbox —
 // same recipient convention as the daily digest cron.
@@ -105,6 +110,10 @@ async function assignedVisit(req, extraCols) {
 // Auth + tech role for everything here. (Deactivated accounts are already
 // rejected in requireAuth via profiles.active.)
 router.use(requireAuth, requireRole('tech'));
+
+// Generous abuse backstop over the whole tech API (reads + writes); a tech
+// working a full day of visits never approaches it.
+router.use(makeGeneralLimiter());
 
 // Curated visit shape: what a tech needs in the field, nothing about billing.
 const TECH_VISIT_SELECT = `
@@ -285,7 +294,7 @@ router.post('/my-visits/:id/complete', async (req, res) => {
 // so the office audit line reads "Booked by <tech>". Sends a plain INTERNAL
 // email to the office mailbox; deliberately NO customer email in this phase.
 // ============================================================================
-router.post('/my-visits/:id/schedule', requirePermission('tech_reschedule'), async (req, res) => {
+router.post('/my-visits/:id/schedule', sensitiveLimiter, requirePermission('tech_reschedule'), async (req, res) => {
   try {
     const { appointment_at, arrival_window } = req.body || {};
     if (!appointment_at) return res.status(400).json({ error: 'appointment_at (date + time) is required' });
@@ -472,7 +481,7 @@ router.get('/my-visits/:id/addons', async (req, res) => {
 // Body: { undo? } — undo reverts performed -> pending (only while unbilled).
 // Actor recorded in performed_by. Billing state (charged/canceled) is
 // untouchable from this endpoint.
-router.post('/my-visits/:id/addons/:addonId/perform', async (req, res) => {
+router.post('/my-visits/:id/addons/:addonId/perform', sensitiveLimiter, async (req, res) => {
   try {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
@@ -803,13 +812,20 @@ router.post('/my-visits/:id/custom-charges', async (req, res) => {
     if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
       return res.status(400).json({ error: 'Amount must be a positive dollar amount.' });
     }
+    // Fat-finger/abuse backstop above any real field ticket (SEC-P1 §2). CJ
+    // wanted no cap on the tech UX for normal amounts — this only trips on a
+    // wildly out-of-range number, far above any legitimate charge.
+    const amountErr = chargeAmountError(amount_cents);
+    if (amountErr) {
+      return res.status(400).json({ error: amountErr });
+    }
 
     const { data: row, error: insErr } = await supabaseAdmin
       .from('generator_adhoc_charges')
       .insert({
         subscription_id: visit.subscription_id,
         service_visit_id: visit.id,
-        description: String(description).trim(),
+        description: sanitizeChargeDescription(description),
         amount_cents,
         billing_method: 'immediate',
         status: 'pending',
@@ -864,7 +880,7 @@ router.delete('/my-visits/:id/custom-charges/:chargeId', async (req, res) => {
 // itemized receipt, via the shared chargeVisitCart core. Replaces the
 // Phase-1 per-group charge buttons. A successful charge emails the office
 // with every line + the total.
-router.post('/my-visits/:id/charge', async (req, res) => {
+router.post('/my-visits/:id/charge', sensitiveLimiter, async (req, res) => {
   try {
     const visit = await assignedVisit(req);
     if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
@@ -942,7 +958,7 @@ const ENROLL_FIELDS = [
 // send_email:true (and an email on file) the existing FL-aware signup-link
 // email goes out too; a failed send still returns the URL — the QR is the
 // headline and must never be blocked on a mail hiccup.
-router.post('/enroll', async (req, res) => {
+router.post('/enroll', sensitiveLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const row = { source: 'field', status: 'new' };

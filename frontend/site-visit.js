@@ -11,6 +11,22 @@ const EMAILJS_TEMPLATE_ID = 'template_j94dma6';
 const EMAILJS_PUBLIC_KEY = 'DeDPpeJ2O4A0B17_E';
 const OFFICE_EMAIL = 'cjbates@bates-electric.com';
 
+// SEC-P1 §5: escape every free-text value (all of these are read raw from
+// localStorage, written straight from form inputs) before it reaches innerHTML
+// or an email HTML body. BatesUI.escapeHtml is loaded by ui-dialogs.js ahead of
+// this file (see site-visit.html); the local fallback ensures a load-order
+// change can never silently disable escaping.
+var svEscape = (window.BatesUI && window.BatesUI.escapeHtml) || function (s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+};
+// Only trust Cloudinary-hosted media URLs in href/src — blocks javascript:,
+// data:, and any attacker-controlled origin. Returns '' when not trusted.
+function svSafeMediaUrl(u) {
+  return (typeof u === 'string' && /^https:\/\/res\.cloudinary\.com\//.test(u)) ? u : '';
+}
+
 // Photo prompts
 const SV_PHOTO_PROMPTS = [
   {id: 'main-panel', label: 'Main Electrical Panel', sub: 'Full panel door open, label visible, all breakers showing'},
@@ -325,11 +341,13 @@ function svSubmit() {
     photoRows += '<tr><td colspan="2" style="padding: 8px 10px 2px; font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; border-top: 1px solid #eef1f8;">' + p.label + '</td></tr><tr><td colspan="2" style="padding: 2px 10px 10px;">';
 
     files.forEach(function(f) {
+      var url = svSafeMediaUrl(f.url);
+      if (!url) return; // skip anything not on the Cloudinary origin
       if (f.type === 'image') {
-        var tUrl = f.url.indexOf('/upload/') > -1 ? f.url.replace('/upload/', '/upload/c_fill,w_200,h_150,a_exif/') : f.url;
-        photoRows += '<a href="' + f.url + '" target="_blank"><img src="' + tUrl + '" style="width: 100px; height: 75px; border-radius: 6px; margin: 2px; display: block;"></a> ';
+        var tUrl = url.indexOf('/upload/') > -1 ? url.replace('/upload/', '/upload/c_fill,w_200,h_150,a_exif/') : url;
+        photoRows += '<a href="' + url + '" target="_blank"><img src="' + tUrl + '" style="width: 100px; height: 75px; border-radius: 6px; margin: 2px; display: block;"></a> ';
       } else {
-        photoRows += '<a href="' + f.url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none; margin: 2px;">Video</a> ';
+        photoRows += '<a href="' + url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none; margin: 2px;">Video</a> ';
       }
     });
 
@@ -337,13 +355,14 @@ function svSubmit() {
   });
 
   sub.extras.forEach(function(f) {
-    photoRows += '<tr><td colspan="2" style="padding: 8px 10px 2px; font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; border-top: 1px solid #eef1f8;">' + (f.label || 'Additional') + '</td></tr><tr><td colspan="2" style="padding: 2px 10px 10px;">';
+    photoRows += '<tr><td colspan="2" style="padding: 8px 10px 2px; font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; border-top: 1px solid #eef1f8;">' + svEscape(f.label || 'Additional') + '</td></tr><tr><td colspan="2" style="padding: 2px 10px 10px;">';
 
-    if (f.type === 'image') {
-      var tUrl2 = f.url.indexOf('/upload/') > -1 ? f.url.replace('/upload/', '/upload/c_fill,w_200,h_150,a_exif/') : f.url;
-      photoRows += '<a href="' + f.url + '" target="_blank"><img src="' + tUrl2 + '" style="width: 100px; height: 75px; border-radius: 6px; margin: 2px; display: block;"></a>';
-    } else {
-      photoRows += '<a href="' + f.url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none;">Video</a>';
+    var url = svSafeMediaUrl(f.url);
+    if (url && f.type === 'image') {
+      var tUrl2 = url.indexOf('/upload/') > -1 ? url.replace('/upload/', '/upload/c_fill,w_200,h_150,a_exif/') : url;
+      photoRows += '<a href="' + url + '" target="_blank"><img src="' + tUrl2 + '" style="width: 100px; height: 75px; border-radius: 6px; margin: 2px; display: block;"></a>';
+    } else if (url) {
+      photoRows += '<a href="' + url + '" target="_blank" style="display: inline-block; padding: 4px 10px; background: #1E3A6E; color: #fff; border-radius: 6px; font-size: 11px; text-decoration: none;">Video</a>';
     }
 
     photoRows += '</td></tr>';
@@ -353,23 +372,23 @@ function svSubmit() {
     + '<div style="max-width: 640px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);">'
     + '<div style="background: #1a2b5e; padding: 22px 24px;"><div style="font-size: 20px; font-weight: 900; color: #fff;">BATES ELECTRIC</div><div style="font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 3px; letter-spacing: 0.3px;">SITE VISIT &mdash; ESTIMATE REQUEST</div></div>'
     + '<div style="background: #f4f6fb; padding: 14px 24px; border-bottom: 2px solid #dce3f0;"><table width="100%" cellpadding="4" cellspacing="0"><tr>'
-    + '<td><span style="font-size: 10px; color: #888; text-transform: uppercase; display: block;">Date</span><span style="font-size: 13px; color: #1a2b5e; font-weight: 700;">' + date + '</span></td>'
-    + '<td><span style="font-size: 10px; color: #888; text-transform: uppercase; display: block;">Technician</span><span style="font-size: 13px; color: #1a2b5e; font-weight: 700;">' + tech + '</span></td>'
+    + '<td><span style="font-size: 10px; color: #888; text-transform: uppercase; display: block;">Date</span><span style="font-size: 13px; color: #1a2b5e; font-weight: 700;">' + svEscape(date) + '</span></td>'
+    + '<td><span style="font-size: 10px; color: #888; text-transform: uppercase; display: block;">Technician</span><span style="font-size: 13px; color: #1a2b5e; font-weight: 700;">' + svEscape(tech) + '</span></td>'
     + '<td><span style="font-size: 10px; color: #888; text-transform: uppercase; display: block;">Files</span><span style="font-size: 13px; color: #1a2b5e; font-weight: 700;">' + totalFiles + ' uploaded</span></td>'
     + '</tr></table></div>'
     + '<div style="padding: 16px 24px;">'
     + '<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 16px;">'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888; width: 35%;">Customer</td><td style="padding: 5px 0; font-size: 13px; color: #1a2b5e; font-weight: 600;">' + customer + (sub.phone ? ' &nbsp; ' + sub.phone : '') + '</td></tr>'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Address</td><td style="padding: 5px 0; font-size: 13px; color: #1a2b5e; font-weight: 600;">' + address + '</td></tr>'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Property</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + (sub.propType || '--') + (sub.year ? ', built ' + sub.year : '') + '</td></tr>'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Services</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + (scopes.join(', ') || '--') + '</td></tr>'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Panel</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + (sub.amps || '--') + (sub.panelBrand ? ', ' + sub.panelBrand : '') + '</td></tr>'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Complexity</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + (sub.complexity || '--') + '</td></tr>'
-    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Follow-up</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + sub.followup + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888; width: 35%;">Customer</td><td style="padding: 5px 0; font-size: 13px; color: #1a2b5e; font-weight: 600;">' + svEscape(customer) + (sub.phone ? ' &nbsp; ' + svEscape(sub.phone) : '') + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Address</td><td style="padding: 5px 0; font-size: 13px; color: #1a2b5e; font-weight: 600;">' + svEscape(address) + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Property</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + svEscape(sub.propType || '--') + (sub.year ? ', built ' + svEscape(sub.year) : '') + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Services</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + (scopes.length ? scopes.map(svEscape).join(', ') : '--') + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Panel</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + svEscape(sub.amps || '--') + (sub.panelBrand ? ', ' + svEscape(sub.panelBrand) : '') + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Complexity</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + svEscape(sub.complexity || '--') + '</td></tr>'
+    + '<tr><td style="padding: 5px 0; font-size: 12px; color: #888;">Follow-up</td><td style="padding: 5px 0; font-size: 13px; color: #333;">' + svEscape(sub.followup) + '</td></tr>'
     + '</table>'
-    + (sub.scopeDesc ? '<div style="margin-bottom: 12px;"><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; border-left: 3px solid #c8960c; padding-left: 8px;">Work Description</div><div style="font-size: 13px; color: #333; line-height: 1.6; background: #f8f9fc; padding: 10px 12px; border-radius: 6px;">' + sub.scopeDesc.replace(/\n/g, '<br>') + '</div></div>' : '')
-    + (sub.access ? '<div style="margin-bottom: 12px;"><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; border-left: 3px solid #c8960c; padding-left: 8px;">Access &amp; Site Notes</div><div style="font-size: 13px; color: #333; line-height: 1.6; background: #f8f9fc; padding: 10px 12px; border-radius: 6px;">' + sub.access.replace(/\n/g, '<br>') + '</div></div>' : '')
-    + (sub.notes ? '<div style="margin-bottom: 12px;"><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; border-left: 3px solid #c8960c; padding-left: 8px;">Tech Notes</div><div style="font-size: 13px; color: #333; line-height: 1.6; background: #f8f9fc; padding: 10px 12px; border-radius: 6px;">' + sub.notes.replace(/\n/g, '<br>') + '</div></div>' : '')
+    + (sub.scopeDesc ? '<div style="margin-bottom: 12px;"><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; border-left: 3px solid #c8960c; padding-left: 8px;">Work Description</div><div style="font-size: 13px; color: #333; line-height: 1.6; background: #f8f9fc; padding: 10px 12px; border-radius: 6px;">' + svEscape(sub.scopeDesc).replace(/\n/g, '<br>') + '</div></div>' : '')
+    + (sub.access ? '<div style="margin-bottom: 12px;"><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; border-left: 3px solid #c8960c; padding-left: 8px;">Access &amp; Site Notes</div><div style="font-size: 13px; color: #333; line-height: 1.6; background: #f8f9fc; padding: 10px 12px; border-radius: 6px;">' + svEscape(sub.access).replace(/\n/g, '<br>') + '</div></div>' : '')
+    + (sub.notes ? '<div style="margin-bottom: 12px;"><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; border-left: 3px solid #c8960c; padding-left: 8px;">Tech Notes</div><div style="font-size: 13px; color: #333; line-height: 1.6; background: #f8f9fc; padding: 10px 12px; border-radius: 6px;">' + svEscape(sub.notes).replace(/\n/g, '<br>') + '</div></div>' : '')
     + (photoRows ? '<div><div style="font-size: 11px; font-weight: 700; color: #1a2b5e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; border-left: 3px solid #c8960c; padding-left: 8px;">Photos &amp; Videos</div><table width="100%" style="border-collapse: collapse;">' + photoRows + '</table></div>' : '<div style="font-size: 13px; color: #888;">No photos uploaded.</div>')
     + '</div><div style="background: #0d1526; padding: 14px 20px; text-align: center;"><div style="font-size: 13px; font-weight: 700; color: #c8960c;">BATES ELECTRIC, INC.</div><div style="font-size: 11px; color: rgba(255, 255, 255, 0.45);">P.O. Box 100, Imperial, MO 63052 &nbsp;|&nbsp; 636.464.3939</div></div>'
     + '</div></body></html>';
@@ -509,10 +528,12 @@ function svLoadDashboard() {
 
       var thumbs = '';
       allFiles.slice(0, 5).forEach(function(f) {
+        var url = svSafeMediaUrl(f.url);
+        if (!url) return; // skip anything not on the Cloudinary origin
         if (f.type === 'image') {
-          thumbs += '<a href="' + f.url + '" target="_blank"><img class="sv-dash-thumb-img" src="' + f.url + '"></a>';
+          thumbs += '<a href="' + url + '" target="_blank"><img class="sv-dash-thumb-img" src="' + url + '"></a>';
         } else {
-          thumbs += '<a href="' + f.url + '" target="_blank" class="sv-dash-thumb-vid"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:3px;flex-shrink:0"><polygon points="8 5 19 12 8 19 8 5"/></svg>Vid</a>';
+          thumbs += '<a href="' + url + '" target="_blank" class="sv-dash-thumb-vid"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:3px;flex-shrink:0"><polygon points="8 5 19 12 8 19 8 5"/></svg>Vid</a>';
         }
       });
 
@@ -523,14 +544,14 @@ function svLoadDashboard() {
       var card = document.createElement('div');
       card.className = 'sv-dash-card';
       card.innerHTML = '<div class="sv-dash-card-head">'
-        + '<div><div class="sv-dash-customer">' + sub.customer + '</div>'
-        + '<div class="sv-dash-address">' + sub.address + '</div></div>'
-        + '<div class="sv-dash-meta"><div class="sv-dash-date">' + sub.date + '</div><div class="sv-dash-tech">' + sub.tech + '</div></div>'
+        + '<div><div class="sv-dash-customer">' + svEscape(sub.customer) + '</div>'
+        + '<div class="sv-dash-address">' + svEscape(sub.address) + '</div></div>'
+        + '<div class="sv-dash-meta"><div class="sv-dash-date">' + svEscape(sub.date) + '</div><div class="sv-dash-tech">' + svEscape(sub.tech) + '</div></div>'
         + '</div>'
-        + (sub.scopes && sub.scopes.length ? '<div class="sv-dash-scopes">' + (sub.scopes || []).join(' &bull; ') + '</div>' : '')
+        + (sub.scopes && sub.scopes.length ? '<div class="sv-dash-scopes">' + (sub.scopes || []).map(svEscape).join(' &bull; ') + '</div>' : '')
         + (thumbs ? '<div class="sv-dash-thumbs">' + thumbs + '</div>' : '')
         + '<div class="sv-dash-footer">'
-        + '<div class="sv-dash-file-count">' + totalFiles + ' file' + (totalFiles === 1 ? '' : 's') + (sub.complexity ? ' &bull; ' + sub.complexity : '') + '</div>'
+        + '<div class="sv-dash-file-count">' + totalFiles + ' file' + (totalFiles === 1 ? '' : 's') + (sub.complexity ? ' &bull; ' + svEscape(sub.complexity) : '') + '</div>'
         + (sub.followup === 'Yes' ? '<span class="sv-dash-followup">Follow-up needed</span>' : '')
         + '</div>';
 

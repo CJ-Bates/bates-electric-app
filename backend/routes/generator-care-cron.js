@@ -2,6 +2,7 @@
 // Scheduled / cron endpoints for the Generator Care program.
 // Hit by an external scheduler  -  protected by a shared secret instead of user JWT.
 
+const crypto = require('crypto');
 const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendViaBrevo } = require('../lib/mailer');
@@ -31,12 +32,21 @@ function pingHealthcheck(suffix = '') {
     .catch((e) => console.error('[gc-cron] healthcheck ping failed:', e && e.message));
 }
 
+// Constant-time secret compare (avoids leaking the secret via response timing).
+// Length-guarded because timingSafeEqual throws on unequal-length buffers.
+function secretsMatch(provided, expected) {
+  const a = Buffer.from(String(provided == null ? '' : provided));
+  const b = Buffer.from(String(expected == null ? '' : expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // Bearer-token auth for cron endpoints
 function requireCronSecret(req, res, next) {
  if (!CRON_SECRET) return res.status(500).json({ error: 'CRON_SECRET not configured on server' });
  const header = req.headers.authorization || '';
  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
- if (token !== CRON_SECRET) return res.status(401).json({ error: 'Invalid cron secret' });
+ if (!secretsMatch(token, CRON_SECRET)) return res.status(401).json({ error: 'Invalid cron secret' });
  next();
 }
 

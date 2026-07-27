@@ -22,8 +22,13 @@
 const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { withTimeout } = require('../lib/asyncGuards');
+const { makePublicLimiter } = require('../middleware/limiters');
 
 const router = express.Router();
+
+// /readyz runs a DB query per hit, so give it a light limiter (generous for
+// Render's periodic prober, blocks a flood). /health is static and stays open.
+const readyzLimiter = makePublicLimiter();
 
 router.get('/health', (req, res) => {
   res.json({
@@ -32,7 +37,7 @@ router.get('/health', (req, res) => {
   });
 });
 
-router.get('/readyz', async (req, res) => {
+router.get('/readyz', readyzLimiter, async (req, res) => {
   const ms = Number(process.env.READYZ_TIMEOUT_MS) || 4000;
   try {
     // Cheapest possible dependency check: one indexed row from a table that
@@ -46,8 +51,10 @@ router.get('/readyz', async (req, res) => {
     if (error) throw new Error(error.message || 'db error');
     res.json({ status: 'ready', timestamp: new Date().toISOString() });
   } catch (e) {
+    // Log the real driver detail; return a generic message to unauthenticated
+    // callers so the underlying DB/driver error text isn't leaked.
     console.error('[readyz] dependency check failed:', (e && e.message) || e);
-    res.status(503).json({ status: 'not ready', error: (e && e.message) || 'dependency check failed' });
+    res.status(503).json({ status: 'not ready', error: 'dependency check failed' });
   }
 });
 
