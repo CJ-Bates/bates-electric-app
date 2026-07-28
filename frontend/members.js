@@ -151,7 +151,8 @@
       const data = await api('/api/members/invite', {
         method: 'POST', headers: authHeaders(true), body: JSON.stringify({ name, email }),
       });
-      showStatus(data.warning || `Invited ${name}. They'll get a set-password email.`, data.warning ? 'warning' : 'success');
+      if (data.warning) showStatus(data.warning, 'warning');
+      else openSuccessFlash({ title: 'Member invited', message: `Invited ${name}. They'll get a set-password email.` });
       document.getElementById('new-staff-name').value = '';
       document.getElementById('new-staff-email').value = '';
       await refresh();
@@ -224,7 +225,9 @@
       await api(`/api/members/${id}`, {
         method: 'PATCH', headers: authHeaders(true), body: JSON.stringify({ active }),
       });
-      showStatus(active ? 'Member reactivated.' : 'Member deactivated.', 'success');
+      openSuccessFlash(active
+        ? { title: 'Member reactivated', message: 'They can sign in again.' }
+        : { title: 'Member deactivated', message: "They can't sign in until reactivated." });
       await refresh();
     } catch (e) {
       showStatus(`Failed: ${e.message}`, 'error');
@@ -281,7 +284,8 @@
       const data = await api('/api/generator-care/techs', {
         method: 'POST', headers: authHeaders(true), body: JSON.stringify({ name, email }),
       });
-      showStatus(data.warning || `Invited ${name}. They'll get a set-password email.`, data.warning ? 'warning' : 'success');
+      if (data.warning) showStatus(data.warning, 'warning');
+      else openSuccessFlash({ title: 'Tech invited', message: `Invited ${name}. They'll get a set-password email.` });
       document.getElementById('new-tech-name').value = '';
       document.getElementById('new-tech-email').value = '';
       await refresh();
@@ -295,7 +299,9 @@
       await api(`/api/generator-care/techs/${id}`, {
         method: 'PATCH', headers: authHeaders(true), body: JSON.stringify({ active }),
       });
-      showStatus(active ? 'Tech reactivated.' : 'Tech deactivated.', 'success');
+      openSuccessFlash(active
+        ? { title: 'Tech reactivated', message: 'They can sign in again.' }
+        : { title: 'Tech deactivated', message: "They can't sign in until reactivated." });
       await refresh();
     } catch (e) {
       showStatus(`Failed: ${e.message}`, 'error');

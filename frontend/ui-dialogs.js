@@ -89,6 +89,40 @@
     });
   }
 
+  // Center-screen success confirmation for CONSEQUENTIAL outcomes — money
+  // moved (charge, refund), a subscription canceled, a plan/tier or Fleet
+  // change, a member invited or deactivated. The corner toast is too easy to
+  // miss for these (a missed outcome has caused real confusion about whether
+  // a refund happened); this puts the confirmation in the middle of the
+  // screen, then gets out of the way: auto-dismisses after ~2.6s, and any
+  // click / Escape / Enter dismisses it sooner. No button, so it never adds a
+  // required click to a workflow. Routine saves (notes, filters, checklist
+  // ticks) should stay on showStatus — don't make the app modal-happy.
+  function openSuccessFlash({ title = 'Done', message = '' } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gc-rd-overlay gc-flash-overlay';
+      overlay.innerHTML = `
+        <div class="gc-rd-panel gc-flash-panel" role="status" aria-live="assertive">
+          <div class="gc-flash-icon" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <h3 class="gc-rd-title gc-flash-title">${escapeHtml(title)}</h3>
+          ${message ? `<div class="gc-rd-sub gc-flash-sub">${escapeHtml(message)}</div>` : ''}
+        </div>`;
+      document.body.appendChild(overlay);
+      let timer;
+      function close() {
+        clearTimeout(timer);
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve();
+      }
+      function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') close(); }
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', close); // anywhere on screen, not just the backdrop
+      timer = setTimeout(close, 2600);
+    });
+  }
+
   // Styled inline prompt dialog (replaces window.prompt, incl. multi-field flows).
   // fields: [{ name, label, type?, value?, placeholder?, options?, required?, step?, min?, inputmode?, hint? }]
   // Resolves a { name: value } object on confirm, or null on cancel.
@@ -218,6 +252,7 @@
   window.openConfirm = openConfirm;
   window.openPrompt = openPrompt;
   window.openAlert = openAlert;
+  window.openSuccessFlash = openSuccessFlash;
   window.openQrDialog = openQrDialog;
   window.showStatus = showStatus;
   window.BatesUI = { escapeHtml };

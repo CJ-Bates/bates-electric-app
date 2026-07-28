@@ -72,6 +72,26 @@ html.dark .gc-rd-overlay { background: rgba(0,0,0,0.45); }
 .gc-rd-note { font-size: var(--fs-xs); line-height: 1.5; color: var(--ink-2); margin: 0 0 16px; }
 .gc-rd-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
+/* Success flash (openSuccessFlash): the center-screen counterpart to the
+   corner toast, reserved for consequential outcomes (charge / refund / cancel
+   subscription / plan-tier-Fleet changes / member invite-deactivate).
+   Auto-dismisses; any click or Esc/Enter closes it sooner. */
+.gc-flash-overlay { cursor: pointer; }
+.gc-flash-panel { max-width: 340px; text-align: center; }
+.gc-flash-icon {
+  width: 52px;
+  height: 52px;
+  margin: 2px auto 12px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gc-flash-title { margin-bottom: 4px; }
+.gc-flash-sub { margin-bottom: 0; }
+
 /* WP6: QR dialog (openQrDialog). The code always sits on a white card —
    scanners need dark-on-light contrast, so no dark-mode variant on purpose
    (the quiet zone is baked into the SVG's margin). */
