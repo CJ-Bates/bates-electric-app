@@ -1296,6 +1296,13 @@
     return paymentIntentId ? `<span class="gc-meta-label" data-invoice-tag-pi="${escapeHtml(paymentIntentId)}" data-row-amount="${amountCents || 0}" data-row-refunded="${refundedCents || 0}"></span>` : '';
   }
 
+  // Shown in place of the Refund control on a charged row with no stored
+  // PaymentIntent: the refund endpoint can't target the payment, so a button
+  // could only error. Rare after the PI backfill script — a row stays
+  // unlinkable only when its invoice item is gone in Stripe or the data was
+  // entered by hand.
+  const UNLINKED_REFUND_NOTE = `<span class="gc-meta-label">Not linked to a payment &mdash; refund in Stripe</span>`;
+
   // Render one add-on row (used for the current cycle + history).
   function addonRowHtml(a) {
     const amtStr = a.amount_cents ? `$${(a.amount_cents/100).toFixed(2)}` : '';
@@ -1322,6 +1329,7 @@
         chip = `<span class="badge badge-ok">Charged ${amtStr}${chargedOn}</span>`;
         action = `<button class="btn btn-ghost btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
       }
+      if (!a.stripe_payment_intent_id && action) action = UNLINKED_REFUND_NOTE;
       chip += invoiceTagSpan(a.stripe_payment_intent_id, a.amount_cents, refunded);
     } else if (a.status === 'failed') {
       chip = `<span class="badge badge-danger">Failed</span>`;
@@ -1382,6 +1390,8 @@
       const refunded = parseTotalRefundedCents(row.notes);
       if (refunded >= row.amount_cents) {
         // fully refunded — chip below says so, no action
+      } else if (!row.stripe_payment_intent_id) {
+        actions.push(UNLINKED_REFUND_NOTE);
       } else {
         actions.push(`<button class="btn btn-ghost btn-sm" data-refund-addon="${row.id}" data-amount="${row.amount_cents}" data-refunded="${refunded}" data-label="${label}">${refunded > 0 ? 'Refund more' : 'Refund'}</button>`);
       }
@@ -1514,6 +1524,7 @@
           chip = `<span class="badge badge-ok">${c.date_charged ? 'Charged ' + escapeHtml(c.date_charged) : 'Charged'}</span>`;
           action = `<button class="btn btn-ghost btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${desc}">Refund</button>`;
         }
+        if (!c.stripe_payment_intent_id && action) action = UNLINKED_REFUND_NOTE;
         chip += invoiceTagSpan(c.stripe_payment_intent_id, c.amount_cents, refunded);
       } else if (c.status === 'failed') {
         chip = `<span class="badge badge-danger">Failed</span>`;
