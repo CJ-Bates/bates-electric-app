@@ -1289,8 +1289,11 @@
   // bundled cart charge (add-on + custom billed as ONE payment) visibly points
   // at the one invoice instead of reading as separate money. Rows with no
   // match (older data, invoice outside the recent 5) keep an empty span.
-  function invoiceTagSpan(paymentIntentId) {
-    return paymentIntentId ? `<span class="gc-meta-label" data-invoice-tag-pi="${escapeHtml(paymentIntentId)}"></span>` : '';
+  // Also carries the row's amount + notes-derived refund so loadStripeData can
+  // reconcile the row's refund state against the invoice charge's ACTUAL
+  // amount_refunded (an invoice-level refund never annotates row notes).
+  function invoiceTagSpan(paymentIntentId, amountCents, refundedCents) {
+    return paymentIntentId ? `<span class="gc-meta-label" data-invoice-tag-pi="${escapeHtml(paymentIntentId)}" data-row-amount="${amountCents || 0}" data-row-refunded="${refundedCents || 0}"></span>` : '';
   }
 
   // Render one add-on row (used for the current cycle + history).
@@ -1319,7 +1322,7 @@
         chip = `<span class="badge badge-ok">Charged ${amtStr}${chargedOn}</span>`;
         action = `<button class="btn btn-ghost btn-sm" data-refund-addon="${a.id}" data-amount="${a.amount_cents}" data-refunded="0" data-label="${label}">Refund</button>`;
       }
-      chip += invoiceTagSpan(a.stripe_payment_intent_id);
+      chip += invoiceTagSpan(a.stripe_payment_intent_id, a.amount_cents, refunded);
     } else if (a.status === 'failed') {
       chip = `<span class="badge badge-danger">Failed</span>`;
       action = `<button class="btn btn-danger-soft btn-sm" data-mark-performed="${a.id}" data-amount="${amtStr}" data-label="${label}">Retry</button>`;
@@ -1394,7 +1397,7 @@
       if (refunded >= row.amount_cents) chip = `<span class="badge badge-neutral">Refunded</span>`;
       else if (refunded > 0) chip = `<span class="badge badge-warn">Partial refund: $${(refunded/100).toFixed(2)}</span>`;
       else chip = `<span class="badge" style="background:var(--ok);color:#fff;">Charged${chargedOn}</span>`;
-      chip += invoiceTagSpan(row.stripe_payment_intent_id);
+      chip += invoiceTagSpan(row.stripe_payment_intent_id, row.amount_cents, refunded);
     }
     const standingTag = (isStanding && (m.status === 'performed' || m.status === 'charged'))
       ? ` <span class="badge badge-info">Every visit</span>`
@@ -1511,7 +1514,7 @@
           chip = `<span class="badge badge-ok">${c.date_charged ? 'Charged ' + escapeHtml(c.date_charged) : 'Charged'}</span>`;
           action = `<button class="btn btn-ghost btn-sm" data-refund-charge="${c.id}" data-amount="${c.amount_cents}" data-refunded="0" data-desc="${desc}">Refund</button>`;
         }
-        chip += invoiceTagSpan(c.stripe_payment_intent_id);
+        chip += invoiceTagSpan(c.stripe_payment_intent_id, c.amount_cents, refunded);
       } else if (c.status === 'failed') {
         chip = `<span class="badge badge-danger">Failed</span>`;
       } else {
@@ -1949,7 +1952,7 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Could not charge: ${data.reason || data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`Charged ${money(data.total_cents)} for ${data.charged_count} add-on${data.charged_count === 1 ? '' : 's'}.`, 'success');
+      openSuccessFlash({ title: 'Charge successful', message: `Charged ${money(data.total_cents)} for ${data.charged_count} add-on${data.charged_count === 1 ? '' : 's'}.` });
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
@@ -2054,7 +2057,7 @@
         const reason = data.reason || data.error || `HTTP ${r.status}`;
         showStatus(`Could not add charge: ${reason}`, 'error');
       } else if (billing_method === 'immediate') {
-        showStatus(`Charged ${amount.toFixed(2)} successfully.`, 'success');
+        openSuccessFlash({ title: 'Charge successful', message: `Charged $${amount.toFixed(2)} to the card on file.` });
       } else {
         showStatus(`Added ${amount.toFixed(2)} to next renewal.`, 'success');
       }
@@ -2220,7 +2223,7 @@
         showStatus(`Cancel failed: ${reason}`, 'error');
       } else {
         const through = data.service_through ? ` Service through ${data.service_through}.` : '';
-        showStatus(`Subscription canceled.${through}`, 'success');
+        openSuccessFlash({ title: 'Subscription canceled', message: `Stripe will not auto-renew.${through}` });
       }
       await loadSubscriptions();
       showDetail(subscriptionId);
@@ -2651,7 +2654,7 @@
       });
       const data = await r.json();
       if (!r.ok) { showStatus(`Couldn't change plan: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`Scheduled switch to ${targetLabel} at renewal (${fmtDate(data.effective_date)}). No charge today.`, 'success');
+      openSuccessFlash({ title: 'Plan change scheduled', message: `Switching to ${targetLabel} at renewal (${fmtDate(data.effective_date)}). No charge today.` });
       showDetail(subscriptionId);
     } catch (e) {
       console.error('change-plan failed:', e);
@@ -2741,7 +2744,7 @@
       });
       const data = await r.json();
       if (!r.ok) { showStatus(`Couldn't add Fleet Monitoring: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus('Fleet Monitoring added — prorated charge billed to the card on file.', 'success');
+      openSuccessFlash({ title: 'Fleet Monitoring added', message: 'Prorated charge billed to the card on file.' });
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (e) {
@@ -2768,7 +2771,7 @@
       });
       const data = await r.json();
       if (!r.ok) { showStatus(`Couldn't remove Fleet Monitoring: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`Fleet Monitoring will end at renewal (${fmtDate(data.effective_date)}).`, 'success');
+      openSuccessFlash({ title: 'Fleet Monitoring removal scheduled', message: `It stays active until renewal (${fmtDate(data.effective_date)}), then drops off. No refund or charge now.` });
       showDetail(subscriptionId);
     } catch (e) {
       console.error('remove-fleet failed:', e);
@@ -2842,7 +2845,7 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Couldn't change tier: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`Changed to ${tierLabel}.`, 'success');
+      openSuccessFlash({ title: 'Tier changed', message: `Changed to ${tierLabel}.` });
       await loadSubscriptions();
       showDetail(subscription.id);
     } catch (e) {
@@ -3015,6 +3018,47 @@
           ? { month: 'short', day: 'numeric' }
           : { month: 'short', day: 'numeric', year: 'numeric' });
         el.innerHTML = ` &middot; on the ${escapeHtml(dateStr)} invoice ($${((inv.amount_paid || 0) / 100).toFixed(2)})`;
+      });
+
+      // Reconcile each charged row's refund state against the invoice charge's
+      // ACTUAL amount_refunded from Stripe. Per-row refunds annotate the row's
+      // notes, but an INVOICE-level refund (or one issued straight from the
+      // Stripe dashboard) doesn't — leaving the row reading "Charged" with a
+      // live Refund link after the money already went back (double-refund
+      // bait). Matching is by the shared PaymentIntent; display-only.
+      invoices.forEach(inv => {
+        if (!inv.payment_intent_id || !(inv.amount_refunded_cents > 0)) return;
+        const spans = Array.from(body.querySelectorAll(`[data-invoice-tag-pi="${CSS.escape(inv.payment_intent_id)}"]`));
+        if (!spans.length) return;
+        const chargeAmount = inv.charge_amount_cents || 0;
+        if (chargeAmount > 0 && inv.amount_refunded_cents >= chargeAmount) {
+          // Whole payment returned -> every row it settled is refunded.
+          spans.forEach(el => {
+            const rowEl = el.closest('.gc-card-row');
+            if (!rowEl) return;
+            const statusBadge = el.parentElement && el.parentElement.querySelector('.badge');
+            if (statusBadge) statusBadge.outerHTML = `<span class="badge badge-neutral">Refunded</span>`;
+            rowEl.querySelectorAll('[data-refund-addon], [data-refund-charge]').forEach(b => b.remove());
+          });
+          return;
+        }
+        // Partially refunded. Refund money the rows already show from their own
+        // notes is accounted for; only an unattributed remainder (i.e. an
+        // invoice-level partial refund) needs surfacing. Which line the money
+        // belongs to is ambiguous, so say so explicitly — never guess a
+        // per-line amount, and keep the Refund control (over-refund attempts
+        // are still blocked server-side).
+        const notesRefunded = spans.reduce((s, el) => s + (parseInt(el.dataset.rowRefunded, 10) || 0), 0);
+        if (inv.amount_refunded_cents <= notesRefunded) return;
+        spans.forEach(el => {
+          const rowEl = el.closest('.gc-card-row');
+          if (!rowEl || rowEl.querySelector('.gc-inv-partial')) return;
+          const rowAmount = parseInt(el.dataset.rowAmount, 10) || 0;
+          const rowRefunded = parseInt(el.dataset.rowRefunded, 10) || 0;
+          if (rowAmount > 0 && rowRefunded >= rowAmount) return; // row already reads Refunded
+          if (el.parentElement) el.parentElement.insertAdjacentHTML('beforeend',
+            ` <span class="badge badge-warn gc-inv-partial">Invoice partially refunded ($${(inv.amount_refunded_cents / 100).toFixed(2)} of $${(chargeAmount / 100).toFixed(2)})</span>`);
+        });
       });
 
       // Refresh the work-order packet with the ACTUAL signup charge (promo-aware)
@@ -3447,7 +3491,7 @@
         await openAlert({ title: 'Refund NOT issued', message: `${label}: ${data.error || `HTTP ${r.status}`}`, danger: true });
         return;
       }
-      showStatus(`Refunded $${(data.amount_cents / 100).toFixed(2)}.`, 'success');
+      openSuccessFlash({ title: 'Refund issued', message: `Refunded $${(data.amount_cents / 100).toFixed(2)} for ${label}.` });
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
@@ -3485,7 +3529,7 @@
         await openAlert({ title: 'Refund NOT issued', message: data.error || `HTTP ${r.status}`, danger: true });
         return;
       }
-      showStatus(`Refunded $${(data.amount_cents / 100).toFixed(2)} to the customer's card.`, 'success');
+      openSuccessFlash({ title: 'Refund issued', message: `Refunded $${(data.amount_cents / 100).toFixed(2)} to the customer's card.` });
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Invoice refund failed:', err);

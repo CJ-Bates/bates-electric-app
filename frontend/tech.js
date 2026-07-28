@@ -1101,7 +1101,7 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
-      else showStatus(`Charged ${money(data.total_cents)} — the customer gets one receipt and the office was notified.`, 'success');
+      else openSuccessFlash({ title: 'Charge successful', message: `Charged ${money(data.total_cents)} — the customer gets one receipt and the office was notified.` });
     } catch (e) {
       console.error('cart charge failed', e);
       showStatus(`Failed: ${e.message}`, 'error');
