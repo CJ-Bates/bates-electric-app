@@ -1,5 +1,6 @@
 const express = require('express');
-const archiver = require('archiver');
+// archiver 8 is ESM-only with class exports; require() needs Node >= 20.19/22.12.
+const { ZipArchive } = require('archiver');
 const { sendViaBrevo } = require('../lib/mailer');
 const { supabaseForUser, supabaseAdmin } = require('../lib/supabase');
 const { requireAuth, requireRole } = require('../middleware/auth');
@@ -437,7 +438,7 @@ router.get('/:id/photos.zip', requireAuth, sensitiveLimiter, async (req, res) =>
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.on('warning', (e) => console.warn('zip warning', e));
     archive.on('error', (e) => {
       console.error('zip error', e);
