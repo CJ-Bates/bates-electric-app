@@ -22,6 +22,56 @@ const { sendEmail } = require('../lib/emails');
 let _sentry = null;
 let _sentryTried = false;
 
+// ============================================================================
+// Sentry event scrubbing. Our own sinks log req.path (never originalUrl), but
+// @sentry/node v8+ auto-instruments incoming HTTP and attaches the FULL
+// request URL + query string to captured events — which would ship webhook
+// shared secrets (?secret= on /api/email/events and /api/sms/inbound) and
+// tokens (?token= on the unsubscribe link) off-site. beforeSend redacts the
+// VALUES of secret-shaped query params and the X-Webhook-Secret header from
+// the event before it leaves the process. Scrubbing must never itself break
+// reporting: any error returns the event as-is rather than dropping it.
+// ============================================================================
+const SECRET_PARAM_RE = /^(secret|token|token_hash|access_token|refresh_token|code|api-?key)$/i;
+
+function scrubSecretParams(s) {
+  if (typeof s !== 'string' || !s) return s;
+  return s.replace(/(\b(?:secret|token|token_hash|access_token|refresh_token|code|api-?key)=)[^&\s"']*/gi, '$1[redacted]');
+}
+
+function scrubSentryEvent(event) {
+  try {
+    const req = event && event.request;
+    if (req) {
+      if (typeof req.url === 'string') req.url = scrubSecretParams(req.url);
+      if (typeof req.query_string === 'string') {
+        req.query_string = scrubSecretParams(req.query_string);
+      } else if (req.query_string && typeof req.query_string === 'object') {
+        for (const k of Object.keys(req.query_string)) {
+          if (SECRET_PARAM_RE.test(k)) req.query_string[k] = '[redacted]';
+        }
+      }
+      if (req.headers && typeof req.headers === 'object') {
+        for (const k of Object.keys(req.headers)) {
+          if (k.toLowerCase() === 'x-webhook-secret') req.headers[k] = '[redacted]';
+        }
+      }
+    }
+    // http breadcrumbs carry URLs too (incoming and outgoing).
+    if (Array.isArray(event && event.breadcrumbs)) {
+      for (const b of event.breadcrumbs) {
+        if (b && b.data) {
+          if (typeof b.data.url === 'string') b.data.url = scrubSecretParams(b.data.url);
+          if (typeof b.data['http.query'] === 'string') b.data['http.query'] = scrubSecretParams(b.data['http.query']);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[error-reporter] Sentry scrub failed (event sent unscrubbed):', (e && e.message) || e);
+  }
+  return event;
+}
+
 // Lazily require + init Sentry. Idempotent. Returns the Sentry module or null.
 // Gated on SENTRY_DSN so it's a no-op until CJ adds the env var in Render.
 function initSentry() {
@@ -30,7 +80,12 @@ function initSentry() {
   if (!process.env.SENTRY_DSN) return null;
   try {
     const Sentry = require('@sentry/node');
-    Sentry.init({ dsn: process.env.SENTRY_DSN });
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      // Strip webhook secrets / tokens from every outbound event (see above).
+      beforeSend: scrubSentryEvent,
+      beforeSendTransaction: scrubSentryEvent,
+    });
     _sentry = Sentry;
     console.log('[error-reporter] Sentry initialized');
   } catch (e) {
@@ -153,3 +208,5 @@ function errorReporter(err, req, res, next) {
 }
 
 module.exports = { errorReporter, reportError, initSentry };
+// Test seam only (offline unit tests).
+module.exports._test = { scrubSentryEvent, scrubSecretParams };

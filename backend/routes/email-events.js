@@ -8,12 +8,16 @@
 //
 // Same security posture as routes/sms-inbound.js: deliberately outside every
 // authed router (Brevo can't hold a session) but NOT open — every request
-// must carry the shared secret in the X-Webhook-Secret header or, because
-// Brevo's webhook config only takes a URL, the ?secret=<EMAIL_WEBHOOK_SECRET>
-// query param. Timing-safe compare, rate-limited, fails closed when the env
-// var isn't set. Handler errors and unmatched message ids still return 200 —
-// a non-2xx makes Brevo retry (up to 24h of storms) and a retry can't fix a
-// code bug.
+// must carry the shared secret. PREFER the X-Webhook-Secret header: Brevo's
+// webhooks API (POST /v3/webhooks) accepts custom headers on the webhook
+// definition, and a header stays out of URLs and anything that captures
+// them. The ?secret=<EMAIL_WEBHOOK_SECRET> query form is the fallback for a
+// webhook created in the Brevo UI, which only takes a URL — and is why
+// middleware/error-reporter.js scrubs secret-shaped query params from every
+// Sentry event (the SDK otherwise attaches full request URLs). Timing-safe
+// compare, rate-limited, fails closed when the env var isn't set. Handler
+// errors and unmatched message ids still return 200 — a non-2xx makes Brevo
+// retry (up to 24h of storms) and a retry can't fix a code bug.
 //
 // Payload (Brevo transactional webhook, one JSON object per POST):
 //   { event: 'delivered' | 'soft_bounce' | 'hard_bounce' | 'blocked' |
