@@ -52,6 +52,14 @@ async function resolveInvoicePaymentIntentId(invoice) {
   }
 }
 
+// The settling charge behind a PaymentIntent (throws on API failure — callers
+// that must not fail wrap it).
+async function retrievePaymentIntentCharge(paymentIntentId) {
+  const pi = await stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] });
+  const ch = pi && pi.latest_charge;
+  return ch && typeof ch === 'object' ? ch : null;
+}
+
 // The settling charge of a paid invoice (amounts/refund state/card), across
 // API generations: legacy expanded invoice.charge -> PaymentIntent's
 // latest_charge. Returns the charge OBJECT or null; never throws.
@@ -61,9 +69,7 @@ async function resolveInvoiceCharge(invoice) {
   const piId = await resolveInvoicePaymentIntentId(invoice);
   if (!piId) return null;
   try {
-    const pi = await stripe.paymentIntents.retrieve(piId, { expand: ['latest_charge'] });
-    const ch = pi && pi.latest_charge;
-    return ch && typeof ch === 'object' ? ch : null;
+    return await retrievePaymentIntentCharge(piId);
   } catch (e) {
     console.error('[gc-shared] latest_charge resolve failed for', invoice.id, '-', e && e.message);
     return null;
@@ -152,6 +158,81 @@ function parseRefundedFromNotes(notes) {
   return total;
 }
 
+// Authoritative refund state for a charged addon/adhoc row. The row's notes
+// only record refunds issued through the per-row endpoints — a refund made at
+// the invoice level or straight from the Stripe dashboard never annotates the
+// row, so the notes figure under-counts in exactly the cases the over-refund
+// guard exists for. Read the actual refunded total off the Stripe charge
+// behind the row's PaymentIntent and use the stricter figure.
+//
+// One Stripe charge can settle SEVERAL rows (a bundled cart = one payment,
+// multiple lines), so charge.amount_refunded is the refund total for the whole
+// PAYMENT, not necessarily this row:
+//   - payment amount <= row amount -> the payment IS this row; the charge's
+//     refunded total is the row's refunded total (never below notes).
+//   - payment amount >  row amount -> bundled; per-row attribution is
+//     ambiguous, so keep the row-attributed notes figure but never allow a
+//     refund past the payment's remaining refundable balance.
+// A Stripe read failure degrades to the notes-only figure (a transient API
+// error must not block a legitimate refund) and logs loudly — degrading can
+// only relax the guard back to its pre-Stripe-check behavior, never below it.
+async function resolveRowRefundState({ paymentIntentId, rowAmountCents, notesRefundedCents }) {
+  const notes = notesRefundedCents || 0;
+  let charge = null;
+  try {
+    charge = await retrievePaymentIntentCharge(paymentIntentId);
+  } catch (e) {
+    console.error('[gc-shared] refund guard could not read the charge for', paymentIntentId,
+      '- degrading to the row-notes figure:', e && e.message);
+  }
+  if (!charge || !Number.isInteger(charge.amount)) {
+    return {
+      stripeChecked: false,
+      bundledPayment: false,
+      alreadyRefundedCents: notes,
+      maxRefundableCents: Math.max(0, rowAmountCents - notes),
+      paymentAmountCents: null,
+      paymentRefundedCents: null,
+    };
+  }
+  const paymentAmountCents = charge.amount;
+  const paymentRefundedCents = charge.amount_refunded || 0;
+  const paymentRemainingCents = Math.max(0, paymentAmountCents - paymentRefundedCents);
+  const bundledPayment = paymentAmountCents > rowAmountCents;
+  const alreadyRefundedCents = bundledPayment ? notes : Math.max(paymentRefundedCents, notes);
+  return {
+    stripeChecked: true,
+    bundledPayment,
+    alreadyRefundedCents,
+    maxRefundableCents: Math.min(Math.max(0, rowAmountCents - alreadyRefundedCents), paymentRemainingCents),
+    paymentAmountCents,
+    paymentRefundedCents,
+  };
+}
+
+// Plain-language 400 message when a refund request exceeds what is still
+// refundable, or null when the request is fine. requestedCents null/undefined
+// means "refund the row's remainder". Malformed amounts (non-integer, <= 0)
+// are left for executeStripeRefund's own validation message.
+function refundBlockedMessage(state, rowAmountCents, requestedCents) {
+  const fmt = (c) => '$' + ((c || 0) / 100).toFixed(2);
+  const refundedSoFar = state.bundledPayment
+    ? fmt(state.paymentRefundedCents) + ' of the original ' + fmt(state.paymentAmountCents)
+      + ' payment has already been refunded (this charge was bundled with others into one payment)'
+    : fmt(state.alreadyRefundedCents) + ' of this ' + fmt(rowAmountCents) + ' charge has already been refunded';
+  if (state.maxRefundableCents <= 0) {
+    return 'already refunded: ' + refundedSoFar + '; nothing is left to refund';
+  }
+  const wanted = (requestedCents === undefined || requestedCents === null)
+    ? Math.max(0, rowAmountCents - state.alreadyRefundedCents)
+    : requestedCents;
+  if (Number.isInteger(wanted) && wanted > state.maxRefundableCents) {
+    return 'refund exceeds the remaining balance: ' + refundedSoFar
+      + '; up to ' + fmt(state.maxRefundableCents) + ' can still be refunded';
+  }
+  return null;
+}
+
 // ---- Send "manage your account" email with portal link ----
 async function sendCardUpdateLinkEmail({ name, email, portalUrl, companyState }) {
   const { subject, html, text } = buildCardUpdateLinkEmail({ name, portalUrl, companyState });
@@ -230,7 +311,10 @@ module.exports = {
   stripe,
   paymentIntentIdFromPayments,
   resolveInvoicePaymentIntentId,
+  retrievePaymentIntentCharge,
   resolveInvoiceCharge,
+  resolveRowRefundState,
+  refundBlockedMessage,
   invoiceLineItems,
   findChargedRowPaymentIntent,
   executeStripeRefund,

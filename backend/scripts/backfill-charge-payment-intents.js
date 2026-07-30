@@ -14,7 +14,8 @@
 //   1. stripe_invoice_item_id -> invoice item -> its invoice. In practice
 //      the charge flows CLEAR the item id when marking a row charged, so
 //      most legacy rows don't have it — kept because it's the direct thread
-//      whenever it does exist.
+//      whenever it does exist. A skip here (e.g. the item was deleted in
+//      Stripe) falls through to thread 2 instead of ending the search.
 //   2. Invoice line metadata: every invoice line these flows create carries
 //      metadata.addon_id / metadata.adhoc_charge_id (it's what the
 //      invoice.paid webhook and the refund self-heal key on), so scan the
@@ -135,7 +136,7 @@ async function invoiceViaItem(row) {
 // Thread 2: the paid invoice whose line metadata names this row.
 async function invoiceViaLineMetadata(row, metadataKey) {
   const stripeCustomerId = row.subscription && row.subscription.stripe_customer_id;
-  if (!stripeCustomerId) return { skip: 'no invoice item and no Stripe customer on the subscription' };
+  if (!stripeCustomerId) return { skip: 'no Stripe customer on the subscription' };
   let invoices;
   try {
     invoices = await listPaidInvoices(stripeCustomerId);
@@ -146,16 +147,25 @@ async function invoiceViaLineMetadata(row, metadataKey) {
     const lines = (inv.lines && inv.lines.data) || [];
     if (lines.some((l) => l && l.metadata && l.metadata[metadataKey] === row.id)) return { invoice: inv, viaMetadata: true };
   }
-  return { skip: 'no invoice item, and no paid invoice line carries this row id in metadata.' + metadataKey };
+  return { skip: 'no paid invoice line carries this row id in metadata.' + metadataKey };
 }
 
 // Resolve one row's PI through Stripe. Returns
 //   { action: 'set', invoiceId, paymentIntentId, thread } or { action: 'skip', reason }.
 // Read-only; never throws (a Stripe hiccup becomes a loud SKIP, not an abort).
 async function resolveRow(row, metadataKey) {
-  const found = row.stripe_invoice_item_id
+  let found = row.stripe_invoice_item_id
     ? await invoiceViaItem(row)
     : await invoiceViaLineMetadata(row, metadataKey);
+  // A row whose invoice item is gone (deleted in Stripe) can still be found by
+  // the line-metadata thread — fall back instead of giving up. When both come
+  // up empty, keep both reasons so the skip stays diagnosable.
+  if (found.skip && row.stripe_invoice_item_id) {
+    const viaMeta = await invoiceViaLineMetadata(row, metadataKey);
+    found = viaMeta.skip
+      ? { skip: found.skip + '; line-metadata fallback: ' + viaMeta.skip }
+      : viaMeta;
+  }
   if (found.skip) return { action: 'skip', reason: found.skip };
   const paymentIntentId = await resolveInvoicePaymentIntentId(found.invoice);
   if (!paymentIntentId) {
