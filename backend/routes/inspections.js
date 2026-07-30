@@ -143,6 +143,7 @@ router.post('/', requireAuth, requireRole('office', 'tech'), sensitiveLimiter, a
         senderName: 'Bates Electric',
         subject: `Bates Electric Safety Inspection — ${custName} — ${date}`,
         html: emailBody,
+        log: { kind: 'inspection-report' },
       });
       if (sendResult.sent) {
         console.log('Email sent successfully for inspection', inserted.id, '| to:', toAddresses.join(', '));

@@ -1561,15 +1561,58 @@
   // (opt-in confirmation, booking confirmation, reminders, nudges) are
   // invisible there. generator_sms_messages has the complete record, so this
   // card is the definitive "did they get their confirmation?" answer.
-  // Skeleton card; loadSmsHistory() replaces innerHTML once the log lands.
-  function renderSmsHistoryCard() {
-    return `<div class="gc-card" id="gc-card-sms">
-      <h3 class="gc-card-h">Text Message History</h3>
-      <div id="gc-sms-history-body">
+  //
+  // Both history cards (SMS + Email) are collapsed <details> by default — the
+  // record was getting long. The whole point of these cards is spotting a
+  // failure, so collapsing must never bury one: the loader stamps the count
+  // AND, when the newest outbound message is in a failed/blocked state, its
+  // status chip into the collapsed header (see historyHeaderStamp).
+  // Skeleton body; loadSmsHistory() replaces innerHTML once the log lands.
+  function renderHistoryDetails({ cardId, title, countId, flagId, bodyId }) {
+    return `<details class="gc-card gc-history-details" id="${cardId}">
+      <summary class="gc-history-summary">
+        <h3 class="gc-card-h"><span><span class="gc-disclose" aria-hidden="true">&#9656;</span>${title}<span class="gc-card-h-count" id="${countId}"></span></span><span id="${flagId}"></span></h3>
+      </summary>
+      <div id="${bodyId}">
         <div class="gc-skeleton-card-row"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
         <div class="gc-skeleton-card-row"><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span><span class="gc-skeleton gc-skeleton-line gc-skeleton-text-sm"></span></div>
       </div>
-    </div>`;
+    </details>`;
+  }
+
+  function renderSmsHistoryCard() {
+    return renderHistoryDetails({
+      cardId: 'gc-card-sms',
+      title: 'Text Message History',
+      countId: 'gc-sms-history-count',
+      flagId: 'gc-sms-history-flag',
+      bodyId: 'gc-sms-history-body',
+    });
+  }
+
+  // Email send history (sql/033) — the email twin of the SMS card. Every send
+  // attempt is logged by the backend mailer, and Brevo's delivery webhook
+  // upgrades "Sent" to Delivered/Bounced/etc. This is how the office answers
+  // "did the customer actually GET their appointment email?" — which matters
+  // most exactly when SMS is blocked (no consent) and email is the only channel.
+  function renderEmailHistoryCard() {
+    return renderHistoryDetails({
+      cardId: 'gc-card-email',
+      title: 'Email History',
+      countId: 'gc-email-history-count',
+      flagId: 'gc-email-history-flag',
+      bodyId: 'gc-email-history-body',
+    });
+  }
+
+  // Stamp count + (when the newest message is a failure) its status chip into
+  // a collapsed history header, so a "Not sent — no consent" or a bounce is
+  // visible without expanding the card.
+  function historyHeaderStamp({ countId, flagId, count, flagHtml }) {
+    const countEl = document.getElementById(countId);
+    if (countEl) countEl.textContent = `(${count})`;
+    const flagEl = document.getElementById(flagId);
+    if (flagEl) flagEl.innerHTML = flagHtml || '';
   }
 
   // Status chip per logged message. Statuses come from lib/sms.js's message
@@ -1606,6 +1649,62 @@
         ${smsHistoryChip(m)}${visitTag}
       </div>
       <div style="margin-top:4px;font-size:0.83rem;color:var(--ink-2);white-space:pre-line;overflow-wrap:anywhere;">${escapeHtml(m.body || '')}</div>
+      ${failDetail}
+    </div>`;
+  }
+
+  // A newest-message state that warrants a warning chip in the COLLAPSED SMS
+  // header. quiet_hours/disabled are expected states, not failures.
+  function smsNeedsFlag(m) {
+    return m && m.direction === 'out'
+      && ['failed', 'invalid_phone', 'no_consent', 'opted_out'].includes(m.status);
+  }
+
+  // Email status chip: the send attempt ('Failed' means Brevo never took it),
+  // upgraded by the delivery outcome from Brevo's webhook when we have one.
+  // Plain 'Sent' = accepted by Brevo, no delivery event (yet or ever — the
+  // webhook only covers sends after it was configured).
+  function emailHistoryChip(m) {
+    if (m.status === 'failed') return '<span class="badge badge-danger">Failed</span>';
+    switch (m.delivery_status) {
+      case 'delivered': return '<span class="badge badge-ok">Delivered</span>';
+      case 'hard_bounce': return '<span class="badge badge-danger">Bounced</span>';
+      case 'soft_bounce': return '<span class="badge badge-warn">Soft bounce</span>';
+      case 'blocked': return '<span class="badge badge-danger">Blocked</span>';
+      case 'spam': return '<span class="badge badge-danger">Marked spam</span>';
+      case 'invalid_email': return '<span class="badge badge-danger">Invalid address</span>';
+      case 'deferred': return '<span class="badge badge-neutral">Deferred</span>';
+      case 'error': return '<span class="badge badge-warn">Delivery error</span>';
+      default: return '<span class="badge badge-ok">Sent</span>';
+    }
+  }
+
+  function emailNeedsFlag(m) {
+    return !!m && (m.status === 'failed'
+      || ['hard_bounce', 'blocked', 'spam', 'invalid_email'].includes(m.delivery_status));
+  }
+
+  function renderEmailHistoryRow(m) {
+    const visitTag = m.related_visit_id
+      ? ` <span class="gc-meta-label" style="border:1px solid var(--line);border-radius:4px;padding:0 5px;">visit</span>`
+      : '';
+    const kindTag = m.kind
+      ? `<span class="gc-meta-label">${escapeHtml(m.kind)}</span>`
+      : '';
+    // Failure reason (send failure) or delivery detail (bounce reason). The
+    // backend scrubs anything secret-shaped before it's stored.
+    const detailText = (m.status === 'failed' && m.detail)
+      || (emailNeedsFlag(m) && m.delivery_detail) || '';
+    const failDetail = detailText
+      ? `<div class="gc-meta-label" style="margin-top:2px;color:var(--danger);">${escapeHtml(detailText)}</div>`
+      : '';
+    return `<div class="gc-card-row" style="display:block;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span class="gc-meta-value">${escapeHtml(fmtDateTime(m.created_at))}</span>
+        ${kindTag}
+        ${emailHistoryChip(m)}${visitTag}
+      </div>
+      <div style="margin-top:4px;font-size:0.83rem;color:var(--ink-2);overflow-wrap:anywhere;">${escapeHtml(m.subject || '(no subject)')} <span class="gc-meta-label">&mdash; to ${escapeHtml(m.to_email || 'unknown')}</span></div>
       ${failDetail}
     </div>`;
   }
@@ -1689,6 +1788,7 @@
         renderHeaderBar(c, subscription) +
         renderContactCard(c, sms_consent) +
         renderSmsHistoryCard() +
+        renderEmailHistoryCard() +
         renderPlanCard(subscription, isCanceled) +
         renderHandoffCard(subscription, pending_addons, openVisit) +
         renderVisitsCard(visits, subscription, visit_preferences, visit_sms) +
@@ -1879,6 +1979,7 @@
       // and the work-order packet's actual signup charge) + the text-message log.
       loadStripeData(id, subscription, pending_addons, c.id, openVisit);
       loadSmsHistory(id);
+      loadEmailHistory(id);
 
     } catch (err) {
       console.error('Detail load failed:', err);
@@ -3106,13 +3207,53 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { messages } = await r.json();
       if (!messages || !messages.length) {
+        historyHeaderStamp({ countId: 'gc-sms-history-count', flagId: 'gc-sms-history-flag', count: 0 });
         el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">No texts sent yet.</div>`;
         return;
       }
+      // Newest-first from the API; a failed/blocked latest message surfaces in
+      // the collapsed header so it isn't hidden behind the click.
+      historyHeaderStamp({
+        countId: 'gc-sms-history-count',
+        flagId: 'gc-sms-history-flag',
+        count: messages.length,
+        flagHtml: smsNeedsFlag(messages[0]) ? smsHistoryChip(messages[0]) : '',
+      });
       el.innerHTML = messages.map(renderSmsHistoryRow).join('');
     } catch (err) {
       console.error('[sms-history] load failed:', err);
       el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load texts &mdash; refresh to retry.</div>`;
+    }
+  }
+
+  // Email history (lazy) — same open-fast pattern as loadSmsHistory. Empty is
+  // the norm until the 033 migration + mailer logging have been live a while.
+  async function loadEmailHistory(subscriptionId) {
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    const el = body.querySelector('#gc-email-history-body');
+    if (!el) return;
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/subscriptions/${subscriptionId}/email-messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const { messages } = await r.json();
+      if (!messages || !messages.length) {
+        historyHeaderStamp({ countId: 'gc-email-history-count', flagId: 'gc-email-history-flag', count: 0 });
+        el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">No emails logged yet. (Logging starts with sends made after the email-history update.)</div>`;
+        return;
+      }
+      historyHeaderStamp({
+        countId: 'gc-email-history-count',
+        flagId: 'gc-email-history-flag',
+        count: messages.length,
+        flagHtml: emailNeedsFlag(messages[0]) ? emailHistoryChip(messages[0]) : '',
+      });
+      el.innerHTML = messages.map(renderEmailHistoryRow).join('');
+    } catch (err) {
+      console.error('[email-history] load failed:', err);
+      el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load emails &mdash; refresh to retry.</div>`;
     }
   }
 

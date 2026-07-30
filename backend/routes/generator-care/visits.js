@@ -138,6 +138,7 @@ router.post('/visits/:id/schedule', sensitiveLimiter, async (req, res) => {
         text,
         logTag: '[visit-scheduled-email]',
         companyState: customer.install_state,
+        log: { customerId: customer.id || null, subscriptionId: (sub && sub.id) || updated.subscription_id || null, relatedVisitId: updated.id },
       }).catch((e) => console.error('[visit-scheduled-email] unexpected:', e && e.message));
     }
 

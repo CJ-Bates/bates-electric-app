@@ -234,7 +234,7 @@ function refundBlockedMessage(state, rowAmountCents, requestedCents) {
 }
 
 // ---- Send "manage your account" email with portal link ----
-async function sendCardUpdateLinkEmail({ name, email, portalUrl, companyState }) {
+async function sendCardUpdateLinkEmail({ name, email, portalUrl, companyState, log }) {
   const { subject, html, text } = buildCardUpdateLinkEmail({ name, portalUrl, companyState });
   return sendEmail({
     to: email,
@@ -243,6 +243,7 @@ async function sendCardUpdateLinkEmail({ name, email, portalUrl, companyState })
     text,
     logTag: '[card-update-link]',
     companyState,
+    log,
   });
 }
 
@@ -285,7 +286,7 @@ async function emailCardUpdateLinkForSub(subscriptionId) {
   try {
     const { data: sub } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('stripe_customer_id, customer:generator_customers(name, email, install_state)')
+      .select('stripe_customer_id, customer:generator_customers(id, name, email, install_state)')
       .eq('id', subscriptionId)
       .single();
     if (!sub || !sub.stripe_customer_id) return { sent: false, reason: 'no stripe customer' };
@@ -300,6 +301,7 @@ async function emailCardUpdateLinkForSub(subscriptionId) {
       email,
       portalUrl: session.url,
       companyState: (sub.customer && sub.customer.install_state) || null,
+      log: { customerId: (sub.customer && sub.customer.id) || null, subscriptionId },
     });
   } catch (e) {
     console.error('[adhoc-charge] emailCardUpdateLinkForSub failed:', e && e.message);

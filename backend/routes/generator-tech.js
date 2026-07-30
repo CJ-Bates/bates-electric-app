@@ -327,6 +327,11 @@ router.post('/my-visits/:id/schedule', sensitiveLimiter, requirePermission('tech
       html: `<p style="font-family:system-ui,sans-serif;font-size:14px;">${line}</p>`,
       text: line,
       logTag: '[tech-reschedule-email]',
+      log: {
+        customerId: (visit.subscription && visit.subscription.customer && visit.subscription.customer.id) || null,
+        subscriptionId: (visit.subscription && visit.subscription.id) || null,
+        relatedVisitId: visit.id,
+      },
     }).catch((e) => console.error('[tech-reschedule-email] unexpected:', e && e.message));
 
     res.json({ ok: true, visit: { id: visit.id, appointment_at: visit.appointment_at, arrival_window: visit.arrival_window || null, status: visit.status } });

@@ -14,6 +14,7 @@ const generatorCarePublicRouter = require('./routes/generator-care-public');
 const customerRouter = require('./routes/customer');
 const membersRouter = require('./routes/members');
 const smsInboundRouter = require('./routes/sms-inbound');
+const emailEventsRouter = require('./routes/email-events');
 const magicShortlinkRouter = require('./routes/magic-shortlink');
 const healthRouter = require('./routes/health');
 const { errorReporter, initSentry } = require('./middleware/error-reporter');
@@ -129,6 +130,9 @@ app.use('/api/my', customerRouter);
 // SimpleTexting inbound-SMS webhook — public by necessity (the provider can't
 // authenticate), but shared-secret-verified + rate-limited inside the router.
 app.use('/api/sms', smsInboundRouter);
+// Brevo delivery-events webhook — public by necessity (Brevo can't
+// authenticate), but shared-secret-verified + rate-limited inside the router.
+app.use('/api/email', emailEventsRouter);
 // Member management (Members page) — admin-gated inside the router.
 app.use('/api/members', membersRouter);
 
