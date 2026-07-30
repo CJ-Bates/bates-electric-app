@@ -42,6 +42,42 @@ test('scrubs event.request url, query_string (string and object), and the secret
   assert.equal(outObj.request.query_string.page, '2');
 });
 
+test('redacts Authorization and Cookie headers case-insensitively (Supabase JWTs ride there)', () => {
+  const event = {
+    request: {
+      headers: {
+        Authorization: 'Bearer eyJhbGciOi.supabase.jwt',
+        COOKIE: 'session=abc; other=1',
+        'x-webhook-secret': 'shh',
+        'content-type': 'application/json',
+      },
+    },
+  };
+  const out = scrubSentryEvent(event);
+  assert.equal(out.request.headers.Authorization, '[redacted]');
+  assert.equal(out.request.headers.COOKIE, '[redacted]');
+  assert.equal(out.request.headers['x-webhook-secret'], '[redacted]');
+  assert.equal(out.request.headers['content-type'], 'application/json');
+});
+
+test('a throwing scrub fails closed: request data + breadcrumbs dropped, exception kept', () => {
+  const event = {
+    exception: { values: [{ type: 'Error', value: 'boom', stacktrace: { frames: [] } }] },
+    breadcrumbs: [{ category: 'http', data: { url: '/api/email/events?secret=shh' } }],
+  };
+  // A request getter that throws forces the scrubber into its catch path.
+  Object.defineProperty(event, 'request', {
+    configurable: true,
+    get() { throw new Error('hostile getter'); },
+  });
+  const out = scrubSentryEvent(event);
+  assert.equal(out, event, 'event is still sent');
+  assert.ok(!('request' in out), 'request data dropped');
+  assert.ok(!('breadcrumbs' in out), 'breadcrumbs dropped');
+  assert.ok(out.exception, 'exception + stack survive');
+  assert.ok(!JSON.stringify(out).includes('shh'));
+});
+
 test('scrubs http breadcrumb URLs', () => {
   const event = {
     breadcrumbs: [

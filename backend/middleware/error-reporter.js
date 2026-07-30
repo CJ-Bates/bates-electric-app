@@ -28,11 +28,16 @@ let _sentryTried = false;
 // request URL + query string to captured events — which would ship webhook
 // shared secrets (?secret= on /api/email/events and /api/sms/inbound) and
 // tokens (?token= on the unsubscribe link) off-site. beforeSend redacts the
-// VALUES of secret-shaped query params and the X-Webhook-Secret header from
-// the event before it leaves the process. Scrubbing must never itself break
-// reporting: any error returns the event as-is rather than dropping it.
+// VALUES of secret-shaped query params and of credential-bearing headers
+// (X-Webhook-Secret, Authorization — Supabase JWTs ride there on every authed
+// call — and Cookie) from the event before it leaves the process. We do not
+// rely on Sentry's server-side default scrubbing for any of these. If
+// scrubbing itself throws, the event still goes out — but with its request
+// data and breadcrumbs DROPPED (fail closed on the payload that might hold a
+// secret) while the exception + stack are kept for visibility.
 // ============================================================================
 const SECRET_PARAM_RE = /^(secret|token|token_hash|access_token|refresh_token|code|api-?key)$/i;
+const SECRET_HEADER_RE = /^(x-webhook-secret|authorization|cookie)$/i;
 
 function scrubSecretParams(s) {
   if (typeof s !== 'string' || !s) return s;
@@ -53,7 +58,7 @@ function scrubSentryEvent(event) {
       }
       if (req.headers && typeof req.headers === 'object') {
         for (const k of Object.keys(req.headers)) {
-          if (k.toLowerCase() === 'x-webhook-secret') req.headers[k] = '[redacted]';
+          if (SECRET_HEADER_RE.test(k)) req.headers[k] = '[redacted]';
         }
       }
     }
@@ -67,7 +72,18 @@ function scrubSentryEvent(event) {
       }
     }
   } catch (e) {
-    console.error('[error-reporter] Sentry scrub failed (event sent unscrubbed):', (e && e.message) || e);
+    // Fail closed: if the scrub itself broke, the request data / breadcrumbs
+    // may still hold a secret — drop them and send the event without them
+    // (exception + stack survive, which is what debugging actually needs).
+    console.error('[error-reporter] Sentry scrub failed (request data dropped from event):', (e && e.message) || e);
+    try {
+      if (event && typeof event === 'object') {
+        delete event.request;
+        delete event.breadcrumbs;
+      }
+    } catch (e2) {
+      console.error('[error-reporter] Sentry scrub cleanup failed:', (e2 && e2.message) || e2);
+    }
   }
   return event;
 }
