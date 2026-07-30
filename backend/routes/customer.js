@@ -486,6 +486,7 @@ router.post('/visit-preferences', writeLimiter, async (req, res) => {
       html: `<p style="font-family:system-ui,sans-serif;font-size:14px;white-space:pre-line;">${officeLine.replace(/</g, '&lt;')}</p>`,
       text: officeLine,
       logTag: '[my-visit-preferences]',
+      log: { customerId: customer.id || null, relatedVisitId: (openVisit && openVisit.id) || null },
     });
 
     res.json({ ok: true, preferences: { slots: inserted.slots, note: inserted.note || '', created_at: inserted.created_at } });
@@ -565,6 +566,7 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
       html: `<p style="font-family:system-ui,sans-serif;font-size:14px;white-space:pre-line;">${officeLine.replace(/</g, '&lt;')}</p>`,
       text: officeLine,
       logTag: '[my-reschedule-request]',
+      log: { customerId: customer.id || null, relatedVisitId: (openVisit && openVisit.id) || null },
     });
 
     const custLine = `Got it — we received your request to move your service visit to: ${preferred}. `
@@ -576,6 +578,7 @@ router.post('/reschedule-request', writeLimiter, async (req, res) => {
       text: custLine,
       logTag: '[my-reschedule-confirm]',
       companyState: customer.install_state,
+      log: { customerId: customer.id || null, relatedVisitId: (openVisit && openVisit.id) || null },
     }).catch((e) => console.error('[my-reschedule-confirm] unexpected:', e && e.message));
 
     res.json({ ok: true });
@@ -958,6 +961,7 @@ router.post('/cancel', writeLimiter, async (req, res) => {
       const r = await sendEmail({
         to: customer.email, subject, html, text,
         logTag: '[cancellation-email]', companyState: customer.install_state,
+        log: { customerId: customer.id || null, subscriptionId: sub.id || null },
       });
       cancellationEmailSent = !!(r && r.sent);
     } catch (e) {
@@ -989,6 +993,7 @@ router.post('/cancel', writeLimiter, async (req, res) => {
       html: `<p style="font-family:system-ui,sans-serif;font-size:14px;">${line.replace(/</g, '&lt;')}</p>`,
       text: line,
       logTag: '[my-cancel-notify]',
+      log: { customerId: customer.id || null, subscriptionId: sub.id || null },
     }).catch((e) => console.error('[my-cancel-notify] unexpected:', e && e.message));
 
     res.json({ ok: true, service_through: periodEnd });

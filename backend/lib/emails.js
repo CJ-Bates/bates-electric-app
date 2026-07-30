@@ -90,7 +90,12 @@ const FONT_STACK = `system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto
 // replyTo (optional): where a customer's reply lands. The enrollment-invite
 // drip sets it to the monitored generators@ mailbox ("just reply — Amy will
 // take care of you"); transactional sends leave it unset (no-reply sender).
-async function sendEmail({ to, subject, html, text, logTag, companyState, replyTo }) {
+// log (optional): audit context for the generator_email_messages row the
+// transport writes per attempt — { customerId?, subscriptionId?,
+// relatedVisitId?, kind? }. The kind defaults to the logTag with its brackets
+// stripped ('[receipt-email]' -> 'receipt-email'), so every existing caller
+// gets a tagged history row without changing its call.
+async function sendEmail({ to, subject, html, text, logTag, companyState, replyTo, log }) {
   const tag = logTag || '[email]';
   if (!to || (Array.isArray(to) && to.length === 0)) {
     console.log(`${tag} no recipient, skipping`);
@@ -109,6 +114,7 @@ async function sendEmail({ to, subject, html, text, logTag, companyState, replyT
     html,
     text,
     ...(replyTo ? { replyTo } : {}),
+    log: { kind: tag.replace(/^\[|\]$/g, ''), ...(log || {}) },
   });
   if (result.sent) {
     const recipients = Array.isArray(to) ? to.join(', ') : to;

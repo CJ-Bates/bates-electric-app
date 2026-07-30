@@ -98,7 +98,7 @@ async function completeServiceVisit(opts) {
     .from('generator_service_visits')
     .update(updatePayload)
     .eq('id', visitId)
-    .select('*, subscription:generator_subscriptions(id, plan, gen_class, standing_addons, signup_date, next_visit_due, customer:generator_customers(name, email, install_state))')
+    .select('*, subscription:generator_subscriptions(id, plan, gen_class, standing_addons, signup_date, next_visit_due, customer:generator_customers(id, name, email, install_state))')
     .single();
   if (updErr) throw updErr;
 
@@ -162,6 +162,7 @@ async function completeServiceVisit(opts) {
       to: customer.email, subject, html, text,
       logTag: '[visit-complete-email]',
       companyState: customer.install_state,
+      log: { customerId: customer.id || null, subscriptionId: sub.id || null, relatedVisitId: updated.id },
     }).catch((e) => console.error('[visit-complete-email] unexpected:', e && e.message));
   }
 

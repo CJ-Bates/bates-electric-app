@@ -554,7 +554,7 @@ async function handleSubscriptionDeleted(subscription) {
   if (subscription.customer) {
     const { data: cust, error: custErr } = await supabase
       .from('generator_customers')
-      .select('name, email, install_state')
+      .select('id, name, email, install_state')
       .eq('stripe_customer_id', subscription.customer)
       .maybeSingle();
     if (custErr) {
@@ -727,7 +727,7 @@ async function sendRefundReceiptEmail(charge) {
     // Only generator customers are in our table; non-generator charges won't match.
     const { data: customer, error: custErr } = await supabase
       .from('generator_customers')
-      .select('name, email, install_state')
+      .select('id, name, email, install_state')
       .eq('stripe_customer_id', charge.customer)
       .maybeSingle();
     if (custErr) {
@@ -782,7 +782,10 @@ async function sendRefundReceiptEmail(charge) {
       originalReceiptNumber,
       isPartial,
     });
-    const result = await sendEmail({ to: customer.email, subject, html, text, logTag: '[refund-receipt-email]', companyState: customer.install_state });
+    const result = await sendEmail({
+      to: customer.email, subject, html, text, logTag: '[refund-receipt-email]', companyState: customer.install_state,
+      log: { customerId: customer.id || null },
+    });
 
     if (result && result.sent) {
       // Stamp AFTER a confirmed send. Stripe merges metadata keys on update, so
@@ -866,6 +869,7 @@ async function handleInvoiceUpcoming(invoice) {
     text,
     logTag: '[renewal-upcoming]',
     companyState: customer.install_state,
+    log: { customerId: customer.id || null },
   });
 
   // Phase 3: "time to schedule" nudge text, riding the same renewal event.
@@ -1061,6 +1065,7 @@ async function sendWelcomeEmail({ customer, meta, planLabel, nextVisitDate, annu
     logTag: '[welcome-email]',
     // From display name: current customer state first, signup meta as fallback.
     companyState: (customer && customer.install_state) || (meta && meta.install_state),
+    log: { customerId: customer.id || null },
   });
 }
 
@@ -1091,6 +1096,7 @@ async function sendCardFailedEmail({ customer, amountCents, description }) {
     text,
     logTag: '[card-failed-email]',
     companyState: customer.install_state,
+    log: { customerId: customer.id || null },
   });
 }
 
@@ -1108,6 +1114,7 @@ async function sendCancellationEmail({ customer }) {
     text,
     logTag: '[cancellation-email]',
     companyState: customer.install_state,
+    log: { customerId: customer.id || null },
   });
 }
 

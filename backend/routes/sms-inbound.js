@@ -255,6 +255,7 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
     html: '<p style="font-family:system-ui,sans-serif;font-size:14px;">' + escHtml(line) + '</p>',
     text: line,
     logTag: '[sms-inbound-office-email]',
+    log: { customerId: (customer && customer.id) || null },
   }).catch((e) => console.error('[sms-inbound-office-email] unexpected:', e && e.message));
 }
 

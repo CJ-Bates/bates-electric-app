@@ -161,6 +161,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  subject,
  html,
  text,
+ log: { kind: 'daily-digest' },
  });
  if (!sendResult.sent) throw new Error('digest send failed: ' + sendResult.reason);
 

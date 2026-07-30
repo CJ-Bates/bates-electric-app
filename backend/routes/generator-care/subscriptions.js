@@ -491,6 +491,39 @@ router.get('/subscriptions/:id/sms-messages', async (req, res) => {
   }
 });
 
+// GET /api/generator-care/subscriptions/:id/email-messages
+// Email send history for the subscription's customer — every attempt logged
+// by lib/mailer.js (sql/033), including failed sends, plus the Brevo delivery
+// outcome once the /api/email/events webhook lands. The email twin of
+// /sms-messages above, and the office's answer to "did the customer actually
+// get their appointment email?". Read-only; lazy-loaded by the customer
+// detail modal. No body/HTML is stored, so nothing secret-shaped can appear.
+router.get('/subscriptions/:id/email-messages', async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions')
+      .select('customer_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (subErr) throw subErr;
+    if (!sub) return res.status(404).json({ error: 'subscription not found' });
+    if (!sub.customer_id) return res.json({ messages: [] });
+
+    const { data: rows, error: msgErr } = await supabaseAdmin
+      .from('generator_email_messages')
+      .select('created_at, kind, status, detail, subject, to_email, delivery_status, delivery_detail, delivery_at, related_visit_id')
+      .eq('customer_id', sub.customer_id)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (msgErr) throw msgErr;
+
+    res.json({ messages: rows || [] });
+  } catch (err) {
+    console.error('[generator-care] email-messages error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /api/generator-care/billing-snapshot
 // Batched Stripe enrichment for the Needs Attention queue: renewal date,
 // cancel-at-period-end flag, and card-on-file expiry for EVERY subscription,
@@ -1234,7 +1267,7 @@ router.post('/subscriptions/:id/portal-session', requirePermission('billing_acti
   try {
     const { data: sub, error: subErr } = await supabaseAdmin
       .from('generator_subscriptions')
-      .select('stripe_customer_id, customer:generator_customers(name, email, install_state)')
+      .select('stripe_customer_id, customer:generator_customers(id, name, email, install_state)')
       .eq('id', req.params.id)
       .single();
     if (subErr) throw subErr;
@@ -1260,6 +1293,7 @@ router.post('/subscriptions/:id/portal-session', requirePermission('billing_acti
         email: customerEmail,
         portalUrl: session.url,
         companyState: customerState,
+        log: { customerId: (sub.customer && sub.customer.id) || null, subscriptionId: req.params.id },
       });
       emailSent = r.sent;
       emailReason = r.reason || (r.sent ? 'sent' : 'failed');
@@ -1298,7 +1332,7 @@ router.post('/subscriptions/:id/resend-welcome', sensitiveLimiter, async (req, r
         id, plan, annual_price_cents, signup_date, next_visit_due, last_visit_date, fleet_monitoring,
         gen_class, gen_type_label, gen_model, gen_serial,
         raw_metadata,
-        customer:generator_customers(name, email, install_address, install_city, install_state, install_zip)
+        customer:generator_customers(id, name, email, install_address, install_city, install_state, install_zip)
       `)
       .eq('id', req.params.id)
       .single();
@@ -1362,6 +1396,7 @@ router.post('/subscriptions/:id/resend-welcome', sensitiveLimiter, async (req, r
       logTag: '[resend-welcome]',
       // From display name: brand on the customer's CURRENT state, not signup meta.
       companyState: customer.install_state || meta.install_state,
+      log: { customerId: customer.id || null, subscriptionId: sub.id },
     });
 
     return res.json({
@@ -1393,6 +1428,7 @@ async function sendCancellationEmail({ customer, periodEndDate }) {
     text,
     logTag: '[cancellation-email]',
     companyState: customer.install_state,
+    log: { customerId: customer.id || null },
   });
 }
 

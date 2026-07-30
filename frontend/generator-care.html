@@ -84,6 +84,15 @@
     .gc-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
     .gc-card-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 600; margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
     .gc-card-h .gc-card-h-count { color: var(--ink-3); font-weight: 500; margin-left: 6px; }
+    /* Collapsible history cards (Text Message / Email History). Native
+       <details>: collapsed by default, count + any failure chip stamped into
+       the summary by the loaders so problems stay visible while collapsed. */
+    details.gc-history-details > summary { list-style: none; cursor: pointer; }
+    details.gc-history-details > summary::-webkit-details-marker { display: none; }
+    details.gc-history-details > summary .gc-card-h { margin: 0; padding-bottom: 0; border-bottom: none; }
+    details.gc-history-details[open] > summary .gc-card-h { margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    details.gc-history-details .gc-disclose { display: inline-block; margin-right: 6px; color: var(--ink-3); transition: transform 0.15s ease; }
+    details.gc-history-details[open] .gc-disclose { transform: rotate(90deg); }
     .gc-card-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
     .gc-card-row:last-child { border-bottom: none; padding-bottom: 0; }
     .gc-card-row:first-of-type { padding-top: 0; }

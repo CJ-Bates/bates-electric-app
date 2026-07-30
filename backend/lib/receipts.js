@@ -161,7 +161,7 @@ async function sendReceiptEmail(invoice, opts = {}) {
     // Only generator customers are in our table; non-generator invoices won't match.
     let { data: customer, error: custErr } = await supabase
       .from('generator_customers')
-      .select('name, email, install_state')
+      .select('id, name, email, install_state')
       .eq('stripe_customer_id', stripeCustomerId)
       .maybeSingle();
     if (custErr) {
@@ -225,7 +225,10 @@ async function sendReceiptEmail(invoice, opts = {}) {
       receiptNumber,
       lineItems,
     });
-    const result = await sendEmail({ to: customer.email, subject, html, text, logTag: '[receipt-email]', companyState: customer.install_state });
+    const result = await sendEmail({
+      to: customer.email, subject, html, text, logTag: '[receipt-email]', companyState: customer.install_state,
+      log: { customerId: customer.id || null },
+    });
 
     if (result && result.sent) {
       if (dedupe && invoice.id) {
