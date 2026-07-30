@@ -13,6 +13,8 @@ const {
   buildRefundNote,
   parseRefundedFromNotes,
   findChargedRowPaymentIntent,
+  resolveRowRefundState,
+  refundBlockedMessage,
 } = require('../../lib/gcShared');
 const { chargePerformedAddonsForSub, getOpenVisitId } = require('../../lib/gcCharges');
 // Tighter limiter for the money-moving endpoints in this file.
@@ -133,8 +135,8 @@ router.post('/addons/:id/unmark-performed', requirePermission('billing_actions')
 
 // POST /api/generator-care/addons/:id/refund
 // Body: { amount_cents?, reason? }
-// amount_cents omitted = full refund. Stripe supports multiple partial refunds
-// up to the original total; we don't enforce that here -- Stripe will reject.
+// amount_cents omitted = full refund of the remaining (un-refunded) balance,
+// with the already-refunded figure derived from the Stripe charge itself.
 router.post('/addons/:id/refund', sensitiveLimiter, requirePermission('refunds'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -176,7 +178,17 @@ router.post('/addons/:id/refund', sensitiveLimiter, requirePermission('refunds')
       return res.status(400).json({ error: 'no Stripe payment found for this add-on; refund must be issued from Stripe Dashboard' });
     }
 
-    const alreadyRefundedCents = parseRefundedFromNotes(addon.notes);
+    // Already-refunded comes from the actual Stripe charge, not just this
+    // row's notes — invoice-level and dashboard refunds never annotate the row.
+    const refundState = await resolveRowRefundState({
+      paymentIntentId,
+      rowAmountCents: addon.amount_cents,
+      notesRefundedCents: parseRefundedFromNotes(addon.notes),
+    });
+    const alreadyRefundedCents = refundState.alreadyRefundedCents;
+    const blocked = refundBlockedMessage(refundState, addon.amount_cents, amount_cents);
+    if (blocked) return res.status(400).json({ error: blocked });
+
     let result;
     try {
       result = await executeStripeRefund({

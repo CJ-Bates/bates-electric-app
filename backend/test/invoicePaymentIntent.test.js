@@ -135,6 +135,11 @@ const legacyInvoice = (metadata) => ({
   payments: basilPayments('pi_leg'),
 });
 
+// The refund endpoints now read the charge behind the PI (Stripe-derived
+// over-refund guard) — stub an un-refunded charge of the row's amount.
+const stubUnrefundedCharge = (amount) => stubStripe('paymentIntents', 'retrieve',
+  () => ({ id: 'pi_x', latest_charge: { id: 'ch_x', amount, amount_refunded: 0 } }));
+
 test('addon refund resolves a legacy null-PI row from its Stripe invoice and self-heals', async () => {
   const seen = {};
   restoreSupabase = installMockSupabase(refundTables(seen, {
@@ -143,6 +148,7 @@ test('addon refund resolves a legacy null-PI row from its Stripe invoice and sel
   }));
   const listCalls = stubStripe('invoices', 'list', () => ({ data: [legacyInvoice({ addon_id: 'addon-1' })] }));
   const refundCalls = stubStripe('refunds', 'create', () => ({ id: 're_1', status: 'succeeded' }));
+  stubUnrefundedCharge(8500);
 
   const res = makeRes();
   await addonRefundHandler(makeReq({ params: { id: 'addon-1' } }), res);
@@ -164,6 +170,7 @@ test('adhoc refund resolves a legacy null-PI cart line the same way', async () =
   }));
   stubStripe('invoices', 'list', () => ({ data: [legacyInvoice({ adhoc_charge_id: 'c1' })] }));
   const refundCalls = stubStripe('refunds', 'create', () => ({ id: 're_1', status: 'succeeded' }));
+  stubUnrefundedCharge(100);
 
   const res = makeRes();
   await adhocRefundHandler(makeReq({ params: { id: 'c1' } }), res);
@@ -199,6 +206,7 @@ test('rows that already have a PI refund directly — no invoice scan', async ()
   }));
   const listCalls = stubStripe('invoices', 'list', () => ({ data: [] }));
   const refundCalls = stubStripe('refunds', 'create', () => ({ id: 're_1', status: 'succeeded' }));
+  stubUnrefundedCharge(8500);
 
   const res = makeRes();
   await addonRefundHandler(makeReq({ params: { id: 'addon-1' } }), res);

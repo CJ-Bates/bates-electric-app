@@ -13,6 +13,8 @@ const {
   parseRefundedFromNotes,
   findChargedRowPaymentIntent,
   resolveInvoiceCharge,
+  resolveRowRefundState,
+  refundBlockedMessage,
 } = require('../../lib/gcShared');
 const { chargeAdhocImmediate, chargeAmountError, sanitizeChargeDescription } = require('../../lib/gcCharges');
 // Tighter limiter for the money-moving endpoints in this file.
@@ -246,7 +248,17 @@ router.post('/adhoc-charges/:id/refund', sensitiveLimiter, requirePermission('re
       return res.status(400).json({ error: 'no Stripe payment found for this charge; refund must be issued from Stripe Dashboard' });
     }
 
-    const alreadyRefundedCents = parseRefundedFromNotes(charge.notes);
+    // Already-refunded comes from the actual Stripe charge, not just this
+    // row's notes — invoice-level and dashboard refunds never annotate the row.
+    const refundState = await resolveRowRefundState({
+      paymentIntentId,
+      rowAmountCents: charge.amount_cents,
+      notesRefundedCents: parseRefundedFromNotes(charge.notes),
+    });
+    const alreadyRefundedCents = refundState.alreadyRefundedCents;
+    const blocked = refundBlockedMessage(refundState, charge.amount_cents, amount_cents);
+    if (blocked) return res.status(400).json({ error: blocked });
+
     let result;
     try {
       result = await executeStripeRefund({
@@ -328,6 +340,17 @@ router.post('/invoices/:invoiceId/refund', sensitiveLimiter, requirePermission('
     if (alreadyRefundedCents >= originalAmountCents) {
       return res.status(400).json({ error: 'invoice is already fully refunded' });
     }
+    // Over-large requests get a plain-language 400 (how much has already been
+    // returned + what remains) instead of the generic amount-range error.
+    const blocked = refundBlockedMessage({
+      stripeChecked: true,
+      bundledPayment: false,
+      alreadyRefundedCents,
+      maxRefundableCents: originalAmountCents - alreadyRefundedCents,
+      paymentAmountCents: originalAmountCents,
+      paymentRefundedCents: alreadyRefundedCents,
+    }, originalAmountCents, amount_cents);
+    if (blocked) return res.status(400).json({ error: blocked });
 
     let result;
     try {
