@@ -1,19 +1,31 @@
-// One-time backfill: name the existing "no name" SimpleTexting contacts.
+// Backfill: name the existing "no name" SimpleTexting contacts.
 //
-// Every customer who opted into SMS before the contact-name upsert shipped
-// (lib/sms.js upsertSimpleTextingContact, merged 2026-07-17) exists in
-// SimpleTexting as a bare "no name / (314) ..." contact — a contact is only
-// ever created by texting them, and naming now happens at consent time. This
-// script names those existing contacts once, then is never needed again.
+// Two populations, same repair:
+//   1. Customers who opted into SMS before the contact-name upsert shipped
+//      (lib/sms.js upsertSimpleTextingContact, merged 2026-07-17) — a contact
+//      is only ever created by texting them, and naming now happens at
+//      consent time.
+//   2. Customers hit by the create race (fixed 2026-08-18): the signup-time
+//      name upsert lost to the send's auto-create, SimpleTexting answered 409
+//      instead of updating, and the contact stayed unnamed (live example:
+//      Edwin S., 2026-08-12). These customers all have opted-in consent rows
+//      — every code path that fires the name upsert writes consent first, and
+//      auto-create only happens on a send, which is consent-gated — so the
+//      opted-in scope below already covers them; no widening needed.
+//
+// Idempotent and safe to re-run whenever unnamed contacts show up.
 //
 // Run from the backend folder (needs SUPABASE_* + SIMPLETEXTING_API_TOKEN):
-//   node scripts/backfill-simpletexting-names.js --dry-run   # list only, NO API calls
-//   node scripts/backfill-simpletexting-names.js             # real upserts, LIVE account
+//   node scripts/backfill-simpletexting-names.js          # DRY RUN (default): list only, NO API calls
+//   node scripts/backfill-simpletexting-names.js --live   # real upserts, LIVE account
 //
 // Guardrails:
+//   - Dry run is the default; writing requires an explicit --live.
 //   - Only opted-in && !opted-out consent rows are considered — the upsert
 //     would CREATE a missing contact, so scoping to consenters guarantees we
-//     never mint a contact for someone who didn't opt in.
+//     never mint a contact for someone who didn't opt in (this is also why
+//     opted-OUT customers' contacts stay unnamed on purpose: naming them
+//     could re-create a deleted contact for someone who said stop).
 //   - Reuses upsertSimpleTextingContact verbatim: upsert=true,
 //     listsReplacement=false (never touches list membership on the shared
 //     account), token in the auth header only, non-throwing.
@@ -26,7 +38,9 @@ require('dotenv').config();
 const { normalizePhone, upsertSimpleTextingContact } = require('../lib/sms');
 const { supabaseAdmin } = require('../lib/supabase');
 
-const DRY_RUN = process.argv.includes('--dry-run');
+// Dry run unless --live is given; a stray --dry-run (the old opt-in flag)
+// always wins so the pre-2026-08 invocation can never go live by accident.
+const DRY_RUN = !process.argv.includes('--live') || process.argv.includes('--dry-run');
 const DELAY_MS = 400; // between SimpleTexting calls; a few hundred contacts max
 const PAGE_SIZE = 1000; // Supabase caps un-ranged selects at 1000 — page to be safe
 

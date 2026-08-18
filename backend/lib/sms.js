@@ -290,7 +290,7 @@ async function optOutPhone(phone) {
 // the contact so it shows as "John Fort" before we ever text them.
 //
 // Provider facts (confirmed against api-doc.simpletexting.com OpenAPI spec,
-// 2026-07-17):
+// 2026-07-17, re-confirmed 2026-08-18):
 //   POST {base}/api/contacts?upsert=true&listsReplacement=false
 //   body (SingleContactUpdate): { contactPhone (10-digit national),
 //   firstName?, lastName? } — omitted fields are left untouched. 201 -> {id}.
@@ -298,6 +298,21 @@ async function optOutPhone(phone) {
 //   listsReplacement=false is load-bearing on this SHARED account: its
 //   default (true) would remove the contact from every list it's already on
 //   (the service team's lists included) — never send this without it.
+//
+//   PUT {base}/api/contacts/{contactIdOrNumber}?upsert=true&listsReplacement=false
+//   Per-contact update; the path takes the 10-digit phone directly (docs call
+//   phone the preferred form — no id lookup needed). Same SingleContactUpdate
+//   body, same listsReplacement trap (its default is also true). 200 -> {id}.
+//
+// The create race (seen live 2026-08-12, Edwin S.): callers fire this without
+// await and then immediately send the opt-in text. If the send's auto-create
+// wins the race, our POST's existence check ran before that contact landed,
+// so upsert=true takes the CREATE branch and the insert 409s
+// (CONTACT_CREATE_FAILED "already exists") instead of updating — and the name
+// is lost. On exactly that 409 we recover with the per-contact PUT above,
+// which targets the now-existing contact by phone. A resolved 409 is not an
+// error: quiet log, no reportError. Any other failure — including a PUT that
+// then fails — stays loud.
 //
 // Name split: first space only — "John Fort" -> John/Fort, "Anna van Dyke" ->
 // Anna/"van Dyke", "Cher" -> firstName only.
@@ -307,6 +322,7 @@ async function optOutPhone(phone) {
 // skips quietly; a live API failure logs + reportErrors. Returns
 // { ok, reason? } so unit tests can see why it skipped.
 // ============================================================================
+const CONTACT_EXISTS_409 = /CONTACT_CREATE_FAILED|already exists/i;
 async function upsertSimpleTextingContact({ phone, name }) {
   try {
     const e164 = normalizePhone(phone);
@@ -324,21 +340,36 @@ async function upsertSimpleTextingContact({ phone, name }) {
       contact.lastName = trimmed.slice(spaceAt + 1).trim();
     }
 
+    // Token lives ONLY in this header — never in a log or error detail.
+    const headers = {
+      Authorization: 'Bearer ' + token,
+      'content-type': 'application/json',
+      accept: 'application/json',
+    };
+
     const resp = await fetch(SIMPLETEXTING_BASE + '/api/contacts?upsert=true&listsReplacement=false', {
       method: 'POST',
-      headers: {
-        // Token lives ONLY in this header — never in a log or error detail.
-        Authorization: 'Bearer ' + token,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
+      headers,
       body: JSON.stringify(contact),
     });
-    if (!resp.ok) {
-      const errBody = await resp.text().catch(() => '');
-      throw new Error('SimpleTexting ' + resp.status + ': ' + errBody.slice(0, 300));
+    if (resp.ok) return { ok: true };
+
+    const errBody = await resp.text().catch(() => '');
+    if (resp.status === 409 && CONTACT_EXISTS_409.test(errBody)) {
+      // Create race (see header): the contact now exists but has no name.
+      // Set it with the documented per-contact update, addressed by phone.
+      const put = await fetch(
+        SIMPLETEXTING_BASE + '/api/contacts/' + contact.contactPhone + '?upsert=true&listsReplacement=false',
+        { method: 'PUT', headers, body: JSON.stringify(contact) }
+      );
+      if (put.ok) {
+        console.log('[sms] contact already existed (create race); name set via per-contact update');
+        return { ok: true, reason: 'updated existing' };
+      }
+      const putBody = await put.text().catch(() => '');
+      throw new Error('SimpleTexting 409 recovery update failed ' + put.status + ': ' + putBody.slice(0, 300));
     }
-    return { ok: true };
+    throw new Error('SimpleTexting ' + resp.status + ': ' + errBody.slice(0, 300));
   } catch (e) {
     const detail = 'contact name upsert failed: ' + ((e && e.message) || e);
     console.error('[sms] ' + detail);
