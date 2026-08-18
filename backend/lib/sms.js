@@ -591,6 +591,7 @@ async function sendMagicLoginSms({ customerId, phone, email, buildBody, relatedV
 
 module.exports = {
   CONSENT_TEXT,
+  SIMPLETEXTING_BASE,
   normalizePhone,
   smsEnabled,
   withinQuietHours,
