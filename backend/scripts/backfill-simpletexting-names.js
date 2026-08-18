@@ -1,19 +1,40 @@
-// One-time backfill: name the existing "no name" SimpleTexting contacts.
+// Backfill: name the existing "no name" SimpleTexting contacts.
 //
-// Every customer who opted into SMS before the contact-name upsert shipped
-// (lib/sms.js upsertSimpleTextingContact, merged 2026-07-17) exists in
-// SimpleTexting as a bare "no name / (314) ..." contact — a contact is only
-// ever created by texting them, and naming now happens at consent time. This
-// script names those existing contacts once, then is never needed again.
+// Two populations, same repair:
+//   1. Customers who opted into SMS before the contact-name upsert shipped
+//      (lib/sms.js upsertSimpleTextingContact, merged 2026-07-17) — a contact
+//      is only ever created by texting them, and naming now happens at
+//      consent time.
+//   2. Customers hit by the create race (fixed 2026-08-18): the signup-time
+//      name upsert lost to the send's auto-create, SimpleTexting answered 409
+//      instead of updating, and the contact stayed unnamed (live example:
+//      Edwin S., 2026-08-12). These customers all have opted-in consent rows
+//      — every code path that fires the name upsert writes consent first, and
+//      auto-create only happens on a send, which is consent-gated — so the
+//      opted-in scope below already covers them; no widening needed.
+//
+// Idempotent and safe to re-run whenever unnamed contacts show up.
 //
 // Run from the backend folder (needs SUPABASE_* + SIMPLETEXTING_API_TOKEN):
-//   node scripts/backfill-simpletexting-names.js --dry-run   # list only, NO API calls
-//   node scripts/backfill-simpletexting-names.js             # real upserts, LIVE account
+//   node scripts/backfill-simpletexting-names.js          # DRY RUN (default): read-only, nothing written
+//   node scripts/backfill-simpletexting-names.js --live   # real upserts, LIVE account
 //
 // Guardrails:
+//   - Dry run is the default; writing requires an explicit --live.
+//   - NEVER overwrites an existing name: each contact is GET-checked first
+//     and skipped if it already has any first/last name, so a name the
+//     office corrected by hand in the SimpleTexting UI survives re-runs.
+//     (A compare-against-our-DB check would NOT protect those — a hand
+//     correction differs from the DB by definition.) If the GET itself
+//     fails, the contact is NOT written — fail safe, counted as failed.
+//     Dry run does the same read-only GETs when SIMPLETEXTING_API_TOKEN is
+//     set, so its output is exactly what --live would do; without a token
+//     it lists candidates and says the named-check happens at run time.
 //   - Only opted-in && !opted-out consent rows are considered — the upsert
 //     would CREATE a missing contact, so scoping to consenters guarantees we
-//     never mint a contact for someone who didn't opt in.
+//     never mint a contact for someone who didn't opt in (this is also why
+//     opted-OUT customers' contacts stay unnamed on purpose: naming them
+//     could re-create a deleted contact for someone who said stop).
 //   - Reuses upsertSimpleTextingContact verbatim: upsert=true,
 //     listsReplacement=false (never touches list membership on the shared
 //     account), token in the auth header only, non-throwing.
@@ -23,15 +44,40 @@
 //   - Phones are masked (last 4) in all output; the token is never printed.
 
 require('dotenv').config();
-const { normalizePhone, upsertSimpleTextingContact } = require('../lib/sms');
+const { normalizePhone, upsertSimpleTextingContact, SIMPLETEXTING_BASE } = require('../lib/sms');
 const { supabaseAdmin } = require('../lib/supabase');
 
-const DRY_RUN = process.argv.includes('--dry-run');
+// Dry run unless --live is given; a stray --dry-run (the old opt-in flag)
+// always wins so the pre-2026-08 invocation can never go live by accident.
+const DRY_RUN = !process.argv.includes('--live') || process.argv.includes('--dry-run');
 const DELAY_MS = 400; // between SimpleTexting calls; a few hundred contacts max
 const PAGE_SIZE = 1000; // Supabase caps un-ranged selects at 1000 — page to be safe
 
 const maskPhone = (e164) => '***-***-' + String(e164).slice(-4);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Read-only: what does SimpleTexting hold for this contact right now?
+// 'named' means it has ANY first/last name — those are never written, so a
+// hand-corrected name in the UI can't be clobbered. Never throws; an
+// unreadable contact comes back as 'error' and the caller fails safe.
+async function getCurrentName(e164) {
+  try {
+    const resp = await fetch(SIMPLETEXTING_BASE + '/api/contacts/' + e164.replace(/^\+1/, ''), {
+      headers: {
+        // Token lives ONLY in this header — never in a log or error detail.
+        Authorization: 'Bearer ' + process.env.SIMPLETEXTING_API_TOKEN,
+        accept: 'application/json',
+      },
+    });
+    if (resp.status === 404) return { state: 'missing' };
+    if (!resp.ok) return { state: 'error', detail: 'SimpleTexting ' + resp.status };
+    const c = await resp.json().catch(() => null);
+    const existing = c ? [c.firstName, c.lastName].filter(Boolean).join(' ').trim() : '';
+    return existing ? { state: 'named', name: existing } : { state: 'unnamed' };
+  } catch (e) {
+    return { state: 'error', detail: (e && e.message) || String(e) };
+  }
+}
 
 async function fetchOptedInRows() {
   const rows = [];
@@ -76,34 +122,59 @@ async function fetchOptedInRows() {
     byPhone.set(e164, name);
   }
 
-  if (DRY_RUN) {
-    console.log('\nWould update ' + byPhone.size + ' contact(s):');
+  const haveToken = !!process.env.SIMPLETEXTING_API_TOKEN;
+
+  if (!haveToken) {
+    if (!DRY_RUN) {
+      console.error('SIMPLETEXTING_API_TOKEN is not set — aborting before any API call.');
+      process.exit(1);
+    }
+    // Token-less dry run: can't GET current names, so this is the candidate
+    // list only — the already-named check happens per contact at run time.
+    console.log('\n' + byPhone.size + ' candidate contact(s) — no SIMPLETEXTING_API_TOKEN, so current');
+    console.log('names were NOT checked; any contact that already has a name is skipped at run time:');
     for (const [e164, name] of byPhone) console.log('  ' + maskPhone(e164) + '  ' + name);
     console.log('\nDry run — no API calls made.');
-    console.log('Summary: ' + JSON.stringify(summary) + ' (updated = would-update count on a real run: ' + byPhone.size + ')\n');
+    console.log('Summary: ' + JSON.stringify(summary) + ' (candidates: ' + byPhone.size + ')\n');
     return;
   }
 
-  if (!process.env.SIMPLETEXTING_API_TOKEN) {
-    console.error('SIMPLETEXTING_API_TOKEN is not set — aborting before any API call.');
-    process.exit(1);
-  }
-
-  console.log('About to update ' + byPhone.size + ' contact(s) on the LIVE shared SimpleTexting account.\n');
+  console.log(
+    DRY_RUN
+      ? 'Checking ' + byPhone.size + ' contact(s) (read-only GETs, nothing written):\n'
+      : 'About to check-and-name ' + byPhone.size + ' contact(s) on the LIVE shared SimpleTexting account.\n'
+  );
 
   for (const [e164, name] of byPhone) {
-    // Never throws; a failure logs its own reason (token never included).
-    const result = await upsertSimpleTextingContact({ phone: e164, name });
-    if (result.ok) {
-      summary.updated++;
-      console.log('  OK    ' + maskPhone(e164) + '  ' + name);
-    } else {
+    const current = await getCurrentName(e164);
+    if (current.state === 'named') {
+      // Never overwrite: this preserves names the office fixed by hand.
+      summary.skipped++;
+      console.log('  SKIP  ' + maskPhone(e164) + '  already named "' + current.name + '"' +
+        (current.name === name ? '' : ' (ours would have been "' + name + '")'));
+    } else if (current.state === 'error') {
+      // Can't see the current name -> don't risk clobbering it.
       summary.failed++;
-      console.log('  FAIL  ' + maskPhone(e164) + '  ' + name + ' — ' + result.reason);
+      console.log('  FAIL  ' + maskPhone(e164) + '  name check failed (' + current.detail + ') — not written');
+    } else if (DRY_RUN) {
+      summary.updated++;
+      console.log('  WOULD NAME  ' + maskPhone(e164) + '  ' + name +
+        (current.state === 'missing' ? ' (no contact yet — would be created)' : ''));
+    } else {
+      // Never throws; a failure logs its own reason (token never included).
+      const result = await upsertSimpleTextingContact({ phone: e164, name });
+      if (result.ok) {
+        summary.updated++;
+        console.log('  OK    ' + maskPhone(e164) + '  ' + name);
+      } else {
+        summary.failed++;
+        console.log('  FAIL  ' + maskPhone(e164) + '  ' + name + ' — ' + result.reason);
+      }
     }
     await sleep(DELAY_MS);
   }
 
+  if (DRY_RUN) console.log('\nDry run — read-only, nothing written. (updated = would-name count)');
   console.log('\nSummary: ' + JSON.stringify(summary) + '\n');
   process.exit(summary.failed > 0 ? 1 : 0);
 })().catch((e) => {
