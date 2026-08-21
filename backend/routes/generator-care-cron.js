@@ -95,19 +95,21 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  else upcoming.push(s);
  }
 
-    // Look up visit statuses for upcoming subs to split tentative vs confirmed,
-    // and carry the booked appointment (date + arrival window) so confirmed
-    // rows can show WHEN the visit is booked, not just when it's due.
-    const upcomingSubIds = upcoming.map(s => s.id);
+    // Look up open (tentative/scheduled) visits for BOTH groups: upcoming subs
+    // split tentative vs confirmed and carry the booked appointment; passed-due
+    // subs split "needs scheduling" vs "awaiting completion" from the same rows.
+    const lookupSubIds = overdue.concat(upcoming).map(s => s.id);
     const statusBySubId = {};
     const bookedBySubId = {};
-    if (upcomingSubIds.length > 0) {
+    const visitsBySubId = {};
+    if (lookupSubIds.length > 0) {
       const { data: visits } = await supabaseAdmin
         .from('generator_service_visits')
         .select('subscription_id, status, appointment_at, arrival_window')
-        .in('subscription_id', upcomingSubIds)
+        .in('subscription_id', lookupSubIds)
         .in('status', ['tentative', 'scheduled']);
       for (const v of (visits || [])) {
+        (visitsBySubId[v.subscription_id] = visitsBySubId[v.subscription_id] || []).push(v);
         if (!statusBySubId[v.subscription_id]) statusBySubId[v.subscription_id] = v.status;
         if (!bookedBySubId[v.subscription_id] && v.status === 'scheduled' && v.appointment_at) {
           bookedBySubId[v.subscription_id] = { appointment_at: v.appointment_at, arrival_window: v.arrival_window };
@@ -116,6 +118,10 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
     }
     const upcomingTentative = upcoming.filter(s => statusBySubId[s.id] === 'tentative');
     const upcomingConfirmed = upcoming.filter(s => statusBySubId[s.id] !== 'tentative');
+
+    // A passed due date means two very different things depending on whether a
+    // visit is on the books — split so red stays meaningful.
+    const { needsScheduling, awaiting } = splitOverdue({ overdue, visitsBySubId, now: new Date() });
 
  // Also pull any failed addon charges + failed adhoc charges so we can surface them.
  // AND any past_due subscriptions (renewal charge failed; Stripe is retrying or
@@ -145,12 +151,14 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 
     // The digest must go out EVERY day. Amy's runbook treats a missing email as
     // an outage signal, so on a genuinely quiet day we still send — just a short
-    // "all quiet" note instead of suppressing the email entirely.
+    // "all quiet" note instead of suppressing the email entirely. overdue here
+    // is the WHOLE passed-due set (needsScheduling + awaiting), so a day with
+    // only awaiting-completion items still sends a full digest.
     const isQuiet = overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0;
 
     const { subject, html, text } = isQuiet
       ? buildQuietEmail({ todayStr })
-      : buildEmail({ overdue, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, todayStr });
+      : buildEmail({ needsScheduling, awaiting, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, todayStr });
 
  // Send via Brevo. A missing BREVO_API_KEY or a provider error throws below ->
  // caught -> 500 + Healthchecks '/fail' ping, so we hear about it.
@@ -168,7 +176,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  // Digest sent successfully -- signal the dead-man's switch.
  pingHealthcheck();
 
- res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
+ res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, needs_scheduling: needsScheduling.length, awaiting_completion: awaiting.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
  } catch (err) {
  // Signal failure to Healthchecks first so we hear about a crashed cron.
  pingHealthcheck('/fail');
@@ -353,16 +361,60 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
 
 // Helpers --------------------------------------------------
 
-function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], todayStr }) {
- const total = overdue.length + upcoming.length;
- const failedTotalForSubject = failedAddons.length + failedAdhoc.length;
-      const subject = pastDue.length > 0
-        ? 'Generator Care: ' + pastDue.length + ' PAST DUE' + (failedTotalForSubject ? ', ' + failedTotalForSubject + ' failed charge' + (failedTotalForSubject === 1 ? '' : 's') : '') + ', ' + overdue.length + ' overdue, ' + upcoming.length + ' due soon'
-        : failedTotalForSubject > 0
-        ? 'Generator Care: ' + failedTotalForSubject + ' FAILED CHARGE' + (failedTotalForSubject === 1 ? '' : 'S') + ', ' + overdue.length + ' overdue, ' + upcoming.length + ' due soon'
-        : overdue.length
- ? `Generator Care: ${overdue.length} OVERDUE, ${upcoming.length} due soon`
- : `Generator Care: ${upcoming.length} visit${upcoming.length === 1 ? '' : 's'} due in the next 14 days`;
+// Split passed-due subscriptions by what their OPEN visits (tentative/scheduled)
+// say, not by next_visit_due alone:
+//   needsScheduling — no dated open visit at all. The customer is actually
+//     falling through the cracks; this keeps the red, urgent treatment.
+//     NOTE: completing a visit auto-creates a tentative placeholder with a NULL
+//     appointment_at for the next cycle — a NULL-dated visit never counts as
+//     covering a passed due date, so those land here too.
+//   awaiting — a dated open visit exists. Either its appointment already passed
+//     (tech was there, record just isn't closed — paperwork lag) or it's booked
+//     for a future date (e.g. rescheduled past the due date). Both are handled;
+//     amber, not red. Each entry: { sub, visit, futureBooked }. When both a
+//     stale past visit and a future rebooked one exist, the future one is shown
+//     (the sub stays in this bucket until a completion advances the due date).
+function splitOverdue({ overdue, visitsBySubId, now }) {
+  const needsScheduling = [];
+  const awaiting = [];
+  const nowMs = now.getTime();
+  for (const s of overdue) {
+    const dated = (visitsBySubId[s.id] || []).filter(v => v.appointment_at);
+    if (!dated.length) { needsScheduling.push(s); continue; }
+    const future = dated
+      .filter(v => new Date(v.appointment_at).getTime() > nowMs)
+      .sort((a, b) => new Date(a.appointment_at) - new Date(b.appointment_at))[0];
+    const past = dated
+      .filter(v => new Date(v.appointment_at).getTime() <= nowMs)
+      .sort((a, b) => new Date(b.appointment_at) - new Date(a.appointment_at))[0];
+    awaiting.push({ sub: s, visit: future || past, futureBooked: !!future });
+  }
+  return { needsScheduling, awaiting };
+}
+
+// Subject reflects the passed-due split so red mornings and paperwork mornings
+// read differently at a glance: urgent buckets SHOUT (PAST DUE / FAILED CHARGES
+// / NEEDS SCHEDULING), awaiting-completion stays lowercase.
+function buildSubject({ pastDueCount = 0, failedCount = 0, needsSchedulingCount = 0, awaitingCount = 0, upcomingCount = 0 }) {
+  const parts = [];
+  if (pastDueCount) parts.push(pastDueCount + ' PAST DUE');
+  if (failedCount) parts.push(failedCount + ' FAILED CHARGE' + (failedCount === 1 ? '' : 'S'));
+  if (needsSchedulingCount) parts.push(needsSchedulingCount + ' NEED' + (needsSchedulingCount === 1 ? 'S' : '') + ' SCHEDULING');
+  if (awaitingCount) parts.push(awaitingCount + ' awaiting completion');
+  if (!parts.length) return 'Generator Care: ' + upcomingCount + ' visit' + (upcomingCount === 1 ? '' : 's') + ' due in the next 14 days';
+  parts.push(upcomingCount + ' due soon');
+  return 'Generator Care: ' + parts.join(', ');
+}
+
+function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], todayStr }) {
+ const total = needsScheduling.length + awaiting.length + upcoming.length;
+ const subject = buildSubject({
+   pastDueCount: pastDue.length,
+   failedCount: failedAddons.length + failedAdhoc.length,
+   needsSchedulingCount: needsScheduling.length,
+   awaitingCount: awaiting.length,
+   upcomingCount: upcoming.length,
+ });
 
  const dashboardUrl = 'https://app.bates-electric.com/generator-care.html';
 
@@ -391,14 +443,30 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  return `${day} · ${time} CT`;
  };
 
- const rowHtml = (s, kind) => {
+ // kind: 'needs_scheduling' (red, nothing booked), 'awaiting' (amber, visit on
+ // the books — awaitInfo carries which visit), 'upcoming' (tentative/confirmed).
+ const rowHtml = (s, kind, awaitInfo) => {
  const c = s.customer || {};
  const d = daysUntil(s.next_visit_due);
- const dueText = kind === 'overdue'
+ const dueText = kind === 'needs_scheduling'
  ? `${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} OVERDUE`
+ : kind === 'awaiting'
+ ? `Due ${fmtDate(s.next_visit_due)} - ${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} ago`
  : (d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : `In ${d} days  | ${fmtDate(s.next_visit_due)}`);
- const dueColor = kind === 'overdue' ? '#b91c1c' : (d <= 7 ? '#b45309' : '#1F3A5F');
- const bookedStr = kind === 'overdue' ? '' : fmtBooked(bookedBySubId[s.id]);
+ const dueColor = kind === 'needs_scheduling' ? '#b91c1c' : kind === 'awaiting' ? '#b45309' : (d <= 7 ? '#b45309' : '#1F3A5F');
+ // The appointment is the whole point of an awaiting row: show when the tech
+ // was there (or will be). Needs-scheduling rows have nothing to show.
+ let bookedLine = '';
+ if (kind === 'awaiting' && awaitInfo && awaitInfo.visit) {
+ const when = fmtBooked(awaitInfo.visit);
+ bookedLine = awaitInfo.futureBooked
+ ? (awaitInfo.visit.status === 'tentative' ? 'Tentatively booked ' : 'Booked ') + when
+ : 'Visit was ' + when + ' - not marked complete';
+ } else if (kind === 'upcoming') {
+ const b = fmtBooked(bookedBySubId[s.id]);
+ if (b) bookedLine = 'Booked ' + b;
+ }
+ const bookedColor = kind === 'awaiting' ? '#b45309' : '#1F3A5F';
  const addr = [c.install_city, c.install_state].filter(Boolean).join(', ');
  return `
  <tr>
@@ -412,7 +480,7 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  </td>
  <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;vertical-align:top;color:${dueColor};font-size:13px;font-weight:600;text-align:right;white-space:nowrap;">
  ${dueText}
- ${bookedStr ? `<div style="color:#1F3A5F;font-size:12px;font-weight:600;margin-top:2px;">Booked ${escapeHtml(bookedStr)}</div>` : ''}
+ ${bookedLine ? `<div style="color:${bookedColor};font-size:12px;font-weight:600;margin-top:2px;">${escapeHtml(bookedLine)}</div>` : ''}
  </td>
  </tr>
  `;
@@ -476,12 +544,14 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
         return h;
       }
 
-      const section = (title, rows, color) => {
+      // 'awaiting' rows arrive as { sub, visit, futureBooked } wrappers; the
+      // other kinds are plain subscription rows.
+      const section = (title, rows, color, kind = 'upcoming') => {
  if (!rows.length) return '';
  return `
  <h3 style="margin:24px 0 8px;color:${color};font-size:14px;text-transform:uppercase;letter-spacing:0.06em;">${title} (${rows.length})</h3>
  <table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
- ${rows.map(r => rowHtml(r, color === '#b91c1c' ? 'overdue' : 'upcoming')).join('')}
+ ${rows.map(r => kind === 'awaiting' ? rowHtml(r.sub, kind, r) : rowHtml(r, kind)).join('')}
  </table>
  `;
  };
@@ -498,10 +568,13 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  <div style="background:#fff;padding:20px 24px;border-radius:0 0 8px 8px;border:1px solid #e5e7eb;border-top:none;">
  <p style="margin:0;color:#374151;font-size:14px;">
  ${total} customer${total === 1 ? '' : 's'} need attention in the next 14 days.
- ${overdue.length ? `<strong style="color:#b91c1c;">${overdue.length} overdue.</strong>` : ''}
+ ${needsScheduling.length ? `<strong style="color:#b91c1c;">${needsScheduling.length} need${needsScheduling.length === 1 ? 's' : ''} scheduling.</strong>` : ''}
+ ${awaiting.length ? `<span style="color:#b45309;font-weight:600;">${awaiting.length} awaiting completion.</span>` : ''}
  </p>
  ${renderPastDueSection(pastDue)}
- ${section('Overdue', overdue, '#b91c1c')}
+ ${section('Overdue - needs scheduling', needsScheduling, '#b91c1c', 'needs_scheduling')}
+ ${section('Awaiting completion', awaiting, '#b45309', 'awaiting')}
+          ${awaiting.length ? `<p style="margin:6px 0 14px;color:#6b7280;font-size:12px;line-height:1.5;">These had a visit on the books when the due date passed. If the visit already happened, mark it complete in the dashboard &mdash; that clears it and advances the next due date.</p>` : ''}
  ${section('Tentative - please confirm with customer', upcomingTentative, '#D97706')}
           ${upcomingTentative.length ? `<p style="margin:6px 0 14px;color:#6b7280;font-size:12px;line-height:1.5;">New signups land here first. For each: create the Jonas work order (internal record), then open the customer in the dashboard and click <strong>Mark work order created</strong> &mdash; that stamps it and gives you a copy-paste work-order packet. (Customers aren&rsquo;t invoiced &mdash; the branded receipt is their record.)</p>` : ''}
           ${section('Confirmed visits - due in next 14 days', upcomingConfirmed, '#1F3A5F')}
@@ -534,13 +607,24 @@ function buildEmail({ overdue, upcoming, upcomingTentative = [], upcomingConfirm
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)} ${s.gen_model || ''}  -  ${planLabel(s.plan)}  -  ${c.phone || c.email || ''}`);
  }
  }
- if (overdue.length) {
+ if (needsScheduling.length) {
  textLines.push('');
- textLines.push(`OVERDUE (${overdue.length}):`);
- for (const s of overdue) {
+ textLines.push(`OVERDUE - NEEDS SCHEDULING (${needsScheduling.length}):`);
+ for (const s of needsScheduling) {
  const c = s.customer || {};
  const d = daysUntil(s.next_visit_due);
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  ${Math.abs(d)} days overdue  -  ${c.phone || ''}`);
+ }
+ }
+ if (awaiting.length) {
+ textLines.push('');
+ textLines.push(`AWAITING COMPLETION (${awaiting.length}):`);
+ for (const a of awaiting) {
+ const s = a.sub;
+ const c = s.customer || {};
+ const when = fmtBooked(a.visit);
+ const visitStr = a.futureBooked ? `booked ${when}` : `visit was ${when} - not marked complete`;
+ textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)}  -  due ${fmtDate(s.next_visit_due)}  -  ${visitStr}  -  ${c.phone || ''}`);
  }
  }
  if (upcomingTentative.length) {
@@ -637,4 +721,4 @@ function escapeHtml(s) {
 module.exports = router;
 // Offline-test seam (same pattern as generator-webhook.js) — lets the reminder
 // pass run with a pinned clock and mocked supabase, no HTTP/cron secret needed.
-module.exports._test = { runReminderPass, runNudgeRetryPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES };
+module.exports._test = { runReminderPass, runNudgeRetryPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail };
