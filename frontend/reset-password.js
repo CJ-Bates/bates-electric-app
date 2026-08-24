@@ -90,6 +90,44 @@
     const form = document.getElementById('reset-form');
     const formMsg = document.getElementById('reset-form-msg');
     const submitBtn = document.getElementById('reset-submit');
+    const newHint = document.getElementById('reset-new-hint');
+    const confirmHint = document.getElementById('reset-confirm-hint');
+
+    // Password rule. Supabase's own floor is 6, and /auth/reset-password
+    // enforces 8 — so a 6–7 character password looks fine to the user and
+    // gets rejected. State the rule beside the field and grade it live, so
+    // the user knows BEFORE submitting rather than from an error after.
+    const MIN_LEN = 8;
+    const LEN_RULE = `At least ${MIN_LEN} characters.`;
+    const MATCH_RULE = 'Must match the password above.';
+
+    function setHint(el, text, grade) {
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('ok', 'bad');
+      if (grade) el.classList.add(grade);
+    }
+
+    // Called on every keystroke and on submit. `strict` = grade empty fields
+    // as failing too (submit); otherwise untouched fields stay neutral.
+    function updateHints(strict) {
+      const pw = newInput.value;
+      const cf = confirmInput.value;
+      let lenOk = pw.length >= MIN_LEN;
+      let matchOk = cf.length > 0 && cf === pw;
+
+      if (pw.length === 0 && !strict) setHint(newHint, LEN_RULE, '');
+      else if (lenOk) setHint(newHint, `At least ${MIN_LEN} characters ✓`, 'ok');
+      else setHint(newHint, `At least ${MIN_LEN} characters — ${MIN_LEN - pw.length} more to go.`, 'bad');
+
+      if (cf.length === 0 && !strict) setHint(confirmHint, MATCH_RULE, '');
+      else if (matchOk) setHint(confirmHint, 'Passwords match ✓', 'ok');
+      else setHint(confirmHint, 'Doesn’t match the password above yet.', 'bad');
+
+      return { lenOk, matchOk };
+    }
+    newInput.addEventListener('input', () => { hideMsg(formMsg); updateHints(false); });
+    confirmInput.addEventListener('input', () => { hideMsg(formMsg); updateHints(false); });
 
     const checkingEl = document.getElementById('link-checking');
     const deadEl = document.getElementById('link-dead');
@@ -143,6 +181,8 @@
       // the new password.
       if (email && emailInput) emailInput.value = email;
       tagline.textContent = 'Choose a password to continue';
+      setHint(newHint, LEN_RULE, '');
+      setHint(confirmHint, MATCH_RULE, '');
       showPanel('form');
       setFormEnabled(true);
       newInput.focus();
@@ -200,14 +240,14 @@
       }
 
       const newPw = newInput.value;
-      const confirmPw = confirmInput.value;
+      const { lenOk, matchOk } = updateHints(true);
 
-      if (newPw.length < 8) {
-        showMsg(formMsg, 'Password must be at least 8 characters.', 'error');
+      if (!lenOk) {
+        showMsg(formMsg, `Password must be at least ${MIN_LEN} characters.`, 'error');
         newInput.focus();
         return;
       }
-      if (newPw !== confirmPw) {
+      if (!matchOk) {
         showMsg(formMsg, 'Passwords do not match.', 'error');
         confirmInput.focus();
         return;

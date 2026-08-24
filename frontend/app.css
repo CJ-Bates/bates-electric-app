@@ -382,6 +382,12 @@ input:focus-visible {
 }
 .link-panel .link-panel-foot[hidden] { display: none; }
 
+/* Live password-requirement hints under the set-password fields. Neutral
+   until the user types; then either met (green) or not yet (red). */
+.req-hint { transition: color var(--dur-fast); }
+.req-hint.ok  { color: var(--ok); }
+.req-hint.bad { color: var(--danger); }
+
 /* In-card message (validation + server errors, resend confirmation). */
 .inline-msg {
   margin: 0;
