@@ -307,6 +307,96 @@ input:focus-visible {
    every page shows a small empty toast pill in the corner. */
 .status[hidden] { display: none; }
 
+/* Set-password page link states (reset-password.html). A dead or verified
+   link takes over the card — heading + explanation + a way out — instead of
+   whispering through the corner toast, which first-time users never see. */
+.link-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--info-bg);
+  color: var(--info);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.link-notice[hidden] { display: none; }
+.link-notice-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: link-spin 0.8s linear infinite;
+}
+@keyframes link-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .link-notice-spinner { animation: none; }
+}
+
+.link-panel { text-align: center; padding-top: 4px; }
+.link-panel[hidden] { display: none; }
+.link-panel-icon {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.link-panel-dead .link-panel-icon { background: var(--danger-bg); color: var(--danger); }
+.link-panel-ok   .link-panel-icon { background: var(--ok-bg);     color: var(--ok); }
+.link-panel h2 {
+  margin: 0 0 8px;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  color: var(--ink);
+  outline: none;
+}
+.link-panel p {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+.link-panel .btn { width: 100%; margin-top: 4px; }
+.link-panel .btn[hidden] { display: none; }
+.link-panel .resend-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+}
+.link-panel .resend-form[hidden] { display: none; }
+.link-panel .link-panel-foot {
+  margin-top: 16px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.link-panel .link-panel-foot[hidden] { display: none; }
+
+/* In-card message (validation + server errors, resend confirmation). */
+.inline-msg {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: left;
+}
+.inline-msg[hidden] { display: none; }
+.inline-msg.error   { background: var(--danger-bg); color: var(--danger); }
+.inline-msg.success { background: var(--ok-bg);     color: var(--ok); }
+.inline-msg.info    { background: var(--info-bg);   color: var(--info); }
+
 .legal {
   margin-top: 22px;
   padding-top: 18px;
