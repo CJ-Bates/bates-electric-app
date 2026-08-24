@@ -61,7 +61,7 @@ test('returns the customer\'s full message history (safe fields, scoped to the c
   // their phone), order newest-first, and cap rows.
   const chain = w.messageChains.find((c) => c.some((s) => s.method === 'or'));
   const or = chain.find((c) => c.method === 'or');
-  assert.equal(or.args[0], 'customer_id.eq.' + CUSTOMER_ID + ',and(direction.eq.in,from_phone.eq.+16365550100)');
+  assert.equal(or.args[0], 'customer_id.eq.' + CUSTOMER_ID + ',and(direction.eq.in,from_phone.eq.+16365550100,customer_id.is.null)');
   const order = chain.find((c) => c.method === 'order');
   assert.equal(order.args[0], 'created_at');
   assert.equal(order.args[1].ascending, false);

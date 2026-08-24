@@ -388,7 +388,9 @@ test('thread: returns messages, the reply eligibility block, and matches inbound
   const chain = w.messageChains.find((c) => c.some((s) => s.method === 'or'));
   assert.ok(chain, 'thread query uses an OR of customer_id and inbound-by-phone');
   const or = chain.find((s) => s.method === 'or');
-  assert.equal(or.args[0], 'customer_id.eq.' + CUSTOMER_ID + ',and(direction.eq.in,from_phone.eq.' + PHONE + ')');
+  // Phone match is restricted to UNMATCHED rows: a shared number (spouses,
+  // property manager) must not pull another record's attributed texts in.
+  assert.equal(or.args[0], 'customer_id.eq.' + CUSTOMER_ID + ',and(direction.eq.in,from_phone.eq.' + PHONE + ',customer_id.is.null)');
   const select = chain.find((s) => s.method === 'select');
   assert.ok(select.args[0].includes('sent_by:profiles!generator_sms_messages_sent_by_profile_id_fkey(full_name, email)'));
   assert.ok(!select.args[0].includes('to_phone') && !select.args[0].includes('from_phone'), 'phones stay out of the response');

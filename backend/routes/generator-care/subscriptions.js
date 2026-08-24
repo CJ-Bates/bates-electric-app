@@ -473,7 +473,10 @@ router.get('/subscriptions/:id/stripe-data', async (req, res) => {
 //   - Inbound rows are matched by the customer's phone as well as customer_id.
 //     The webhook logs a text from a number with no consent row as unmatched
 //     (customer_id null) — a not-opted-in customer's question would otherwise
-//     be invisible in the very thread the office replies from.
+//     be invisible in the very thread the office replies from. The phone
+//     match takes ONLY those unmatched rows: two records can share a number
+//     (spouses, a property manager with several generators), and a text the
+//     webhook already attributed to the other record must not appear here.
 //   - Operator replies carry who sent them (sent_by, via sql/034).
 //   - `reply` says whether the office may text this customer right now and
 //     WHY NOT when it can't (lib/sms.js operatorReplyEligibility), plus the
@@ -496,7 +499,7 @@ router.get('/subscriptions/:id/sms-messages', async (req, res) => {
       .from('generator_sms_messages')
       .select('created_at, direction, status, detail, body, related_visit_id, provider_id, sent_by_profile_id, sent_by:profiles!generator_sms_messages_sent_by_profile_id_fkey(full_name, email)');
     q = phone
-      ? q.or('customer_id.eq.' + sub.customer_id + ',and(direction.eq.in,from_phone.eq.' + phone + ')')
+      ? q.or('customer_id.eq.' + sub.customer_id + ',and(direction.eq.in,from_phone.eq.' + phone + ',customer_id.is.null)')
       : q.eq('customer_id', sub.customer_id);
     const { data: rows, error: msgErr } = await q
       .order('created_at', { ascending: false })
