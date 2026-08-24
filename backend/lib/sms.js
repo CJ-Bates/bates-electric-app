@@ -14,6 +14,11 @@
 // HARD RULES (see the Phase 1 spec):
 //   - Nothing sends while SMS_ENABLED !== 'true' (kill-switch, default off).
 //   - Sends go only to a phone with an opted_in && !opted_out consent row.
+//     ONE exception, for office replies only (sendSms replyToInbound): a
+//     phone that is NOT opted out and texted us within
+//     OPERATOR_REPLY_WINDOW_DAYS may be answered — a consumer-initiated
+//     message is an invitation to respond. opted_out is absolute: nothing
+//     overrides a STOP.
 //   - No sends outside quiet hours (8am-9pm customer local time; every
 //     customer is Central — there is no timezone column) unless the send is a
 //     direct reply to a message the customer just sent us.
@@ -86,6 +91,65 @@ function withinQuietHours(now) {
     timeZone: 'America/Chicago', hour: 'numeric', hour12: false,
   }).format(now || new Date()));
   return hour >= 8 && hour < 21;
+}
+
+// ============================================================================
+// Operator replies (two-way SMS from the customer record).
+//
+// OPERATOR_REPLY_WINDOW_DAYS exists because a customer who texts us first has
+// opened a conversation, and answering it is normal even when they never
+// ticked the appointment-texts consent box — but that invitation is not
+// permanent. Past the window, an office message to a non-consenting number
+// is a cold text again and needs real consent. 30 days is the working
+// definition of "recent" here; it is a judgement call (see the two-way SMS
+// spec), not a carrier rule. The window also decides quiet-hours handling:
+// only a reply inside it may use ignoreQuietHours.
+//
+// Recency is judged by phone (generator_sms_messages.from_phone), not by
+// customer_id: an inbound from a number with no consent row is logged by the
+// webhook as unmatched (customer_id null), and that is exactly the
+// not-opted-in customer this window is for.
+// ============================================================================
+const OPERATOR_REPLY_WINDOW_DAYS = 30;
+const OPERATOR_REPLY_WINDOW_MS = OPERATOR_REPLY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+// Newest inbound text from this phone inside the window: its created_at ISO
+// string, or null. Throws on a query failure (callers decide how to refuse).
+async function latestRecentInboundAt(e164, now) {
+  const cutoff = new Date((now || new Date()).getTime() - OPERATOR_REPLY_WINDOW_MS).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from('generator_sms_messages')
+    .select('created_at')
+    .eq('direction', 'in')
+    .eq('from_phone', e164)
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return (data && data[0] && data[0].created_at) || null;
+}
+
+// Can the office text this phone right now, and on what basis? Shared by the
+// office thread endpoint (so the UI can disable the reply box and say WHICH
+// rule blocked it) and the reply endpoint. sendSms re-runs the same rules
+// itself — this is the explanation, sendSms is the enforcement.
+//   { allowed, reason, opted_in, opted_out, last_inbound_at, recent_inbound }
+//   reason: 'consent' | 'recent_inbound' (allowed)
+//           'opted_out' | 'no_consent_no_recent_inbound' | 'invalid_phone'
+async function operatorReplyEligibility({ phone, customerId, now }) {
+  const e164 = normalizePhone(phone);
+  const out = { allowed: false, reason: 'invalid_phone', opted_in: false, opted_out: false, last_inbound_at: null, recent_inbound: false };
+  if (!e164) return out;
+  const consentRows = await getConsent({ phone: e164, customerId });
+  out.opted_out = consentRows.some((r) => r.opted_out);
+  out.opted_in = consentRows.some((r) => r.opted_in);
+  out.last_inbound_at = await latestRecentInboundAt(e164, now);
+  out.recent_inbound = !!out.last_inbound_at;
+  if (out.opted_out) { out.reason = 'opted_out'; return out; }        // absolute, checked first
+  if (out.opted_in) { out.allowed = true; out.reason = 'consent'; return out; }
+  if (out.recent_inbound) { out.allowed = true; out.reason = 'recent_inbound'; return out; }
+  out.reason = 'no_consent_no_recent_inbound';
+  return out;
 }
 
 // ============================================================================
@@ -389,9 +453,15 @@ async function upsertSimpleTextingContact({ phone, name }) {
 //         logBody? (what to store in generator_sms_messages instead of body —
 //           used to redact secrets like magic-link URLs from the log; the
 //           wire still carries the real body),
-//         now? (test seam for the quiet-hours clock) }
+//         replyToInbound? (office reply: a phone with no opt-in may still be
+//           answered when it texted us within OPERATOR_REPLY_WINDOW_DAYS —
+//           the recency check runs HERE, so a caller's flag alone can't
+//           unlock a send; opted_out still refuses unconditionally),
+//         sentBy? (profiles.id of the office user who composed the message —
+//           operator replies only; stored as sent_by_profile_id, sql/034),
+//         now? (test seam for the quiet-hours / reply-window clock) }
 // ============================================================================
-async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, now }) {
+async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, replyToInbound, sentBy, now }) {
   const accountPhone = normalizePhone(process.env.SIMPLETEXTING_ACCOUNT_PHONE) || null;
   const e164 = normalizePhone(toPhone);
   const base = {
@@ -402,6 +472,9 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
     customer_id: customerId || null,
     related_visit_id: relatedVisitId || null,
   };
+  // Only operator replies carry the audit column — automated sends keep the
+  // exact row shape they had before sql/034.
+  if (sentBy) base.sent_by_profile_id = sentBy;
   const refuse = async (status, detail) => {
     await logSmsMessage({ ...base, status, detail: detail || null });
     return { sent: false, status, reason: detail || status };
@@ -417,7 +490,20 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
     return refuse('failed', 'consent lookup failed: ' + ((e && e.message) || e));
   }
   if (consentRows.some((r) => r.opted_out)) return refuse('opted_out');
-  if (!consentRows.some((r) => r.opted_in)) return refuse('no_consent');
+  let sentDetail = null;
+  if (!consentRows.some((r) => r.opted_in)) {
+    // No opt-in. The only way through is an office reply to a text the
+    // customer sent us recently — verified against the log right here.
+    if (!replyToInbound) return refuse('no_consent');
+    let lastInboundAt;
+    try {
+      lastInboundAt = await latestRecentInboundAt(e164, now);
+    } catch (e) {
+      return refuse('failed', 'inbound lookup failed: ' + ((e && e.message) || e));
+    }
+    if (!lastInboundAt) return refuse('no_consent', 'no opt-in and no text from them within ' + OPERATOR_REPLY_WINDOW_DAYS + ' days');
+    sentDetail = 'reply to customer-initiated text (no opt-in; their last text ' + lastInboundAt + ')';
+  }
 
   // Kill-switch: log the full would-be message, send nothing.
   if (!smsEnabled()) return refuse('disabled', 'SMS_ENABLED is not true');
@@ -462,7 +548,7 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
       return refuse('failed', detail);
     }
     const data = await resp.json().catch(() => ({}));
-    await logSmsMessage({ ...base, status: 'sent', provider_id: (data && data.id) || null });
+    await logSmsMessage({ ...base, status: 'sent', provider_id: (data && data.id) || null, detail: sentDetail });
     console.log('[sms] sent to ' + e164 + (relatedVisitId ? ' (visit ' + relatedVisitId + ')' : ''));
     return { sent: true, status: 'sent' };
   } catch (e) {
@@ -595,6 +681,9 @@ module.exports = {
   normalizePhone,
   smsEnabled,
   withinQuietHours,
+  OPERATOR_REPLY_WINDOW_DAYS,
+  latestRecentInboundAt,
+  operatorReplyEligibility,
   smsBrand,
   fmtSmsDate,
   smsWindowText,

@@ -96,6 +96,26 @@
     .gc-card-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
     .gc-card-row:last-child { border-bottom: none; padding-bottom: 0; }
     .gc-card-row:first-of-type { padding-top: 0; }
+    /* Two-way SMS thread (Text Message History card): inbound left on the
+       neutral surface, outbound right on the info tint, refused outbound
+       dashed so a blocked send never reads as delivered. */
+    .gc-sms-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .gc-sms-thread { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto; padding: 4px 2px; }
+    .gc-sms-msg { display: flex; flex-direction: column; max-width: 85%; }
+    .gc-sms-in { align-self: flex-start; align-items: flex-start; }
+    .gc-sms-out { align-self: flex-end; align-items: flex-end; }
+    .gc-sms-bubble { padding: 8px 12px; border-radius: 14px; font-size: 0.88rem; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }
+    .gc-sms-in .gc-sms-bubble { background: var(--surface-2); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .gc-sms-out .gc-sms-bubble { background: var(--info-bg); border: 1px solid color-mix(in srgb, var(--info) 25%, transparent); border-bottom-right-radius: 4px; }
+    .gc-sms-refused .gc-sms-bubble { background: var(--surface); border: 1px dashed var(--warn); color: var(--ink-2); }
+    .gc-sms-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 3px; font-size: 0.78rem; color: var(--ink-3); }
+    .gc-sms-tag { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 0.75rem; color: var(--ink-2); }
+    .gc-sms-reply { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .gc-sms-reply textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 0.88rem; line-height: 1.5; resize: vertical; min-height: 64px; }
+    .gc-sms-reply textarea:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+    .gc-sms-reply-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
+    .gc-sms-note, .gc-sms-reply-blocked { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .gc-sms-note { margin-bottom: 8px; }
     .gc-meta-label { color: var(--ink-2); font-size: 0.82rem; }
     .gc-meta-value { color: var(--ink); font-weight: 600; font-size: 0.88rem; }
     .gc-card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); justify-content: flex-end; }
@@ -151,6 +171,8 @@
       .gc-card-actions .btn { width: 100%; justify-content: center; }
       .gc-card-row { flex-direction: column; gap: 4px; }
       .gc-card-row .gc-meta-value { font-size: 1rem; }
+      .gc-sms-msg { max-width: 94%; }
+      .gc-sms-reply-actions { flex-direction: column; align-items: stretch; }
       .gc-danger-zone { flex-direction: column; align-items: stretch; text-align: center; }
       .gc-danger-zone .btn { width: 100%; justify-content: center; }
     }
