@@ -1556,11 +1556,14 @@
     </div>`;
   }
 
-  // Text message history (SMS Phase 1 follow-up). SimpleTexting's UI only
-  // shows a conversation once the customer REPLIES — outbound-only threads
-  // (opt-in confirmation, booking confirmation, reminders, nudges) are
-  // invisible there. generator_sms_messages has the complete record, so this
-  // card is the definitive "did they get their confirmation?" answer.
+  // Text message history (SMS Phase 1 follow-up, two-way since the SMS
+  // thread work). SimpleTexting's UI only shows a conversation once the
+  // customer REPLIES — outbound-only threads (opt-in confirmation, booking
+  // confirmation, reminders, nudges) are invisible there. generator_sms_messages
+  // has the complete record, so this card is the definitive "did they get
+  // their confirmation?" answer — and, now, where the office answers a
+  // customer's text (reply box at the bottom of the thread; consent rules
+  // live in lib/sms.js and are only mirrored here for the operator's benefit).
   //
   // Both history cards (SMS + Email) are collapsed <details> by default — the
   // record was getting long. The whole point of these cards is spotting a
@@ -1633,24 +1636,158 @@
     }
   }
 
-  function renderSmsHistoryRow(m) {
-    const dirLabel = m.direction === 'in' ? 'From customer' : 'To customer';
-    const visitTag = m.related_visit_id
-      ? ` <span class="gc-meta-label" style="border:1px solid var(--line);border-radius:4px;padding:0 5px;">visit</span>`
+  // Who sent an operator reply — the office member's name, else their email.
+  function smsSenderLabel(m) {
+    const p = m.sent_by;
+    if (!p) return '';
+    return fmtNameCase(p.full_name) || p.email || 'office';
+  }
+
+  // One bubble in the conversation. Inbound sits left, outbound right; every
+  // outbound keeps its status chip so a refused send ("Not sent — no consent")
+  // reads as a blocked bubble, never a delivered one. Bodies are
+  // attacker-controllable free text from the inbound webhook — always escaped.
+  function renderSmsBubble(m) {
+    const inbound = m.direction === 'in';
+    const visitTag = m.related_visit_id ? ` <span class="gc-sms-tag">visit</span>` : '';
+    const sender = !inbound && m.sent_by
+      ? ` <span>&middot; sent by ${escapeHtml(smsSenderLabel(m))}</span>`
       : '';
     // Failure reason (never the API token — lib/sms.js keeps it out of the log).
     const failDetail = (m.status === 'failed' || m.status === 'invalid_phone') && m.detail
       ? `<div class="gc-meta-label" style="margin-top:2px;color:var(--danger);">${escapeHtml(m.detail)}</div>`
       : '';
-    return `<div class="gc-card-row" style="display:block;">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <span class="gc-meta-value">${escapeHtml(fmtDateTime(m.created_at))}</span>
-        <span class="gc-meta-label">${dirLabel}</span>
-        ${smsHistoryChip(m)}${visitTag}
+    const refused = !inbound && m.status !== 'sent';
+    return `<div class="gc-sms-msg ${inbound ? 'gc-sms-in' : 'gc-sms-out'}${refused ? ' gc-sms-refused' : ''}">
+      <div class="gc-sms-bubble">${escapeHtml(m.body || '')}</div>
+      <div class="gc-sms-meta">
+        <span>${escapeHtml(fmtDateTime(m.created_at))}</span>
+        ${smsHistoryChip(m)}${visitTag}${sender}
       </div>
-      <div style="margin-top:4px;font-size:0.83rem;color:var(--ink-2);white-space:pre-line;overflow-wrap:anywhere;">${escapeHtml(m.body || '')}</div>
       ${failDetail}
     </div>`;
+  }
+
+  // Live character / segment count for the reply box. GSM-7 covers plain
+  // ASCII plus a few accented letters (160 chars per single text, 153 per
+  // part when split; ^{}\[~]|€ count double). Anything outside it — curly
+  // quotes, emoji, an em dash — flips the whole message to UCS-2 (70 / 67).
+  // Advisory only; the provider does the real segmentation.
+  const GSM7_BASIC_RE = /^[\u0040\u00A3\u0024\u00A5\u00E8\u00E9\u00F9\u00EC\u00F2\u00C7\n\u00D8\u00F8\r\u00C5\u00E5\u0394_\u03A6\u0393\u039B\u03A9\u03A0\u03A8\u03A3\u0398\u039E\u00C6\u00E6\u00DF\u00C9 !"#\u00A4%&'()*+,\-./0-9:;<=>?\u00A1A-Z\u00C4\u00D6\u00D1\u00DC\u00A7\u00BFa-z\u00E4\u00F6\u00F1\u00FC\u00E0]$/;
+  const GSM7_EXT_RE = /^[\^{}\\\[~\]|\u20AC]$/;
+  function smsSegments(text) {
+    const s = String(text || '');
+    let units = 0;
+    let gsm = true;
+    for (const ch of s) {
+      if (GSM7_BASIC_RE.test(ch)) units += 1;
+      else if (GSM7_EXT_RE.test(ch)) units += 2;
+      else { gsm = false; break; }
+    }
+    if (!gsm) {
+      const len = s.length; // UTF-16 units, which is what UCS-2 counts
+      return { chars: len, segments: len === 0 ? 0 : (len <= 70 ? 1 : Math.ceil(len / 67)), encoding: 'UCS-2' };
+    }
+    return { chars: s.length, segments: units === 0 ? 0 : (units <= 160 ? 1 : Math.ceil(units / 153)), encoding: 'GSM-7' };
+  }
+
+  // Reply box state comes from the thread endpoint's `reply` block (lib/sms.js
+  // operatorReplyEligibility). A blocked box names WHICH rule blocked it —
+  // "opted out" and "no consent + nothing recent from them" are different
+  // problems with different fixes. This is for the operator's benefit only;
+  // the backend enforces the same rules on every send regardless.
+  function renderSmsReplyBox(reply) {
+    if (!reply) return '';
+    const days = reply.window_days || 30;
+    const blocked = (chipText, why) => `<div class="gc-sms-reply gc-sms-reply-blocked" id="gc-sms-reply-box">
+        <span class="chip chip-warn">${chipText}</span> <span class="gc-meta-label">${why}</span>
+      </div>`;
+    if (!reply.allowed) {
+      switch (reply.reason) {
+        case 'opted_out':
+          return blocked('Opted out', 'This customer sent STOP. Texts can\'t be sent to this number &mdash; replies are off.');
+        case 'invalid_phone':
+          return blocked('No mobile number', 'No usable mobile number on file for this customer.');
+        default:
+          return blocked('No consent', `No text consent on file and no text from them in the last ${days} days. Record consent (above) to text them, or wait for them to text first.`);
+      }
+    }
+    // Allowed, but a cold send (no recent text from them) outside 8am-9pm
+    // Central would only be refused by quiet hours — don't offer it.
+    if (reply.quiet_hours_now && !reply.recent_inbound) {
+      return blocked('Quiet hours', `It's outside 8am&ndash;9pm Central and this customer hasn't texted in the last ${days} days, so a text now would be blocked. Try again after 8am.`);
+    }
+    const notes = [];
+    if (reply.reason === 'recent_inbound') {
+      notes.push(`<div class="gc-sms-note"><span class="chip chip-neutral">No consent on file</span> <span class="gc-meta-label">They texted first, so answering is allowed for ${days} days from their last text (${escapeHtml(fmtDateTime(reply.last_inbound_at))}).</span></div>`);
+    }
+    if (reply.quiet_hours_now) {
+      notes.push(`<div class="gc-sms-note"><span class="chip chip-warn">Outside 8am&ndash;9pm Central</span> <span class="gc-meta-label">They texted recently, so a reply will send now anyway &mdash; you'll be asked to confirm.</span></div>`);
+    }
+    return `<div class="gc-sms-reply" id="gc-sms-reply-box">
+      ${notes.join('')}
+      <textarea id="gc-sms-reply-text" rows="3" maxlength="1000" placeholder="Type a reply\u2026" aria-label="Reply by text"></textarea>
+      <div class="gc-sms-reply-actions">
+        <span class="gc-meta-label" id="gc-sms-reply-count"></span>
+        <button type="button" class="btn btn-primary btn-sm" id="gc-sms-reply-send" disabled>Send text</button>
+      </div>
+    </div>`;
+  }
+
+  function wireSmsReplyBox(scope, subId, customerId, reply) {
+    const ta = scope.querySelector('#gc-sms-reply-text');
+    const btn = scope.querySelector('#gc-sms-reply-send');
+    const count = scope.querySelector('#gc-sms-reply-count');
+    if (!ta || !btn) return;
+    const update = () => {
+      const s = smsSegments(ta.value);
+      if (count) {
+        count.textContent = `${s.chars} chars \u00B7 ${s.segments} segment${s.segments === 1 ? '' : 's'}${s.encoding === 'UCS-2' ? ' (unicode)' : ''}`;
+      }
+      btn.disabled = !ta.value.trim();
+    };
+    ta.addEventListener('input', update);
+    update();
+    btn.addEventListener('click', () => sendSmsReply(ta, btn, subId, customerId, reply));
+  }
+
+  // POST the reply, then reload the thread — the new row (sent, or refused
+  // with its reason) shows up there like every other logged attempt.
+  async function sendSmsReply(ta, btn, subId, customerId, reply) {
+    const text = ta.value.trim();
+    if (!text) return;
+    if (reply && reply.quiet_hours_now) {
+      const ok = await openConfirm({
+        title: 'Send outside 8am\u20139pm Central?',
+        message: 'This customer texted recently, so the reply will go out right now, outside normal texting hours. Send it?',
+        confirmText: 'Send now',
+      });
+      if (!ok) return;
+    }
+    const label = btn.textContent;
+    btn.disabled = true;
+    ta.disabled = true;
+    btn.textContent = 'Sending\u2026';
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/customers/${customerId}/sms-reply`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: text }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      showStatus('Text sent.', 'success');
+      ta.value = '';
+      loadSmsHistory(subId, customerId); // the sent row joins the thread
+    } catch (err) {
+      // Keep what they typed: a blocked/failed attempt is logged and shows
+      // on the next Refresh, but the draft must not vanish under them.
+      console.error('[sms-reply] failed:', err);
+      showStatus(err.message, 'error');
+      btn.textContent = label;
+      ta.disabled = false;
+      btn.disabled = !ta.value.trim();
+    }
   }
 
   // A newest-message state that warrants a warning chip in the COLLAPSED SMS
@@ -1746,6 +1883,10 @@
     }
     if (!userPerms.customer_edit) {
       drop('#gc-contact-edit-btn, #gc-generator-edit-btn, #gc-save-note-btn, #gc-next-visit-save, #gc-sms-consent-btn');
+      const replyBox = scope.querySelector('#gc-sms-reply-box');
+      if (replyBox) {
+        replyBox.outerHTML = `<div class="gc-sms-reply gc-sms-reply-blocked"><span class="chip chip-neutral">Read only</span> <span class="gc-meta-label">Replying by text needs the customer-edit permission. Ask an administrator.</span></div>`;
+      }
     }
     if (!userPerms.tech_manage) {
       scope.querySelectorAll('[data-assign-visit]').forEach((sel) => { sel.disabled = true; });
@@ -1978,7 +2119,7 @@
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
       // and the work-order packet's actual signup charge) + the text-message log.
       loadStripeData(id, subscription, pending_addons, c.id, openVisit);
-      loadSmsHistory(id);
+      loadSmsHistory(id, c.id);
       loadEmailHistory(id);
 
     } catch (err) {
@@ -3191,11 +3332,14 @@
     }
   }
 
-  // Text message history (lazy) — fills #gc-sms-history-body with the
-  // customer's complete log, newest first. Same open-fast pattern as
-  // loadStripeData: the modal paints instantly, this fills in after. Read-only;
-  // a failed load shows a retry note and must never break the modal.
-  async function loadSmsHistory(subscriptionId) {
+  // Text message thread (lazy) — fills #gc-sms-history-body with the
+  // customer's complete conversation, oldest first, plus the reply box. Same
+  // open-fast pattern as loadStripeData: the modal paints instantly, this
+  // fills in after. Loaded when the record opens and on the manual Refresh
+  // button ONLY — no polling, no push: the existing office alert email is
+  // what says "a reply arrived". A failed load shows a retry note and must
+  // never break the modal.
+  async function loadSmsHistory(subscriptionId, customerId) {
     const body = document.getElementById('modal-body');
     if (!body) return;
     const el = body.querySelector('#gc-sms-history-body');
@@ -3205,21 +3349,35 @@
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { messages } = await r.json();
-      if (!messages || !messages.length) {
-        historyHeaderStamp({ countId: 'gc-sms-history-count', flagId: 'gc-sms-history-flag', count: 0 });
-        el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">No texts sent yet.</div>`;
-        return;
-      }
+      const { messages = [], reply = null } = await r.json();
       // Newest-first from the API; a failed/blocked latest message surfaces in
       // the collapsed header so it isn't hidden behind the click.
       historyHeaderStamp({
         countId: 'gc-sms-history-count',
         flagId: 'gc-sms-history-flag',
         count: messages.length,
-        flagHtml: smsNeedsFlag(messages[0]) ? smsHistoryChip(messages[0]) : '',
+        flagHtml: messages.length && smsNeedsFlag(messages[0]) ? smsHistoryChip(messages[0]) : '',
       });
-      el.innerHTML = messages.map(renderSmsHistoryRow).join('');
+      const thread = messages.length
+        ? `<div class="gc-sms-thread">${messages.slice().reverse().map(renderSmsBubble).join('')}</div>`
+        : `<div class="gc-meta-label" style="padding:6px 0;">No texts yet.</div>`;
+      el.innerHTML = `<div class="gc-sms-toolbar">
+          <span class="gc-meta-label">Not live &mdash; refresh to check for new replies.</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="gc-sms-refresh">Refresh</button>
+        </div>${thread}${renderSmsReplyBox(reply)}`;
+      stripDeniedActions(el);
+      const refreshBtn = el.querySelector('#gc-sms-refresh');
+      if (refreshBtn) refreshBtn.addEventListener('click', () => { refreshBtn.disabled = true; loadSmsHistory(subscriptionId, customerId); });
+      wireSmsReplyBox(el, subscriptionId, customerId, reply);
+      // Newest message in view — now, and again when the collapsed card opens
+      // (a hidden element can't scroll).
+      const scrollToNewest = () => { const t = el.querySelector('.gc-sms-thread'); if (t) t.scrollTop = t.scrollHeight; };
+      const card = document.getElementById('gc-card-sms');
+      if (card && !card.dataset.smsScrollWired) {
+        card.dataset.smsScrollWired = '1';
+        card.addEventListener('toggle', () => { if (card.open) scrollToNewest(); });
+      }
+      scrollToNewest();
     } catch (err) {
       console.error('[sms-history] load failed:', err);
       el.innerHTML = `<div class="gc-meta-label" style="padding:6px 0;">Couldn't load texts &mdash; refresh to retry.</div>`;
