@@ -11,7 +11,7 @@ const { supabaseAdmin: supabase } = require('../lib/supabase');
 const catalog = require('../lib/generator-catalog');
 const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildRefundReceiptEmail } = require('../lib/emails');
-const { recordConsent, sendSms, sendMagicLoginSms, buildOptInConfirmationSms, buildScheduleNudgeSms, upsertSimpleTextingContact, CONSENT_TEXT } = require('../lib/sms');
+const { recordConsent, sendSms, sendMagicLoginSms, buildOptInConfirmationSms, buildScheduleNudgeSms, upsertSimpleTextingContact, CONSENT_TEXT, SMS_TERMINAL_STATUSES } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
 
 const router = express.Router();
@@ -900,10 +900,10 @@ async function handleInvoiceUpcoming(invoice) {
 // (schedule_nudge_queued_at) before attempting the send, and stamps
 // schedule_nudge_sent_at only on a TERMINAL result — 'sent' or a permanent
 // refusal — same rule as the Phase 2 reminders. Visits left queued-but-unsent
-// are retried by the daily 8am sms-reminders cron (runNudgeRetryPass in
-// generator-care-cron.js), which runs inside quiet hours by design.
+// are retried by the sms-reminders cron sweep (runNudgeRetryPass in
+// generator-care-cron.js), which only does work inside quiet hours by design.
 // ---------------------------------------------------------------------------
-const NUDGE_TERMINAL_STATUSES = ['sent', 'no_consent', 'opted_out', 'invalid_phone'];
+const NUDGE_TERMINAL_STATUSES = SMS_TERMINAL_STATUSES;
 
 // `now` is a test-only seam for the quiet-hours clock (same as sendSms's);
 // the live handler never passes it.

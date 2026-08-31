@@ -1159,6 +1159,7 @@
       case 'no_consent': return 'Text not sent &mdash; customer has not opted in';
       case 'opted_out': return 'Text not sent &mdash; customer opted out';
       case 'quiet_hours': return 'Text skipped (outside 8am&ndash;9pm)' + when;
+      case 'stale': return 'Text dropped &mdash; appointment passed before it could send' + when;
       case 'failed': return 'Text failed to send' + when;
       default: return null;
     }
@@ -1631,6 +1632,7 @@
       case 'no_consent': return '<span class="badge badge-warn">Not sent &mdash; no consent</span>';
       case 'opted_out': return '<span class="badge badge-warn">Not sent &mdash; opted out</span>';
       case 'quiet_hours': return '<span class="badge badge-neutral">Skipped &mdash; quiet hours</span>';
+      case 'stale': return '<span class="badge badge-neutral">Dropped &mdash; too late to send</span>';
       case 'disabled': return '<span class="badge badge-neutral">Logged &mdash; texting off</span>';
       default: return `<span class="badge badge-neutral">${escapeHtml(m.status || '')}</span>`;
     }

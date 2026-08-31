@@ -151,9 +151,17 @@ function makeVisit(id, appointmentAtUtc, extra = {}) {
     sms_confirmed_at: null,
     sms_reminder_3day_at: null,
     sms_reminder_dayof_at: null,
+    sms_reminder_3day_queued_at: null,
+    sms_reminder_dayof_queued_at: null,
     subscription: { customer: { id: CUSTOMER_ID, name: 'Sarah Example', phone: '6365550100', install_state: 'MO' } },
     ...extra,
   };
+}
+
+// 035 queue-then-send: every attempted visit writes a queue stamp first, so
+// stamp assertions filter by which column the patch carries.
+function stampsWith(world, column) {
+  return world.stamps.filter((s) => s.patch[column] != null);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,17 +185,17 @@ test('3-day pass picks exactly the visit 3 days out (Central); day-of picks toda
     return { ok: true, status: 201, json: async () => ({ id: 'prov_1' }) };
   };
 
-  const threeDay = await runReminderPass({ targetDateStr: addDays(TODAY_CENTRAL, 3), stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const threeDay = await runReminderPass({ targetDateStr: addDays(TODAY_CENTRAL, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(threeDay, { considered: 1, sent: 1, skipped: 0 });
-  assert.deepEqual(world.stamps.map((s) => s.id), ['v-3day']);
-  assert.ok(world.stamps[0].patch.sms_reminder_3day_at, 'the 3-day column is what gets stamped');
+  assert.deepEqual(stampsWith(world, 'sms_reminder_3day_queued_at').map((s) => s.id), ['v-3day'], 'queued before the send');
+  assert.deepEqual(stampsWith(world, 'sms_reminder_3day_at').map((s) => s.id), ['v-3day'], 'the 3-day column is what gets stamped');
   assert.ok(texts[0].includes('is on Sat Jul 18'), texts[0]);
   assert.ok(texts[0].includes('Reply Y to confirm'), texts[0]);
 
-  const dayOf = await runReminderPass({ targetDateStr: TODAY_CENTRAL, stampColumn: 'sms_reminder_dayof_at', isToday: true, now: NOW });
+  const dayOf = await runReminderPass({ targetDateStr: TODAY_CENTRAL, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, now: NOW });
   assert.deepEqual(dayOf, { considered: 1, sent: 1, skipped: 0 });
-  assert.deepEqual(world.stamps.map((s) => s.id), ['v-3day', 'v-today']);
-  assert.ok(world.stamps[1].patch.sms_reminder_dayof_at, 'the day-of column is what gets stamped');
+  assert.deepEqual(stampsWith(world, 'sms_reminder_dayof_queued_at').map((s) => s.id), ['v-today']);
+  assert.deepEqual(stampsWith(world, 'sms_reminder_dayof_at').map((s) => s.id), ['v-today'], 'the day-of column is what gets stamped');
   assert.ok(texts[1].includes('is today'), texts[1]);
 });
 
@@ -202,7 +210,7 @@ test('a customer who already replied Y gets the reminder-only variant', async ()
     text = JSON.parse(opts.body).text;
     return { ok: true, status: 201, json: async () => ({ id: 'prov_1' }) };
   };
-  const r = await runReminderPass({ targetDateStr: TODAY_CENTRAL, stampColumn: 'sms_reminder_dayof_at', isToday: true, now: NOW });
+  const r = await runReminderPass({ targetDateStr: TODAY_CENTRAL, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, now: NOW });
   assert.equal(r.sent, 1);
   assert.ok(!text.includes('Reply Y'), text);
   assert.ok(text.includes('Need a different time'), text);
@@ -217,13 +225,13 @@ test('second run after a sent stamp considers nothing and sends nothing', async 
   realFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 201, json: async () => ({ id: 'prov_1' }) });
 
-  const first = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const first = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(first, { considered: 1, sent: 1, skipped: 0 });
 
   global.fetch = async (url) => { throw new Error('second run must not send: ' + url); };
-  const second = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const second = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(second, { considered: 0, sent: 0, skipped: 0 });
-  assert.equal(world.stamps.length, 1, 'no second stamp write either');
+  assert.equal(world.stamps.length, 2, 'first run wrote queue + sent stamps; second run wrote nothing');
 });
 
 // ---------------------------------------------------------------------------
@@ -232,9 +240,10 @@ test('second run after a sent stamp considers nothing and sends nothing', async 
 test('kill-switch off ("disabled") does NOT stamp — the visit retries next run', async () => {
   forbidFetch(); // SMS_ENABLED deliberately unset
   const world = makeWorld({ visits: [makeVisit('v-3day', '2026-07-18T13:00:00Z')] });
-  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(r, { considered: 1, sent: 0, skipped: 1 });
-  assert.equal(world.stamps.length, 0);
+  assert.equal(stampsWith(world, 'sms_reminder_3day_at').length, 0, 'sent column stays null — retries');
+  assert.equal(stampsWith(world, 'sms_reminder_3day_queued_at').length, 1, 'but the debt is queued for the sweep');
   assert.equal(world.logged[0].status, 'disabled', 'the refusal still lands in the message log');
 });
 
@@ -243,18 +252,18 @@ test('a failed provider send does NOT stamp — retries next run', async () => {
   const world = makeWorld({ visits: [makeVisit('v-3day', '2026-07-18T13:00:00Z')] });
   realFetch = global.fetch;
   global.fetch = async () => ({ ok: false, status: 500, text: async () => 'provider down' });
-  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(r, { considered: 1, sent: 0, skipped: 1 });
-  assert.equal(world.stamps.length, 0);
+  assert.equal(stampsWith(world, 'sms_reminder_3day_at').length, 0, 'sent column stays null — retries');
 });
 
 test('no_consent is terminal: refused, logged, and stamped so it never re-tries', async () => {
   forbidFetch();
   armTransport();
   const world = makeWorld({ visits: [makeVisit('v-3day', '2026-07-18T13:00:00Z')], consentRows: [] });
-  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(r, { considered: 1, sent: 0, skipped: 1 });
-  assert.equal(world.stamps.length, 1, 'permanent refusal stamps — no point retrying daily');
+  assert.equal(stampsWith(world, 'sms_reminder_3day_at').length, 1, 'permanent refusal stamps — no point retrying');
   assert.equal(world.logged[0].status, 'no_consent');
 });
 
@@ -265,9 +274,9 @@ test('opted_out is terminal too', async () => {
     visits: [makeVisit('v-3day', '2026-07-18T13:00:00Z')],
     consentRows: [{ id: 'cons1', customer_id: CUSTOMER_ID, opted_in: true, opted_out: true }],
   });
-  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(r, { considered: 1, sent: 0, skipped: 1 });
-  assert.equal(world.stamps.length, 1);
+  assert.equal(stampsWith(world, 'sms_reminder_3day_at').length, 1);
   assert.equal(world.logged[0].status, 'opted_out');
 });
 
@@ -279,9 +288,9 @@ test('a visit with no customer phone is counted skipped, nothing sent or stamped
       subscription: { customer: { id: CUSTOMER_ID, name: 'No Phone', phone: null, install_state: 'MO' } },
     })],
   });
-  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', isToday: false, now: NOW });
+  const r = await runReminderPass({ targetDateStr: '2026-07-18', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now: NOW });
   assert.deepEqual(r, { considered: 1, sent: 0, skipped: 1 });
-  assert.equal(world.stamps.length, 0);
+  assert.equal(world.stamps.length, 0, 'no send attempted, so nothing queued or stamped');
   assert.equal(world.logged.length, 0);
 });
 
