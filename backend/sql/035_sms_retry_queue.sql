@@ -33,9 +33,10 @@
 --      The existing sms_reminder_3day_at / sms_reminder_dayof_at columns
 --      (sql/026) remain the sent/terminal stamps.
 --
--- Purely additive; safe to run before or after the code deploys (the code
--- degrades loudly-but-harmlessly if the columns are missing: sends behave as
--- before 035, queue stamps fail to console + Sentry).
+-- Purely additive, but APPLY BEFORE THE CODE DEPLOYS (the usual
+-- apply-before-merge rule): the cron's reminder and sweep SELECTs reference
+-- these columns, so the sms-reminders endpoint 500s until they exist. The
+-- write paths alone would degrade loudly-but-harmlessly, the reads do not.
 -- Run manually in the Supabase SQL Editor (idempotent — safe to re-run).
 --
 -- After running, record it in the ledger (see backend/sql/README.md):
