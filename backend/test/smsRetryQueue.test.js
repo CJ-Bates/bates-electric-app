@@ -396,18 +396,54 @@ test('day-of retry: today is the daily pass\'s job (skipped); a future rebook re
 });
 
 // ---------------------------------------------------------------------------
+// Kill-switch: debts are recorded while disabled, and drain on re-enable
+// ---------------------------------------------------------------------------
+test('queue-only pass plants the reminder debt with no wire and no log rows', async () => {
+  forbidFetch(); // SMS_ENABLED deliberately unset
+  const cronTest = cronRouter._test;
+  const world = makeWorld({
+    visits: [makeVisit('v1', { appointment_at: '2026-09-03T17:00:00Z' })], // today+3
+  });
+  const r = await cronTest.runReminderPass({
+    targetDateStr: '2026-09-03', stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, queueOnly: true, now: NOW,
+  });
+  assert.deepEqual(r, { considered: 1, sent: 0, skipped: 1 });
+  assert.ok(world.visits[0].sms_reminder_3day_queued_at, 'debt recorded');
+  assert.equal(world.visits[0].sms_reminder_3day_at, null, 'not settled');
+  assert.equal(world.logged.length, 0, 'no hourly disabled-refusal spam');
+});
+
+test('kill-switch recovery: a reminder queued while disabled drains via the retry sweep once re-enabled', async () => {
+  const world = makeWorld({
+    visits: [makeVisit('v1', {
+      appointment_at: '2026-09-03T17:00:00Z',              // was today+3 when queued
+      sms_reminder_3day_queued_at: '2026-08-31T13:15:00Z', // planted by a queue-only run
+    })],
+  });
+  armTransport(); // switch back on the next day
+  captureWire(world);
+  const NEXT_DAY = new Date('2026-09-01T13:15:00Z'); // appointment now 2 days out
+  const r = await runReminderRetryPass({ kind: '3day', now: NEXT_DAY });
+  assert.deepEqual(r, { considered: 1, sent: 1, skipped: 0, stale: 0, rearmed: 0 });
+  assert.ok(world.texts[0].includes('is on Thu Sep 3'), world.texts[0]);
+  assert.ok(world.visits[0].sms_reminder_3day_at, 'settled');
+});
+
+// ---------------------------------------------------------------------------
 // Endpoint guards (hourly-trigger safety)
 // ---------------------------------------------------------------------------
-test('sms-reminders endpoint short-circuits (no queries, no sends) when nothing could send', async () => {
+test('sms-reminders endpoint sends nothing when nothing could send (guard skip)', async () => {
   // SMS_ENABLED is unset. Whatever the wall clock says, one of the two
-  // guards fires: outside 8am-9pm Central -> outside_quiet_hours, inside ->
-  // sms_disabled. Either way it must answer ok WITHOUT touching a table —
-  // the empty mock throws on any .from().
+  // guards fires: outside 8am-9pm Central -> outside_quiet_hours (no table
+  // touched at all), inside -> sms_disabled (queue-plant only). Either way:
+  // ok, a skipped marker, nothing on the wire, nothing in the message log.
   forbidFetch();
-  restoreSupabase = installMockSupabase({});
+  const world = makeWorld({ visits: [] });
   const res = makeRes();
   await smsRemindersHandler(makeReq({}), res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.ok, true);
   assert.ok(['outside_quiet_hours', 'sms_disabled'].includes(res.body.skipped), JSON.stringify(res.body));
+  assert.equal(world.logged.length, 0);
+  assert.equal(world.texts.length, 0);
 });

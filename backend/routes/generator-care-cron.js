@@ -196,9 +196,10 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 //
 // POST /api/cron/generator-care/sms-reminders — designed for an HOURLY
 // trigger (e.g. minute 15 of every hour). The endpoint self-guards: outside
-// the 8am-9pm Central quiet-hours window (or while the SMS_ENABLED
-// kill-switch is off) it does nothing and says so, instead of letting every
-// owed message log an hourly refusal. That guard is also why the trigger's
+// the 8am-9pm Central quiet-hours window it does nothing and says so, and
+// while the SMS_ENABLED kill-switch is off it only records the day's
+// reminder debts (queue marks — nothing sent, nothing logged), instead of
+// letting every owed message log an hourly refusal. That guard is also why the trigger's
 // exact firing time no longer matters: the old single daily ~8am trigger
 // depended on landing inside the window — a couple of minutes of scheduler
 // jitter (7:58) used to refuse EVERY reminder that day with no recovery.
@@ -254,10 +255,17 @@ function addDays(dateStr, n) {
 // queueColumn (035): stamped just before the attempt, marking "this visit
 // was owed this reminder" — that mark is what lets runReminderRetryPass
 // re-select the visit after its target day, when this date-anchored query no
-// longer can. Only stamped when a send is actually attempted: a visit with
-// no phone stays unqueued (nothing is owed until a phone exists — and this
-// pass still re-considers it while the target date holds).
-async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToday, now }) {
+// longer can. Only stamped when a send is (or would be) attempted: a visit
+// with no phone stays unqueued (nothing is owed until a phone exists — and
+// this pass still re-considers it while the target date holds).
+//
+// queueOnly: plant the queue marks and send NOTHING (no wire, no log rows).
+// Used while the SMS_ENABLED kill-switch is off — the debt must still be
+// recorded on the target day, or a reminder whose whole target day fell
+// inside a disabled window would be silently lost when the switch comes
+// back (this date-anchored query can't re-find it later; only the queue
+// mark can).
+async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToday, queueOnly, now }) {
   const summary = { considered: 0, sent: 0, skipped: 0 };
   const { data: visits, error } = await supabaseAdmin
     .from('generator_service_visits')
@@ -291,6 +299,8 @@ async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToda
         reportError(new Error('sms reminder queue stamp failed for visit ' + v.id + ': ' + queueErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
       }
     }
+
+    if (queueOnly) { summary.skipped++; continue; }
 
     // sendSms owns every gate (consent, SMS_ENABLED, quiet hours) and logs
     // the attempt either way — the pass just builds the copy and reads the
@@ -619,17 +629,30 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     const now = new Date();
     const todayCentral = centralDateStr(now);
 
-    // Hourly-trigger guards: outside quiet hours nothing may send, and with
-    // the kill-switch off nothing would be stamped — running the passes
-    // would only write an hourly refusal row for every owed message. Skip
-    // instead; everything stays queued and the first armed in-window run
-    // drains it. (Booking-time attempts still log their 'disabled' /
-    // 'quiet_hours' rows — the would-have-sent trail lives there.)
+    // Hourly-trigger guards. Outside quiet hours nothing may send — skip
+    // outright rather than write an hourly quiet_hours refusal row for
+    // every owed message; the debts (queue marks) already exist and the
+    // first in-window run drains them. (Booking-time attempts still log
+    // their refusal rows — the would-have-sent trail lives there.)
     if (!withinQuietHours(now)) {
       return res.json({ ok: true, date: todayCentral, skipped: 'outside_quiet_hours' });
     }
+    // Kill-switch off: nothing may send either, but the day's reminder
+    // debts must still be RECORDED — the date-anchored passes can't select
+    // a visit after its target day, so skipping outright would silently
+    // lose any reminder whose whole target day fell inside a disabled
+    // window. Plant the queue marks (no sends, no log rows); when the
+    // switch comes back on, the retry sweeps drain what's still true and
+    // stale-drop the rest, on record. Booking confirmations and nudges
+    // queue at their own trigger points, so they need nothing here.
     if (!smsEnabled()) {
-      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled' });
+      const threeDayQueued = await runReminderPass({
+        targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, queueOnly: true, now,
+      });
+      const dayOfQueued = await runReminderPass({
+        targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, queueOnly: true, now,
+      });
+      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, day_of_queued: dayOfQueued });
     }
 
     // Confirmations first (a booking's "it's set" should precede any
