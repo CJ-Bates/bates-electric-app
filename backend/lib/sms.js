@@ -443,6 +443,16 @@ async function upsertSimpleTextingContact({ phone, name }) {
 }
 
 // ============================================================================
+// Terminal vs transient outcomes. Every queue-and-sweep sender (booking
+// confirmations, reminders, the schedule nudge) stamps its sent/idempotency
+// column ONLY on one of these statuses: 'sent', or a refusal that is a
+// permanent answer for this message. Everything else ('disabled' kill-switch,
+// 'quiet_hours', 'failed') is transient — the message stays owed and the
+// sms-reminders cron sweep retries it. Shared so the senders can't drift.
+// ============================================================================
+const SMS_TERMINAL_STATUSES = Object.freeze(['sent', 'no_consent', 'opted_out', 'invalid_phone']);
+
+// ============================================================================
 // The send. Gate order: consent -> kill-switch -> quiet hours -> transport.
 // Every refusal logs a generator_sms_messages row saying why, so booking with
 // SMS_ENABLED=false still leaves the visible "would have sent" trail the
@@ -678,6 +688,7 @@ async function sendMagicLoginSms({ customerId, phone, email, buildBody, relatedV
 module.exports = {
   CONSENT_TEXT,
   SIMPLETEXTING_BASE,
+  SMS_TERMINAL_STATUSES,
   normalizePhone,
   smsEnabled,
   withinQuietHours,

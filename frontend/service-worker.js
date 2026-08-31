@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v145';
+const CACHE = 'bates-shell-v146';
 const ASSETS = [
   './',
   './arrival-windows.js',
@@ -88,7 +88,7 @@ self.addEventListener('fetch', (e) => {
   // Customer portal (my.html / my.js, incl. the /my pretty URL) is NOT part
   // of the staff PWA shell: customers shouldn't get the staff app cached on
   // their phones, and staff caches shouldn't serve stale portal code.
-  // Network-only — no caching.
+  // Network-only â€” no caching.
   if (/^\/my\.(html|js)$/i.test(path)) return;
 
   // Cache key = the .html canonical URL; network fetch keeps the original

@@ -7,7 +7,11 @@ const express = require('express');
 const { supabaseAdmin } = require('../lib/supabase');
 const { sendViaBrevo } = require('../lib/mailer');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
-const { sendSms, sendMagicLoginSms, buildReminderSms, buildScheduleNudgeSms } = require('../lib/sms');
+const {
+  sendSms, sendMagicLoginSms, buildReminderSms, buildScheduleNudgeSms,
+  buildBookingConfirmationSms, withinQuietHours, smsEnabled, normalizePhone,
+  logSmsMessage, SMS_TERMINAL_STATUSES,
+} = require('../lib/sms');
 const { DASHBOARD_URL } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 
@@ -187,22 +191,46 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
 });
 
 // ============================================================================
-// SMS appointment reminders (Phase 2).
-// POST /api/cron/generator-care/sms-reminders — fired daily at ~8am Central
-// (must land inside the 8am-9pm quiet-hours window or sendSms refuses every
-// send). Two passes: visits whose appointment falls 3 days from now, and
-// visits whose appointment is today. Read-only except the per-visit stamp
-// columns (026) — reminders never touch the appointment itself.
+// SMS appointment reminders (Phase 2) + retry sweeps for every queued
+// customer text (035).
 //
-// Idempotency: each pass only selects visits whose stamp column is null, and
-// stamps it ONLY on a TERMINAL sendSms result — 'sent', or the permanent
-// refusals 'no_consent' / 'opted_out' / 'invalid_phone'. Transient outcomes
-// ('disabled' kill-switch, 'quiet_hours', 'failed') leave the column null so
-// the next daily run retries. Every attempt, refusals included, is already
-// logged to generator_sms_messages by sendSms — never pre-filter consent here.
+// POST /api/cron/generator-care/sms-reminders — designed for an HOURLY
+// trigger (e.g. minute 15 of every hour). The endpoint self-guards: outside
+// the 8am-9pm Central quiet-hours window it does nothing and says so, and
+// while the SMS_ENABLED kill-switch is off it only records the day's
+// reminder debts (queue marks — nothing sent, nothing logged), instead of
+// letting every owed message log an hourly refusal. That guard is also why the trigger's
+// exact firing time no longer matters: the old single daily ~8am trigger
+// depended on landing inside the window — a couple of minutes of scheduler
+// jitter (7:58) used to refuse EVERY reminder that day with no recovery.
+// Hourly runs mean the first in-window run (~8:15am) does the day's work and
+// later runs drain anything refused transiently since. A daily trigger still
+// works, just with day-long retry latency — if kept daily, fire it at 9am so
+// jitter can't push it outside the window.
+//
+// Two date-anchored passes (visits whose appointment is 3 days out / today)
+// initiate reminders, then three sweeps retry what's still owed: queued
+// booking confirmations (queued by routes/generator-care/visits.js at
+// booking time), queued reminders, and the Phase 3 schedule nudge. Read-only
+// except the per-visit stamp columns (026/027/035) — nothing here ever
+// touches the appointment itself.
+//
+// Idempotency: every sender stamps its sent column ONLY on a TERMINAL
+// sendSms result — 'sent', or the permanent refusals 'no_consent' /
+// 'opted_out' / 'invalid_phone' (SMS_TERMINAL_STATUSES in lib/sms.js).
+// Transient outcomes ('disabled' kill-switch, 'quiet_hours', 'failed') leave
+// the sent column null so a later run retries; selection always requires the
+// sent column to be null, so a stamped message can never send twice. Every
+// attempt, refusals included, is already logged to generator_sms_messages by
+// sendSms — never pre-filter consent here.
+//
+// Staleness: a retried message must still be TRUE when it finally sends. The
+// sweeps drop (stamp + log a 'stale' generator_sms_messages row, so the
+// office can see it) anything whose moment has passed instead of sending it
+// late — the rules live on each sweep below.
 // ============================================================================
 
-const REMINDER_TERMINAL_STATUSES = ['sent', 'no_consent', 'opted_out', 'invalid_phone'];
+const REMINDER_TERMINAL_STATUSES = SMS_TERMINAL_STATUSES;
 
 // A calendar date in Central time, as 'YYYY-MM-DD' (en-CA renders ISO order).
 function centralDateStr(d) {
@@ -223,11 +251,25 @@ function addDays(dateStr, n) {
 // query grabs a UTC superset ([target-1d, target+2d) covers every instant
 // that could render as the target Central date) and the exact Central-date
 // match happens in JS — same Intl clock the rest of the app uses.
-async function runReminderPass({ targetDateStr, stampColumn, isToday, now }) {
+//
+// queueColumn (035): stamped just before the attempt, marking "this visit
+// was owed this reminder" — that mark is what lets runReminderRetryPass
+// re-select the visit after its target day, when this date-anchored query no
+// longer can. Only stamped when a send is (or would be) attempted: a visit
+// with no phone stays unqueued (nothing is owed until a phone exists — and
+// this pass still re-considers it while the target date holds).
+//
+// queueOnly: plant the queue marks and send NOTHING (no wire, no log rows).
+// Used while the SMS_ENABLED kill-switch is off — the debt must still be
+// recorded on the target day, or a reminder whose whole target day fell
+// inside a disabled window would be silently lost when the switch comes
+// back (this date-anchored query can't re-find it later; only the queue
+// mark can).
+async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToday, queueOnly, now }) {
   const summary = { considered: 0, sent: 0, skipped: 0 };
   const { data: visits, error } = await supabaseAdmin
     .from('generator_service_visits')
-    .select('id, appointment_at, arrival_window, sms_confirmed_at, subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
+    .select('id, appointment_at, arrival_window, sms_confirmed_at, ' + queueColumn + ', subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
     .eq('status', 'scheduled')
     .is(stampColumn, null)
     .not('appointment_at', 'is', null)
@@ -241,6 +283,24 @@ async function runReminderPass({ targetDateStr, stampColumn, isToday, now }) {
 
     const customer = (v.subscription && v.subscription.customer) || null;
     if (!customer || !customer.phone) { summary.skipped++; continue; }
+
+    // Queue BEFORE attempting (same rule as the nudge webhook): a process
+    // death mid-send, or a transient refusal below, leaves the debt on
+    // record for the retry sweep. A failed queue stamp (e.g. 035 not applied
+    // yet) doesn't block the attempt — loud, because a transient refusal
+    // would then be lost like pre-035.
+    if (!v[queueColumn]) {
+      const { error: queueErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ [queueColumn]: (now || new Date()).toISOString() })
+        .eq('id', v.id);
+      if (queueErr) {
+        console.error('[gc-cron] reminder queue stamp failed for visit ' + v.id + ':', queueErr.message);
+        reportError(new Error('sms reminder queue stamp failed for visit ' + v.id + ': ' + queueErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+      }
+    }
+
+    if (queueOnly) { summary.skipped++; continue; }
 
     // sendSms owns every gate (consent, SMS_ENABLED, quiet hours) and logs
     // the attempt either way — the pass just builds the copy and reads the
@@ -277,13 +337,237 @@ async function runReminderPass({ targetDateStr, stampColumn, isToday, now }) {
   return summary;
 }
 
+// Drop a queued message whose moment has passed: stamp its sent column (the
+// debt is settled — by a decision, not a send) and log a 'stale' row to
+// generator_sms_messages so the office can see in the customer's text thread
+// WHY nothing went out. Stamp first: if the stamp fails, the sweep simply
+// re-evaluates (and re-drops) next run — it can never send the stale text.
+// Returns whether the drop stuck.
+async function dropStaleQueuedSms({ visitId, sentPatch, customer, body, detail }) {
+  const { error: stampErr } = await supabaseAdmin
+    .from('generator_service_visits')
+    .update(sentPatch)
+    .eq('id', visitId);
+  if (stampErr) {
+    console.error('[gc-cron] stale-drop stamp failed for visit ' + visitId + ':', stampErr.message);
+    reportError(new Error('stale-drop stamp failed for visit ' + visitId + ': ' + stampErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+    return false;
+  }
+  const rawPhone = (customer && customer.phone) || '';
+  await logSmsMessage({
+    direction: 'out',
+    to_phone: normalizePhone(rawPhone) || String(rawPhone).slice(0, 30),
+    from_phone: normalizePhone(process.env.SIMPLETEXTING_ACCOUNT_PHONE) || null,
+    body,
+    status: 'stale',
+    detail,
+    customer_id: (customer && customer.id) || null,
+    related_visit_id: visitId,
+  });
+  return true;
+}
+
+// Booking-confirmation retry sweep (035). The office schedule endpoint
+// queues a confirmation at booking time and attempts it fire-and-forget; a
+// transient refusal (the live failure: a 7:58am booking refused by quiet
+// hours) lands here. Staleness rule: a confirmation is meaningful up to and
+// including the APPOINTMENT DAY, for a visit still on the books — the copy
+// ("your visit is set for Tue Sep 1... Reply Y") is date-based and stays
+// true right up to the visit. Once the day has passed, or the visit is no
+// longer scheduled (canceled / completed / appointment cleared), it's
+// dropped on record instead of sent late.
+//
+// The in-flight buffer exists because the booking endpoint's send is
+// fire-and-forget: a booking made seconds before this sweep runs could have
+// its send still on the wire (sent stamp pending). Skipping anything queued
+// inside the buffer means the sweep can never race a just-made booking into
+// a duplicate text; a genuinely refused one is picked up the following run.
+const BOOKING_CONFIRM_INFLIGHT_BUFFER_MS = 2 * 60 * 1000;
+
+async function runBookingConfirmRetryPass({ now }) {
+  const summary = { considered: 0, sent: 0, skipped: 0, stale: 0 };
+  const clock = now || new Date();
+  const todayCentral = centralDateStr(clock);
+  const inflightCutoff = new Date(clock.getTime() - BOOKING_CONFIRM_INFLIGHT_BUFFER_MS).toISOString();
+  const { data: visits, error } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id, status, appointment_at, arrival_window, booking_confirm_queued_at, subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
+    .not('booking_confirm_queued_at', 'is', null)
+    .is('booking_confirm_sent_at', null)
+    .lt('booking_confirm_queued_at', inflightCutoff);
+  if (error) throw error;
+
+  for (const v of visits || []) {
+    summary.considered++;
+    const customer = (v.subscription && v.subscription.customer) || null;
+    if (!customer || !customer.phone) { summary.skipped++; continue; }
+
+    const apptDate = v.appointment_at ? centralDateStr(new Date(v.appointment_at)) : null;
+    const body = buildBookingConfirmationSms({
+      name: customer.name,
+      installState: customer.install_state,
+      dateStr: apptDate,
+      windowCode: v.arrival_window,
+      link: DASHBOARD_URL,
+    });
+
+    if (v.status !== 'scheduled' || !apptDate || apptDate < todayCentral) {
+      const why = v.status !== 'scheduled'
+        ? 'the visit is now ' + v.status
+        : (!apptDate ? 'the appointment was cleared' : 'the appointment day (' + apptDate + ') passed');
+      const dropped = await dropStaleQueuedSms({
+        visitId: v.id,
+        sentPatch: { booking_confirm_sent_at: clock.toISOString() },
+        customer,
+        body,
+        detail: 'booking confirmation dropped as stale: ' + why + ' before it could send (queued ' + v.booking_confirm_queued_at + ')',
+      });
+      if (dropped) summary.stale++; else summary.skipped++;
+      continue;
+    }
+
+    const result = await sendSms({
+      toPhone: customer.phone,
+      body,
+      customerId: customer.id,
+      relatedVisitId: v.id,
+      now,
+    });
+    if (result.status === 'sent') summary.sent++; else summary.skipped++;
+
+    if (SMS_TERMINAL_STATUSES.includes(result.status)) {
+      const { error: stampErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ booking_confirm_sent_at: (now || new Date()).toISOString() })
+        .eq('id', v.id);
+      // A failed stamp risks a duplicate text next run — make it loud.
+      if (stampErr) {
+        console.error('[gc-cron] booking confirm stamp failed for visit ' + v.id + ':', stampErr.message);
+        reportError(new Error('booking confirm stamp failed for visit ' + v.id + ': ' + stampErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+      }
+    }
+  }
+  return summary;
+}
+
+// Reminder retry sweep (035), one call per reminder kind. Selects by the
+// queue mark instead of the target date — the fix for the old gap where a
+// transiently refused reminder was never selected again because the next
+// day's pass targets a different date. The DAILY pass still owns the target
+// day itself (hourly runs re-attempt through it, since selection is by
+// null sent-stamp) — this sweep deliberately skips target-day visits so one
+// run never attempts the same reminder twice. Its jobs are the days AFTER:
+//
+//   3-day: retry while the appointment is still strictly in the future and
+//     under 3 days out. The copy is date-based ("is on Tue Sep 3"), so it
+//     stays true right up to the appointment day; a late 3-day reminder is
+//     an accurate heads-up, better than the silence Kenneth got. Once the
+//     appointment day arrives, the day-of reminder owns the messaging —
+//     drop as stale, on record.
+//   day-of: nothing to retry (the daily pass covers the whole target day,
+//     hourly); drop as stale once the appointment day has passed.
+//
+//   Both: if the appointment was RESCHEDULED to a farther-out day, the old
+//     queue mark no longer describes a real debt — clear it (re-arm) and let
+//     the date-anchored pass re-initiate on the right day.
+async function runReminderRetryPass({ kind, now }) {
+  const cfg = kind === '3day'
+    ? { queueColumn: 'sms_reminder_3day_queued_at', stampColumn: 'sms_reminder_3day_at', label: '3-day reminder' }
+    : { queueColumn: 'sms_reminder_dayof_queued_at', stampColumn: 'sms_reminder_dayof_at', label: 'day-of reminder' };
+  const summary = { considered: 0, sent: 0, skipped: 0, stale: 0, rearmed: 0 };
+  const clock = now || new Date();
+  const todayCentral = centralDateStr(clock);
+  const { data: visits, error } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id, appointment_at, arrival_window, sms_confirmed_at, ' + cfg.queueColumn + ', subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
+    .eq('status', 'scheduled')
+    .not(cfg.queueColumn, 'is', null)
+    .is(cfg.stampColumn, null)
+    .not('appointment_at', 'is', null);
+  if (error) throw error;
+
+  for (const v of visits || []) {
+    const apptDate = centralDateStr(new Date(v.appointment_at));
+    const isTargetDay = kind === '3day' ? apptDate === addDays(todayCentral, 3) : apptDate === todayCentral;
+    if (isTargetDay) continue; // the daily pass owns the target day
+
+    summary.considered++;
+    const customer = (v.subscription && v.subscription.customer) || null;
+    if (!customer || !customer.phone) { summary.skipped++; continue; }
+
+    // Rescheduled outward: not stale, just no longer owed for the old day.
+    if (apptDate > todayCentral && (kind === 'dayof' || apptDate > addDays(todayCentral, 3))) {
+      const { error: rearmErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ [cfg.queueColumn]: null })
+        .eq('id', v.id);
+      if (rearmErr) {
+        console.error('[gc-cron] reminder re-arm failed for visit ' + v.id + ':', rearmErr.message);
+        reportError(new Error('reminder re-arm failed for visit ' + v.id + ': ' + rearmErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+        summary.skipped++;
+      } else {
+        summary.rearmed++;
+      }
+      continue;
+    }
+
+    const body = buildReminderSms({
+      installState: customer.install_state,
+      dateStr: apptDate,
+      windowCode: v.arrival_window,
+      link: DASHBOARD_URL,
+      confirmed: !!v.sms_confirmed_at,
+      isToday: false,
+    });
+
+    if (apptDate <= todayCentral) {
+      const why = apptDate < todayCentral
+        ? 'the appointment day (' + apptDate + ') passed'
+        : 'the appointment is today - the day-of reminder covers it';
+      const dropped = await dropStaleQueuedSms({
+        visitId: v.id,
+        sentPatch: { [cfg.stampColumn]: clock.toISOString() },
+        customer,
+        body,
+        detail: cfg.label + ' dropped as stale: ' + why + ' before it could send (queued ' + v[cfg.queueColumn] + ')',
+      });
+      if (dropped) summary.stale++; else summary.skipped++;
+      continue;
+    }
+
+    // Still owed and still true: appointment strictly in the future, under
+    // 3 days out (3-day kind only reaches here).
+    const result = await sendSms({
+      toPhone: customer.phone,
+      body,
+      customerId: customer.id,
+      relatedVisitId: v.id,
+      now,
+    });
+    if (result.status === 'sent') summary.sent++; else summary.skipped++;
+
+    if (SMS_TERMINAL_STATUSES.includes(result.status)) {
+      const { error: stampErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ [cfg.stampColumn]: (now || new Date()).toISOString() })
+        .eq('id', v.id);
+      // A failed stamp risks a duplicate text next run — make it loud.
+      if (stampErr) {
+        console.error('[gc-cron] reminder retry stamp failed for visit ' + v.id + ':', stampErr.message);
+        reportError(new Error('reminder retry stamp failed for visit ' + v.id + ': ' + stampErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+      }
+    }
+  }
+  return summary;
+}
+
 // Phase 3 schedule-nudge retry sweep. The invoice.upcoming webhook QUEUES a
 // nudge on the cycle's open visit (schedule_nudge_queued_at, sql/027) and
 // attempts the send immediately, but that event fires once per cycle at
 // whatever hour Stripe picks — a quiet-hours or kill-switch refusal there has
-// no redelivery to lean on. This pass, riding the same daily ~8am trigger as
-// the reminders (inside quiet hours by design), re-attempts every visit still
-// queued-but-unsent: a fresh single-use auto-login link is minted per attempt
+// no redelivery to lean on. This pass, riding the same sms-reminders trigger
+// as the reminders (which only does work inside quiet hours by design),
+// re-attempts every visit still queued-but-unsent: a fresh single-use auto-login link is minted per attempt
 // (sendMagicLoginSms — the raw link never reaches a log), and
 // schedule_nudge_sent_at is stamped on the same TERMINAL statuses as the
 // reminder passes so permanent refusals drain from the queue while transient
@@ -344,14 +628,51 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
   try {
     const now = new Date();
     const todayCentral = centralDateStr(now);
+
+    // Hourly-trigger guards. Outside quiet hours nothing may send — skip
+    // outright rather than write an hourly quiet_hours refusal row for
+    // every owed message; the debts (queue marks) already exist and the
+    // first in-window run drains them. (Booking-time attempts still log
+    // their refusal rows — the would-have-sent trail lives there.)
+    if (!withinQuietHours(now)) {
+      return res.json({ ok: true, date: todayCentral, skipped: 'outside_quiet_hours' });
+    }
+    // Kill-switch off: nothing may send either, but the day's reminder
+    // debts must still be RECORDED — the date-anchored passes can't select
+    // a visit after its target day, so skipping outright would silently
+    // lose any reminder whose whole target day fell inside a disabled
+    // window. Plant the queue marks (no sends, no log rows); when the
+    // switch comes back on, the retry sweeps drain what's still true and
+    // stale-drop the rest, on record. Booking confirmations and nudges
+    // queue at their own trigger points, so they need nothing here.
+    if (!smsEnabled()) {
+      const threeDayQueued = await runReminderPass({
+        targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, queueOnly: true, now,
+      });
+      const dayOfQueued = await runReminderPass({
+        targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, queueOnly: true, now,
+      });
+      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, day_of_queued: dayOfQueued });
+    }
+
+    // Confirmations first (a booking's "it's set" should precede any
+    // reminder about it), then the date-anchored reminder passes, then the
+    // sweeps for anything those passes can no longer select.
+    const bookingConfirmRetry = await runBookingConfirmRetryPass({ now });
     const threeDay = await runReminderPass({
-      targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', isToday: false, now,
+      targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now,
     });
     const dayOf = await runReminderPass({
-      targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', isToday: true, now,
+      targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, now,
     });
+    const threeDayRetry = await runReminderRetryPass({ kind: '3day', now });
+    const dayOfRetry = await runReminderRetryPass({ kind: 'dayof', now });
     const nudgeRetry = await runNudgeRetryPass({ now });
-    res.json({ ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf, nudge_retry: nudgeRetry });
+    res.json({
+      ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf,
+      three_day_retry: threeDayRetry, day_of_retry: dayOfRetry,
+      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry,
+    });
   } catch (err) {
     console.error('[gc-cron] sms-reminders error:', err && err.message);
     reportError(err, { route: '/api/cron/generator-care/sms-reminders', method: 'POST', user: 'gc-cron' }).catch(() => {});
@@ -721,4 +1042,4 @@ function escapeHtml(s) {
 module.exports = router;
 // Offline-test seam (same pattern as generator-webhook.js) — lets the reminder
 // pass run with a pinned clock and mocked supabase, no HTTP/cron secret needed.
-module.exports._test = { runReminderPass, runNudgeRetryPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail };
+module.exports._test = { runReminderPass, runNudgeRetryPass, runBookingConfirmRetryPass, runReminderRetryPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail };

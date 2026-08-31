@@ -10,7 +10,7 @@ const { completeServiceVisit } = require('../../lib/completeVisit');
 const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
 const { arrivalWindow, arrivalWindowLabel } = require('../../lib/generator-catalog');
 const { sendEmail, buildVisitScheduledEmail, DASHBOARD_URL } = require('../../lib/emails');
-const { sendSms, buildBookingConfirmationSms } = require('../../lib/sms');
+const { sendSms, buildBookingConfirmationSms, SMS_TERMINAL_STATUSES } = require('../../lib/sms');
 const { reportError } = require('../../middleware/error-reporter');
 // Tighter limiter for the email-sending endpoint in this file.
 const sensitiveLimiter = require('../../middleware/limiters').makeSensitiveLimiter();
@@ -146,6 +146,14 @@ router.post('/visits/:id/schedule', sensitiveLimiter, async (req, res) => {
     // the SMS_ENABLED kill-switch, quiet hours — and logs refused sends, so
     // this call is unconditional when a phone exists. Fire-and-forget: a text
     // hiccup must never fail the booking Amy just made.
+    //
+    // Queue-then-send (sql/035, same shape as the Phase 3 nudge): the visit
+    // is marked as OWING a confirmation BEFORE the attempt, and the debt is
+    // cleared only on a TERMINAL result — 'sent' or a permanent refusal. A
+    // transient refusal (quiet hours, kill-switch, provider failure) leaves
+    // the visit queued for the sms-reminders cron sweep, so a 7:58am booking
+    // still texts the customer shortly after 8. A RESCHEDULE re-arms both
+    // columns: the new slot owes a fresh confirmation.
     if (customer && customer.phone) {
       const body = buildBookingConfirmationSms({
         name: customer.name,
@@ -154,11 +162,36 @@ router.post('/visits/:id/schedule', sensitiveLimiter, async (req, res) => {
         windowCode: updated.arrival_window,
         link: DASHBOARD_URL,
       });
+      // Awaited so a crash mid-send still leaves the visit queued. A failed
+      // queue stamp (e.g. 035 not applied yet) must not fail the booking —
+      // the send still goes out, but loudly, because a transient refusal
+      // would then be lost exactly like before 035.
+      try {
+        const { error: queueErr } = await supabaseAdmin
+          .from('generator_service_visits')
+          .update({ booking_confirm_queued_at: new Date().toISOString(), booking_confirm_sent_at: null })
+          .eq('id', updated.id);
+        if (queueErr) throw queueErr;
+      } catch (e) {
+        console.error('[visit-scheduled-sms] confirm queue stamp failed:', e && e.message);
+        reportError(new Error('booking confirm queue stamp failed for visit ' + updated.id + ': ' + ((e && e.message) || e)), { route: req.originalUrl }).catch(() => {});
+      }
       sendSms({
         toPhone: customer.phone,
         body,
         customerId: customer.id,
         relatedVisitId: updated.id,
+      }).then(async (result) => {
+        if (!SMS_TERMINAL_STATUSES.includes(result.status)) return; // stays queued — the cron sweep retries
+        const { error: stampErr } = await supabaseAdmin
+          .from('generator_service_visits')
+          .update({ booking_confirm_sent_at: new Date().toISOString() })
+          .eq('id', updated.id);
+        // A failed stamp risks the sweep re-sending a delivered text — loud.
+        if (stampErr) {
+          console.error('[visit-scheduled-sms] confirm sent stamp failed for visit ' + updated.id + ':', stampErr.message);
+          reportError(new Error('booking confirm sent stamp failed for visit ' + updated.id + ': ' + stampErr.message), { route: req.originalUrl }).catch(() => {});
+        }
       }).catch((e) => console.error('[visit-scheduled-sms] unexpected:', e && e.message));
     }
 
