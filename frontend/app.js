@@ -157,8 +157,27 @@
         store.setItem('bates.auth.token', data.token);
         if (data.refresh_token) store.setItem('bates.auth.refresh', data.refresh_token);
       }
+      // Cache the profile the login response already carries so role-guard.js
+      // can route the FIRST page pre-paint: otherwise sign-in is the one
+      // entry point guaranteed a cache miss (blank role-pending wait + a
+      // /home bounce, worst for a tech on weak field signal). Always
+      // localStorage, even when "Keep me signed in" put the tokens in
+      // sessionStorage: every reader (role-guard, shared-nav, settings) reads
+      // localStorage only, and it's a routing convenience, not a credential;
+      // sign-out and session-expiry both clear it. Best-effort: a failed
+      // write (private mode, storage full) must never block sign-in; the
+      // async /me checks re-cache and stay authoritative.
+      let role = null;
+      try {
+        if (data.profile && typeof data.profile.role === 'string') {
+          role = data.profile.role;
+          localStorage.setItem('bates.profile', JSON.stringify(data.profile));
+        }
+      } catch (err) { /* guards fall back to the /me check */ }
       showStatus('status', 'Signed in. Loading your hub\u2026', 'success');
-      window.location.replace('/home');
+      // Route on the known role: techs go straight to My Day instead of
+      // bouncing through /home. Missing/odd profile keeps today's behavior.
+      window.location.replace(role === 'tech' ? '/tech' : '/home');
     } catch (err) {
       showStatus('status', err.message || 'Unable to sign in right now. Try again.', 'error');
     } finally {
