@@ -209,14 +209,19 @@
       const r = await BatesAuth.authFetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error('profile');
       const { profile } = await r.json();
+      // Cache for role-guard.js so the NEXT wrong-page hit redirects pre-paint
+      // (also corrects a stale cached role from a previous account).
+      try { localStorage.setItem('bates.profile', JSON.stringify(profile)); } catch (e) {}
       if (profile.role !== 'tech') {
         // Office (or anyone else) belongs on the office hub, not the field view.
         window.location.replace('/home');
         return null;
       }
+      document.documentElement.classList.remove('role-pending');
       return profile;
     } catch (e) {
       console.error('role check failed', e);
+      document.documentElement.classList.remove('role-pending');
       return undefined;
     }
   }

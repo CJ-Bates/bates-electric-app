@@ -85,14 +85,23 @@
       }
       if (!res.ok) throw new Error('Failed to load profile');
       const { profile } = await res.json();
+      // Cache BEFORE any redirect so role-guard.js can route the next page
+      // hit pre-paint (techs previously never got their role cached — render()
+      // was the only writer and techs never reach it).
+      try { localStorage.setItem('bates.profile', JSON.stringify(profile)); } catch (e) {}
       // Techs land on "My Day", not the shared hub — redirect before any
       // render() call so there's no flash of hub content first.
       if (profile.role === 'tech') {
         window.location.replace('/tech');
         return;
       }
+      // role-guard.js hid the shell when no role was cached; reveal it now
+      // that the authoritative check says this user stays (the redirect path
+      // above deliberately keeps it hidden while navigation happens).
+      document.documentElement.classList.remove('role-pending');
       render(profile);
     } catch (err) {
+      document.documentElement.classList.remove('role-pending');
       showError(err.message || 'Could not load your profile.');
     }
   }

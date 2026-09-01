@@ -17,6 +17,9 @@
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric &mdash; Home</title>
+  <!-- Synchronous pre-paint role guard: a tech is redirected to /tech (their
+       "My Day" home) before the hub shell can paint (async /me stays authoritative). -->
+  <script src="role-guard.js" data-page="home"></script>
 </head>
 <body class="hub-body">
 

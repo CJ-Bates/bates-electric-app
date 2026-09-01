@@ -16,6 +16,9 @@
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric &mdash; Generator Care</title>
+  <!-- Synchronous pre-paint role guard: a non-office user is redirected to
+       /home before any office chrome can paint (async /me stays authoritative). -->
+  <script src="role-guard.js" data-page="generator-care"></script>
   <style>
     /* Generator Care page styles — layout + page-specific bits only.
        Buttons/badges/chips/filter pills come from components.css; every color
@@ -430,6 +433,9 @@
     .lead-note { background: var(--surface-2); border-radius: 6px; padding: 8px 10px; font-size: 0.84rem; color: var(--ink-2); margin-top: 8px; white-space: pre-wrap; }
     .lead-from { color: var(--ink-3); font-size: 0.78rem; margin-top: 8px; }
     .lead-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    /* Destructive action sits apart from the routine row actions (danger color
+       comes from .btn-danger-soft; the gap is the accidental-click buffer). */
+    .lead-actions .lead-del { margin-left: auto; }
     /* WP3: month filter + cohort summary. The select mirrors .filter-group
        input (app.css); the label span mirrors .filter-group label, which only
        targets the label element. */
@@ -479,6 +485,9 @@
       .leads-head { flex-direction: column; align-items: stretch; }
       .leads-head .btn { width: 100%; justify-content: center; min-height: 44px; }
       .lead-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+      /* On phones the buttons stretch to fill rows, so give Delete its own
+         full-width row instead of letting it sit flush against a routine one. */
+      .lead-actions .lead-del { flex-basis: 100%; }
     }
 
     /* ---- Payout print breakdown (Brenda's paper/PDF copy) ----

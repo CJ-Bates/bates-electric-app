@@ -8,6 +8,16 @@
    tokens.css; the short list of true exceptions lives at the bottom. */
 
 /* ============================================================
+   PRE-PAINT ROLE GUARD (role-guard.js)
+   ============================================================ */
+
+/* Neutral loading state while a page with no cached role waits for its /me
+   check: hide the shell so a user who's about to be redirected never sees the
+   wrong page's chrome. role-guard.js removes the class (or times out to fail
+   open), so this can't strand a blank page. */
+html.role-pending body { visibility: hidden; }
+
+/* ============================================================
    GLASS CARD UTILITY
    ============================================================ */
 
