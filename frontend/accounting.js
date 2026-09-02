@@ -68,14 +68,6 @@
     return 'HTTP ' + r.status;
   }
 
-  function showStatus(msg, kind) {
-    const el = $('status');
-    el.textContent = msg;
-    el.className = 'status ' + (kind || '');
-    el.hidden = false;
-    if (kind !== 'error') setTimeout(() => { el.hidden = true; }, 3500);
-  }
-
   // ---- Shared transaction-row rendering (used by both views) ----
   const rowTr = (t) => `<tr>
       <td>${formatDate(t.date)}</td>

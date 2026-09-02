@@ -460,13 +460,27 @@
       const bits = [`Sent ${data.sent} invite${data.sent === 1 ? '' : 's'}`];
       const skippedCount = (data.skipped || []).length;
       if (skippedCount) bits.push(`${skippedCount} skipped`);
-      if (data.failed) bits.push(`${data.failed} failed \u2014 still emailable, select again to retry`);
-      showStatus(`${bits.join(' · ')}.`, data.failed ? 'error' : 'success');
+      if (data.failed) bits.push(`${data.failed} failed`);
+      if (data.failed) {
+        await openAlert({
+          title: `${data.failed} invite${data.failed === 1 ? '' : 's'} NOT sent`,
+          message: `${bits.join(' · ')}.`,
+          next: 'The failed leads are still emailable — select them again to retry.',
+          danger: true,
+        });
+      } else {
+        openSuccessFlash({ title: 'Invites sent', message: `${bits.join(' · ')}.` });
+      }
       // Drop only the leads this send attempted — boxes checked while the
       // POST was in flight are the NEXT selection and must survive.
       for (const l of recipients) selected.delete(l.id);
     } catch (err) {
-      showStatus(`Send failed: ${err.message}`, 'error');
+      await openAlert({
+        title: 'Invites NOT sent',
+        message: err.message,
+        next: 'The list refreshes now — any lead that did go out moves stage. Reselect the rest and send again.',
+        danger: true,
+      });
     } finally {
       sendingInvites = false;
       // Refetch so the cohort counts + stages reflect what the server did:

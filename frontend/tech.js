@@ -1100,11 +1100,25 @@
         body: JSON.stringify({}),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(chargeFailMessage(data), 'error'); }
+      // A tech at a generator on one bar of signal is the worst case for a
+      // 3-second corner message — a charge that did NOT happen is must-see.
+      if (!r.ok) {
+        await openAlert({
+          title: 'Charge NOT completed',
+          message: chargeFailMessage(data),
+          next: 'Nothing was charged. Everything stays in the cart — try again once the card is sorted, or the office can charge it later.',
+          danger: true,
+        });
+      }
       else openSuccessFlash({ title: 'Charge successful', message: `Charged ${money(data.total_cents)} — the customer gets one receipt and the office was notified.` });
     } catch (e) {
       console.error('cart charge failed', e);
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Charge status unknown',
+        message: `Couldn’t confirm whether the charge went through (${e.message}).`,
+        next: 'Refresh this visit before tapping Charge again — if the cart is empty, it went through. Check with the office if unsure.',
+        danger: true,
+      });
     }
     chargeInFlight = false;
     loadAddons(v); // re-render restores the button state
@@ -1254,10 +1268,23 @@
         body: JSON.stringify(body),
       });
       data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(`Could not enroll: ${data.error || ('HTTP ' + r.status)}`, 'error'); return false; }
+      if (!r.ok) {
+        await openAlert({
+          title: 'Enrollment NOT sent',
+          message: data.error || ('HTTP ' + r.status),
+          next: 'Nothing went to the customer. Check the details in the form and try again.',
+          danger: true,
+        });
+        return false;
+      }
     } catch (e) {
       console.error('enroll failed', e);
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Enrollment NOT sent',
+        message: `Couldn’t reach the server: ${e.message}`,
+        next: 'Nothing went to the customer. Your entries are kept — try again when you have signal.',
+        danger: true,
+      });
       return false;
     }
     closeSheet();

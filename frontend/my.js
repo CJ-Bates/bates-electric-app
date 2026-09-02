@@ -257,6 +257,14 @@
     showStatus((err && err.message) || 'Something went wrong — please try again.', 'error');
   }
 
+  // Must-see version, for outcomes the customer cannot afford to miss: a
+  // request or receipt that did NOT go out, a cancel that did NOT happen.
+  // Dismissed by the customer, with what to do next.
+  function surfaceMustSee(err, title, next) {
+    if (err && err.expired) return;
+    return openAlert({ title, message: (err && err.message) || 'Something went wrong.', next, danger: true });
+  }
+
   // ---------------------------------------------------------------------------
   // Sign-in: request a magic link via Supabase OTP. Response is IGNORED on
   // purpose — success, 4xx, or network error all show the same neutral message
@@ -851,8 +859,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preferred: values.preferred, note: values.note || '' }),
       });
-      showStatus('Request sent — we’ll confirm the new time with you.', 'success');
-    } catch (err) { surface(err); }
+      openSuccessFlash({ title: 'Request sent', message: 'We’ll confirm the new time with you.' });
+    } catch (err) { surfaceMustSee(err, 'Request NOT sent', 'Please try again, or call us at (636) 464-3939.'); }
   }
 
   function icsEscape(s) {
@@ -1052,8 +1060,8 @@
   async function onResendReceipt(invoiceId) {
     try {
       await api('/api/my/resend-receipt/' + encodeURIComponent(invoiceId), { method: 'POST' });
-      showStatus('Receipt sent — check your inbox.', 'success');
-    } catch (err) { surface(err); }
+      openSuccessFlash({ title: 'Receipt sent', message: 'Check your inbox — it can take a minute.' });
+    } catch (err) { surfaceMustSee(err, 'Receipt NOT sent', 'Please try again, or call us at (636) 464-3939.'); }
   }
 
   async function onCancelPlan() {
@@ -1080,9 +1088,12 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: values.reason || '' }),
       });
-      showStatus('Your plan is canceled' + (r.service_through ? ' — service continues through ' + fmtDate(r.service_through) : '') + '.', 'success');
+      openSuccessFlash({
+        title: 'Your plan is canceled',
+        message: r.service_through ? 'Service continues through ' + fmtDate(r.service_through) + '.' : 'No further charges.',
+      });
       loadOverview(true);
-    } catch (err) { surface(err); }
+    } catch (err) { surfaceMustSee(err, 'Plan NOT canceled', 'Your plan is unchanged. Please try again, or call us at (636) 464-3939.'); }
   }
 
   // ---------------------------------------------------------------------------

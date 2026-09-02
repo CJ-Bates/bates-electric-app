@@ -597,7 +597,9 @@
     formData.sigCust = signatures.sigCust ? signatures.sigCust.toDataURL() : null;
 
     setSubmitButton('Submitting...', true);
-    showStatus('Submitting inspection...', 'info');
+    // Keyed + sticky: the submit/upload progress replaces itself in place and
+    // stays up until the final outcome (or the success modal) replaces it.
+    showStatus('Submitting inspection...', 'info', { key: 'submit', sticky: true });
 
     const token = getToken();
     const payload = {
@@ -631,7 +633,7 @@
       inspectionId = (result && result.inspection && result.inspection.id) || null;
     } catch (backendErr) {
       console.error('Inspection submission failed:', backendErr);
-      showStatus(`Submission failed: ${backendErr.message}. Please try again.`, 'error');
+      showStatus(`Submission failed: ${backendErr.message}. Please try again.`, 'error', { key: 'submit' });
       restoreSubmitButton();
       return;
     }
@@ -641,11 +643,11 @@
     let uploadResult = null;
     if (inspectionId && totalPhotos > 0) {
       setSubmitButton(`Uploading photos (0/${totalPhotos})...`, true);
-      showStatus(`Uploading 0/${totalPhotos} photos...`, 'info');
+      showStatus(`Uploading 0/${totalPhotos} photos...`, 'info', { key: 'submit', sticky: true });
       try {
         uploadResult = await uploadPhotos(inspectionId, token, (done) => {
           setSubmitButton(`Uploading photos (${done}/${totalPhotos})...`, true);
-          showStatus(`Uploading ${done}/${totalPhotos} photos...`, 'info');
+          showStatus(`Uploading ${done}/${totalPhotos} photos...`, 'info', { key: 'submit', sticky: true });
         });
       } catch (photoErr) {
         // uploadPhotos shouldn't throw, but defend against it just in case so
@@ -684,14 +686,13 @@
     if (!modal || !okBtn) {
       // Fallback: if the modal isn't in the DOM for some reason, fall back to
       // the inline status + redirect so the user still gets some confirmation.
-      showStatus(message, 'success');
+      showStatus(message, 'success', { key: 'submit', sticky: true });
       setTimeout(() => window.location.replace('/home'), 3000);
       return;
     }
     if (msgEl) msgEl.textContent = message;
-    // Hide the inline status — the modal is the canonical confirmation now.
-    const statusEl = document.getElementById('status');
-    if (statusEl) statusEl.hidden = true;
+    // Drop the progress toast — the modal is the canonical confirmation now.
+    dismissStatus('submit');
     modal.hidden = false;
     document.body.style.overflow = 'hidden';
     const goHome = () => { window.location.replace('/home'); };
@@ -726,13 +727,6 @@
       e.preventDefault();
       submitInspection();
     });
-  }
-
-  function showStatus(msg, kind = 'info') {
-    const el = document.getElementById('status');
-    el.hidden = false;
-    el.className = `status ${kind}`;
-    el.textContent = msg;
   }
 
   // ---------- init ----------

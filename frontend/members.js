@@ -151,13 +151,18 @@
       const data = await api('/api/members/invite', {
         method: 'POST', headers: authHeaders(true), body: JSON.stringify({ name, email }),
       });
-      if (data.warning) showStatus(data.warning, 'warning');
+      if (data.warning) await openAlert({ title: 'Invited, but the email did NOT send', message: data.warning });
       else openSuccessFlash({ title: 'Member invited', message: `Invited ${name}. They'll get a set-password email.` });
       document.getElementById('new-staff-name').value = '';
       document.getElementById('new-staff-email').value = '';
       await refresh();
     } catch (e) {
-      showStatus(`Invite failed: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Invite NOT sent',
+        message: e.message,
+        next: `Check the email address and try again. If ${name} already shows in the list, use "Resend set-password link" instead.`,
+        danger: true,
+      });
     }
   }
 
@@ -181,9 +186,16 @@
   async function resendStaffInvite(id) {
     try {
       await api(`/api/members/${id}/resend-invite`, { method: 'POST', headers: authHeaders(true) });
-      showStatus('Set-password link sent.', 'success');
+      const m = staffList.find((s) => s.id === id);
+      openSuccessFlash({ title: 'Set-password link sent', message: `To ${(m && m.email) || 'their email'}. It should arrive within a minute.` });
     } catch (e) {
-      showStatus(`Failed: ${e.message}`, 'error');
+      // The set-password incident: a failed send must never read as success.
+      await openAlert({
+        title: 'Set-password link NOT sent',
+        message: e.message,
+        next: 'They have no new link. Check the email on their record, then use "Resend set-password link" again.',
+        danger: true,
+      });
     }
   }
 
@@ -230,7 +242,12 @@
         : { title: 'Member deactivated', message: "They can't sign in until reactivated." });
       await refresh();
     } catch (e) {
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: active ? 'Member NOT reactivated' : 'Member NOT deactivated',
+        message: `${active ? 'They still cannot sign in.' : 'They can still sign in.'} ${e.message}`,
+        next: 'Refresh the page to confirm their current status, then try again.',
+        danger: true,
+      });
     }
   }
 
@@ -284,13 +301,18 @@
       const data = await api('/api/generator-care/techs', {
         method: 'POST', headers: authHeaders(true), body: JSON.stringify({ name, email }),
       });
-      if (data.warning) showStatus(data.warning, 'warning');
+      if (data.warning) await openAlert({ title: 'Invited, but the email did NOT send', message: data.warning });
       else openSuccessFlash({ title: 'Tech invited', message: `Invited ${name}. They'll get a set-password email.` });
       document.getElementById('new-tech-name').value = '';
       document.getElementById('new-tech-email').value = '';
       await refresh();
     } catch (e) {
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Invite NOT sent',
+        message: e.message,
+        next: `Check the email address and try again. If ${name} already shows in the list, use "Resend link" instead.`,
+        danger: true,
+      });
     }
   }
 
@@ -304,16 +326,27 @@
         : { title: 'Tech deactivated', message: "They can't sign in until reactivated." });
       await refresh();
     } catch (e) {
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: active ? 'Tech NOT reactivated' : 'Tech NOT deactivated',
+        message: `${active ? 'They still cannot sign in.' : 'They can still sign in.'} ${e.message}`,
+        next: 'Refresh the page to confirm their current status, then try again.',
+        danger: true,
+      });
     }
   }
 
   async function resendTechInvite(id) {
     try {
       await api(`/api/generator-care/techs/${id}/resend-invite`, { method: 'POST', headers: authHeaders(true) });
-      showStatus('Set-password link re-sent.', 'success');
+      const t = techList.find((x) => x.id === id);
+      openSuccessFlash({ title: 'Set-password link sent', message: `To ${(t && t.email) || 'their email'}. It should arrive within a minute.` });
     } catch (e) {
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Set-password link NOT sent',
+        message: e.message,
+        next: 'They have no new link. Check the email on their record, then use "Resend link" again.',
+        danger: true,
+      });
     }
   }
 
@@ -369,9 +402,15 @@
     if (btn) btn.disabled = true;
     try {
       await api(`/api/members/customers/${id}/resend-signin`, { method: 'POST', headers: authHeaders(true) });
-      showStatus('Sign-in instructions sent.', 'success');
+      const c = customerList.find((x) => x.id === id);
+      openSuccessFlash({ title: 'Sign-in instructions sent', message: `To ${(c && c.email) || 'the customer'}.` });
     } catch (e) {
-      showStatus(`Failed: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Sign-in instructions NOT sent',
+        message: e.message,
+        next: 'The customer got nothing. Try again; if it keeps failing, check their email on the record.',
+        danger: true,
+      });
     } finally {
       if (btn) btn.disabled = false;
     }

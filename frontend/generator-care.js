@@ -1778,14 +1778,19 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      showStatus('Text sent.', 'success');
       ta.value = '';
       loadSmsHistory(subId, customerId); // the sent row joins the thread
+      openSuccessFlash({ title: 'Text sent', message: 'It now shows in the thread.' });
     } catch (err) {
       // Keep what they typed: a blocked/failed attempt is logged and shows
       // on the next Refresh, but the draft must not vanish under them.
       console.error('[sms-reply] failed:', err);
-      showStatus(err.message, 'error');
+      openAlert({
+        title: 'Text NOT sent',
+        message: err.message,
+        next: 'Your draft is still in the box. Check the reason above, then Send again — or call the customer instead.',
+        danger: true,
+      });
       btn.textContent = label;
       ta.disabled = false;
       btn.disabled = !ta.value.trim();
@@ -2158,12 +2163,17 @@
   }
 
   // Mark a pending add-on PERFORMED (unbilled) — does NOT charge. Performed add-ons
-  // are billed together for the visit via "Charge performed add-ons".
+  // are billed together for the visit via "Charge performed add-ons" — a button
+  // that only exists once something IS performed. So this dialog must not point
+  // at it (Sep 1: it did, the user couldn't find it, and wrote in). Instead,
+  // once the mark lands and the card re-renders, we land the user ON the
+  // now-real button with a durable notice beside it. The deliberate two-step
+  // stays: several add-ons still bill as one charge.
   async function markPerformed(addonId, amount, label, subscriptionId) {
     const today = new Date().toISOString().slice(0, 10);
     const res = await openPrompt({
       title: `Mark "${label}" performed`,
-      message: 'Marks it performed — does NOT charge. Bill it together with the other performed add-ons using "Charge performed add-ons."',
+      message: 'Marks it performed. Nothing is charged yet — the Charge step comes right after, so it can be billed together with any other performed add-ons as one charge.',
       fields: [{ name: 'date', label: 'Date performed', type: 'date', value: today, required: true }],
       confirmText: 'Mark performed',
     });
@@ -2177,9 +2187,19 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Could not mark performed: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
-      showStatus(`${label} marked performed (unbilled).`, 'success');
       await loadSubscriptions();
-      showDetail(subscriptionId);
+      await showDetail(subscriptionId);
+      // The next step is now on screen: say so next to it, and land there.
+      const chargeBtn = document.querySelector('#modal-body #gc-charge-addons-btn');
+      if (chargeBtn) {
+        showInlineNotice(chargeBtn.closest('.gc-card-row') || chargeBtn,
+          `${label} marked performed — not charged yet. Use the button below to bill it now (it bills every performed add-on together, as one charge).`,
+          'success');
+        landOn(chargeBtn);
+      } else {
+        // Nothing to bill (a $0 add-on, a canceled plan, or no billing permission).
+        showStatus(`${label} marked performed${amount ? ' (unbilled)' : ''}.`, 'success');
+      }
     } catch (err) {
       console.error('Mark performed failed:', err);
       showStatus(`Failed: ${err.message}`, 'error');
@@ -2206,13 +2226,26 @@
         body: JSON.stringify({ customer_id: customerId }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showStatus(`Could not charge: ${data.reason || data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      if (!r.ok) {
+        await openAlert({
+          title: 'Charge NOT completed',
+          message: `Nothing was charged. ${data.reason || data.error || ('HTTP ' + r.status)}`,
+          next: 'The add-ons stay marked performed. If the card was declined, use "Send card-update link" on this record, then "Charge performed add-ons" again.',
+          danger: true,
+        });
+        return;
+      }
       openSuccessFlash({ title: 'Charge successful', message: `Charged ${money(data.total_cents)} for ${data.charged_count} add-on${data.charged_count === 1 ? '' : 's'}.` });
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Charge performed add-ons failed:', err);
-      showStatus(`Failed: ${err.message}`, 'error');
+      await openAlert({
+        title: 'Charge status unknown',
+        message: `Couldn't confirm whether the charge went through: ${err.message}`,
+        next: 'Refresh this customer and check the Charges card before charging again, so the card isn\'t charged twice.',
+        danger: true,
+      });
     }
   }
 
@@ -2310,17 +2343,29 @@
       const data = await r.json();
       if (!r.ok) {
         const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Could not add charge: ${reason}`, 'error');
+        await openAlert({
+          title: billing_method === 'immediate' ? 'Charge NOT completed' : 'Charge NOT added',
+          message: `Nothing was charged or added. ${reason}`,
+          next: billing_method === 'immediate'
+            ? 'If the card was declined, use "Send card-update link" on this record, then add the charge again.'
+            : 'Try again; if it keeps failing, note the amount in the customer notes so it isn\'t lost.',
+          danger: true,
+        });
       } else if (billing_method === 'immediate') {
         openSuccessFlash({ title: 'Charge successful', message: `Charged $${amount.toFixed(2)} to the card on file.` });
       } else {
-        showStatus(`Added ${amount.toFixed(2)} to next renewal.`, 'success');
+        openSuccessFlash({ title: 'Added to next renewal', message: `$${amount.toFixed(2)} — "${description}" — bills with the next renewal invoice.` });
       }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Add adhoc charge failed:', err);
-      showStatus(`Failed: ${err.message}`, 'error');
+      await openAlert({
+        title: 'Charge status unknown',
+        message: `Couldn't confirm whether it went through: ${err.message}`,
+        next: 'Refresh this customer and check the Charges card before adding it again, so it isn\'t charged twice.',
+        danger: true,
+      });
     }
   }
 
@@ -2335,15 +2380,25 @@
       const data = await r.json();
       if (!r.ok) {
         const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Could not cancel: ${reason}`, 'error');
+        await openAlert({
+          title: 'Charge NOT canceled',
+          message: `"${desc}" is still on the account. ${reason}`,
+          next: 'If it was already charged, refund it from the Charges card instead. Otherwise try again.',
+          danger: true,
+        });
       } else {
-        showStatus('Charge canceled.', 'success');
+        openSuccessFlash({ title: 'Charge canceled', message: `"${desc}" will not be billed.` });
       }
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Cancel adhoc charge failed:', err);
-      showStatus(`Failed: ${err.message}`, 'error');
+      await openAlert({
+        title: 'Charge NOT canceled',
+        message: `Couldn't reach the server: ${err.message}`,
+        next: 'Refresh this customer to see whether it\'s still listed, then try again.',
+        danger: true,
+      });
     }
   }
 
@@ -2475,7 +2530,12 @@
       const data = await r.json();
       if (!r.ok) {
         const reason = data.reason || data.error || `HTTP ${r.status}`;
-        showStatus(`Cancel failed: ${reason}`, 'error');
+        await openAlert({
+          title: 'Subscription NOT canceled',
+          message: `It is still active and will renew. ${reason}`,
+          next: 'Try again; if it keeps failing, cancel it in the Stripe dashboard and note it on this record.',
+          danger: true,
+        });
       } else {
         const through = data.service_through ? ` Service through ${data.service_through}.` : '';
         openSuccessFlash({ title: 'Subscription canceled', message: `Stripe will not auto-renew.${through}` });
@@ -2484,7 +2544,12 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Cancel subscription failed:', err);
-      showStatus(`Cancel failed: ${err.message}`, 'error');
+      await openAlert({
+        title: 'Cancel status unknown',
+        message: `Couldn't confirm whether it was canceled: ${err.message}`,
+        next: 'Refresh this customer — the plan card shows Canceled if it went through. If not, try again.',
+        danger: true,
+      });
     }
   }
 
@@ -2731,15 +2796,20 @@
       const data = await r.json();
       if (!r.ok || !data.sent) {
         const reason = data.error || data.email_status || `HTTP ${r.status}`;
-        showStatus(`Couldn't resend welcome email: ${reason}`, 'error');
+        await openAlert({
+          title: 'Welcome email NOT sent',
+          message: reason,
+          next: 'Check the email address on the customer record, then use "Resend Welcome" again.',
+          danger: true,
+        });
         return;
       }
-      const who = data.customer_name ? ` to ${data.customer_name}` : '';
+      const who = data.customer_name || 'the customer';
       const emailAddr = data.customer_email ? ` (${data.customer_email})` : '';
-      showStatus(`Welcome email re-sent${who}${emailAddr}.`, 'success');
+      openSuccessFlash({ title: 'Welcome email sent', message: `To ${who}${emailAddr}.` });
     } catch (err) {
       console.error('Resend welcome failed:', err);
-      showStatus(`Failed: ${err.message}`, 'error');
+      await openAlert({ title: 'Welcome email NOT sent', message: `Couldn't reach the server: ${err.message}`, next: 'Try again in a moment.', danger: true });
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
@@ -2817,26 +2887,36 @@
       });
       const data = await r.json();
       if (!r.ok) {
-        showStatus(`Portal link failed: ${data.error || 'HTTP ' + r.status}`, 'error');
+        await openAlert({
+          title: 'Card-update link NOT sent',
+          message: data.error || 'HTTP ' + r.status,
+          next: 'Nothing went to the customer. Try again; if it keeps failing, they can update their card by calling the office.',
+          danger: true,
+        });
         return;
       }
-      const who = data.customer_name ? ` to ${data.customer_name}` : '';
+      const who = data.customer_name || 'the customer';
       const emailAddr = data.customer_email ? ` (${data.customer_email})` : '';
       if (data.email_sent) {
-        showStatus(`Card-update link emailed${who}${emailAddr}. Link expires in about an hour.`, 'success');
+        openSuccessFlash({ title: 'Card-update link emailed', message: `To ${who}${emailAddr}. The link expires in about an hour.` });
       } else {
-        // Fallback if the mail provider is down or the customer has no email on file: copy
-        // the link to the clipboard so Amy can paste it to the customer.
+        // Fallback if the mail provider is down or the customer has no email on
+        // file: the link exists but nobody has it yet. Copy it to the clipboard
+        // AND show it in full, and make the hand-off must-see \u2014 this is the one
+        // outcome here that needs the user to do something next.
         let copied = false;
         try { await navigator.clipboard.writeText(data.url); copied = true; } catch (_) {}
-        const reason = data.email_status ? ' (' + data.email_status + ')' : '';
+        const reason = data.email_status ? ` (${data.email_status})` : '';
         const target = data.customer_email || 'the customer';
-        showStatus(`Couldn't auto-send the email${reason}.${copied ? ' Link copied to clipboard' : ' Copy the link from the console'} \u2014 send it to ${target}. Expires in ~1 hour.`, 'info');
-        if (!copied) console.log('[portal-link] card-update URL:', data.url);
+        await openAlert({
+          title: 'Email NOT sent \u2014 send the link yourself',
+          message: `The card-update link was created but the email could not be sent${reason}.${copied ? ' It has been copied to your clipboard.' : ''}\n\n${data.url}`,
+          next: `Text or email it to ${target}. It expires in about an hour.`,
+        });
       }
     } catch (err) {
       console.error('Portal link failed:', err);
-      showStatus(`Failed: ${err.message}`, 'error');
+      await openAlert({ title: 'Card-update link NOT sent', message: `Couldn't reach the server: ${err.message}`, next: 'Try again in a moment.', danger: true });
     }
   }
 
@@ -2998,13 +3078,26 @@
         body: JSON.stringify({ customer_id: customerId, proration_date: preview.proration_date }),
       });
       const data = await r.json();
-      if (!r.ok) { showStatus(`Couldn't add Fleet Monitoring: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
+      if (!r.ok) {
+        await openAlert({
+          title: 'Fleet Monitoring NOT added',
+          message: `Nothing was charged. ${data.error || ('HTTP ' + r.status)}`,
+          next: 'If the card was declined, use "Send card-update link" on this record, then add Fleet Monitoring again.',
+          danger: true,
+        });
+        return;
+      }
       openSuccessFlash({ title: 'Fleet Monitoring added', message: 'Prorated charge billed to the card on file.' });
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (e) {
       console.error('add-fleet failed:', e);
-      showStatus(`Couldn't add Fleet Monitoring: ${e.message}`, 'error');
+      await openAlert({
+        title: 'Fleet Monitoring status unknown',
+        message: `Couldn't confirm whether the prorated charge went through: ${e.message}`,
+        next: 'Refresh this customer and check the plan card before trying again, so the card isn\'t charged twice.',
+        danger: true,
+      });
     }
   }
 
@@ -3443,11 +3536,20 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      showStatus(optIn ? 'Text opt-in recorded.' : 'Text opt-out recorded.', 'success');
+      openSuccessFlash(optIn
+        ? { title: 'Text opt-in recorded', message: `Recorded for ${phoneStr} with today's date.` }
+        : { title: 'Text opt-out recorded', message: `No more Generator Care texts to ${phoneStr}.` });
       showDetail(subId);
     } catch (err) {
       console.error('[sms-consent] failed:', err);
-      showStatus(`Failed: ${err.message}`, 'error');
+      openAlert({
+        title: optIn ? 'Opt-in NOT recorded' : 'Opt-out NOT recorded',
+        message: `Nothing changed for this customer. ${err.message}`,
+        next: optIn
+          ? 'Try again — no reminder texts go out until the opt-in is recorded.'
+          : 'Try again — texts to this number stay on until the opt-out is recorded.',
+        danger: true,
+      });
     }
   }
 
@@ -3641,13 +3743,18 @@
       });
       const data = await r.json();
       if (!r.ok || !data.sent) {
-        showStatus(`Resend failed: ${data.error || `HTTP ${r.status}`}`, 'error');
+        await openAlert({
+          title: 'Receipt NOT sent',
+          message: data.error || `HTTP ${r.status}`,
+          next: 'Check the email address on the customer record, then try Resend again.',
+          danger: true,
+        });
         return;
       }
-      showStatus(`Receipt resent${email ? ' to ' + email : ''}.`, 'success');
+      openSuccessFlash({ title: 'Receipt sent', message: `To ${email || 'the customer'} — ${dateStr} · ${amt}.` });
     } catch (err) {
       console.error('Resend receipt failed:', err);
-      showStatus(`Resend failed: ${err.message}`, 'error');
+      await openAlert({ title: 'Receipt NOT sent', message: `Couldn't reach the server: ${err.message}`, next: 'Try again in a moment.', danger: true });
     } finally {
       btn.disabled = false; btn.textContent = original;
     }
@@ -3772,7 +3879,14 @@
   async function refundCharge(rowType, rowId, originalAmountCents, alreadyRefundedCents, label, subscriptionId) {
     const remaining = originalAmountCents - (alreadyRefundedCents || 0);
     if (remaining <= 0) {
-      showStatus('Already fully refunded.', 'error');
+      // The refund incident: this used to be a 3-second corner toast, read as
+      // "nothing happened". Nothing DID happen — and that must be unmissable.
+      await openAlert({
+        title: 'Refund NOT issued',
+        message: `${label} has already been fully refunded — there is nothing left to refund.`,
+        next: 'The earlier refund is shown on the row. If the customer says they never got it, look up the charge in the Stripe dashboard.',
+        danger: true,
+      });
       return;
     }
     // Ad-hoc/addon charges don't carry a per-charge card client-side; the refund
@@ -3800,7 +3914,12 @@
       if (!r.ok) {
         // A refund that did NOT happen must never hide in the corner toast —
         // block with a must-acknowledge dialog (Stripe shows no refund).
-        await openAlert({ title: 'Refund NOT issued', message: `${label}: ${data.error || `HTTP ${r.status}`}`, danger: true });
+        await openAlert({
+          title: 'Refund NOT issued',
+          message: `${label}: ${data.error || `HTTP ${r.status}`}`,
+          next: 'No money moved. Check the reason above and try again, or refund it from the Stripe dashboard.',
+          danger: true,
+        });
         return;
       }
       openSuccessFlash({ title: 'Refund issued', message: `Refunded $${(data.amount_cents / 100).toFixed(2)} for ${label}.` });
@@ -3808,7 +3927,12 @@
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Refund failed:', err);
-      await openAlert({ title: 'Refund NOT issued', message: `${label}: ${err.message}`, danger: true });
+      await openAlert({
+        title: 'Refund status unknown',
+        message: `${label}: couldn't confirm whether the refund went through (${err.message}).`,
+        next: 'Refresh this customer and check the row before trying again, so it isn\'t refunded twice.',
+        danger: true,
+      });
     }
   }
 
@@ -3817,7 +3941,12 @@
   async function refundInvoice(invoiceId, chargeAmountCents, alreadyRefundedCents, subscriptionId, cardBrand, cardLast4) {
     const remaining = (chargeAmountCents || 0) - (alreadyRefundedCents || 0);
     if (remaining <= 0) {
-      showStatus('This invoice is already fully refunded.', 'error');
+      await openAlert({
+        title: 'Refund NOT issued',
+        message: 'This invoice has already been fully refunded — there is nothing left to refund.',
+        next: 'The earlier refund is shown on the invoice row. If the customer says they never got it, look up the charge in the Stripe dashboard.',
+        danger: true,
+      });
       return;
     }
     const result = await openRefundDialog({
@@ -3838,14 +3967,24 @@
       });
       const data = await r.json();
       if (!r.ok) {
-        await openAlert({ title: 'Refund NOT issued', message: data.error || `HTTP ${r.status}`, danger: true });
+        await openAlert({
+          title: 'Refund NOT issued',
+          message: data.error || `HTTP ${r.status}`,
+          next: 'No money moved. Check the reason above and try again, or refund it from the Stripe dashboard.',
+          danger: true,
+        });
         return;
       }
       openSuccessFlash({ title: 'Refund issued', message: `Refunded $${(data.amount_cents / 100).toFixed(2)} to the customer's card.` });
       showDetail(subscriptionId);
     } catch (err) {
       console.error('Invoice refund failed:', err);
-      await openAlert({ title: 'Refund NOT issued', message: err.message, danger: true });
+      await openAlert({
+        title: 'Refund status unknown',
+        message: `Couldn't confirm whether the refund went through (${err.message}).`,
+        next: 'Refresh this customer and check the invoice row before trying again, so it isn\'t refunded twice.',
+        danger: true,
+      });
     }
   }
 

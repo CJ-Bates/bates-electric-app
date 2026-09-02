@@ -434,19 +434,19 @@
 
   // Delete inspection
   async function deleteInspection(id) {
-    showStatus('Deleting...', 'info');
+    showStatus('Deleting...', 'info', { key: 'delete', sticky: true });
     try {
       const response = await BatesAuth.authFetch(`${API_BASE}/inspections/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) throw new Error('Delete failed');
-      showStatus('Inspection deleted.', 'success');
+      showStatus('Inspection deleted.', 'success', { key: 'delete' });
       closeModal();
       await loadInspections();
     } catch (err) {
       console.error('Delete failed:', err);
-      showStatus(`Delete failed: ${err.message}`, 'error');
+      showStatus(`Delete failed: ${err.message}`, 'error', { key: 'delete' });
     }
   }
 
@@ -478,13 +478,6 @@
   // Helpers
   function showLoading(show) {
     document.getElementById('loading').hidden = !show;
-  }
-
-  function showStatus(msg, kind = 'info') {
-    const el = document.getElementById('status');
-    el.hidden = false;
-    el.className = `status ${kind}`;
-    el.textContent = msg;
   }
 
   function ratingColor(rating) {

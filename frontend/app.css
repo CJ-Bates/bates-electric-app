@@ -269,9 +269,53 @@ input:focus-visible {
    just stretches to the card width. */
 .auth-form .btn { width: 100%; margin-top: 6px; }
 
-/* Fixed bottom-right status toast, v3 toast treatment: white text on navy-900
-   with a leading intent-colored dot (no glyphs). Kind classes (.info/.error/
-   .success/.warning) are applied by JS. Sits above modals (z 2000 > 1000). */
+/* Bottom-right toast STACK (ui-dialogs.js showStatus). Toasts are appended
+   newest-last so the newest sits nearest the corner; each is its own live
+   region and has a real Dismiss button. The stack itself is click-through so
+   it never blocks what's behind the empty space above the toasts. Sits above
+   modals (z 2000 > 1500). */
+.status-stack {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.status-stack .status {
+  position: relative;
+  bottom: auto;
+  right: auto;
+  max-width: 100%;
+  pointer-events: auto;
+}
+.status-msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.status-close {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.75;
+  font: inherit;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.status-close:hover { opacity: 1; }
+.status-close:focus-visible { outline: 2px solid #82AAFF; outline-offset: 2px; opacity: 1; }
+
+/* Status toast, v3 toast treatment: white text on navy-900 with a leading
+   intent-colored dot (no glyphs). Kind classes (.info/.error/.success/
+   .warning) are applied by JS. The fixed positioning below is for the one
+   standalone use left (the sign-in page's inline #status, app.js); inside
+   .status-stack it's overridden above. */
 .status {
   position: fixed;
   bottom: 24px;
@@ -307,9 +351,12 @@ input:focus-visible {
    every page shows a small empty toast pill in the corner. */
 .status[hidden] { display: none; }
 
-/* Set-password page link states (reset-password.html). A dead or verified
-   link takes over the card — heading + explanation + a way out — instead of
-   whispering through the corner toast, which first-time users never see. */
+/* Durable inline notice. Born on the set-password page (reset-password.html),
+   where a dead or verified link takes over the card — heading + explanation
+   + a way out — instead of whispering through the corner toast, which
+   first-time users never see. Now the app-wide tier-2 outcome channel
+   (ui-dialogs.js showInlineNotice): placed next to the thing it describes
+   and left there until the next render. Kind variants below. */
 .link-notice {
   display: flex;
   align-items: center;
@@ -321,8 +368,27 @@ input:focus-visible {
   color: var(--info);
   font-size: var(--fs-sm);
   font-weight: 600;
+  line-height: 1.4;
 }
+.link-notice.success { background: var(--ok-bg);     color: var(--ok); }
+.link-notice.warning { background: var(--warn-bg);   color: var(--warn); }
+.link-notice.error   { background: var(--danger-bg); color: var(--danger); }
 .link-notice[hidden] { display: none; }
+
+/* landOn(): the control the user was just told to use, highlighted for a few
+   seconds after being scrolled into view and focused. */
+.landed {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+  animation: landed-pulse 1.2s ease-out 3;
+}
+@keyframes landed-pulse {
+  from { box-shadow: 0 0 0 0 var(--focus-ring); }
+  to   { box-shadow: 0 0 0 14px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landed { animation: none; }
+}
 .link-notice-spinner {
   width: 14px;
   height: 14px;
