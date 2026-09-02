@@ -6,12 +6,43 @@
 // Globals exposed:
 //   openConfirm({ title, message, confirmText, cancelText, danger }) -> Promise<boolean>
 //   openPrompt({ title, message, fields, validate, confirmText, cancelText, danger }) -> Promise<values|null>
-//   openAlert({ title, message, buttonText, danger }) -> Promise<void>  // must-see notice (no cancel)
-//   showStatus(message, kind)   // kind: 'success' | 'error' | 'info' | 'warning'
+//   openAlert({ title, message, next, buttonText, danger }) -> Promise<void>  // must-see notice (no cancel)
+//   openSuccessFlash({ title, message }) -> Promise<void>   // must-see success, no click required
+//   showStatus(message, kind, { key, sticky })  // kind: 'success' | 'error' | 'info' | 'warning'
+//   dismissStatus(key)          // drop one keyed toast (or every toast with no key)
+//   showInlineNotice(beforeEl, message, kind)  // durable notice next to the thing it describes
+//   landOn(el)                  // scroll a control into view, highlight it, focus it
 //   BatesUI.escapeHtml(s)       // the one shared HTML escaper (quote-safe) —
 //                               // page scripts alias it instead of re-defining it
 //
-// Styling lives in ui-dialogs.css (dialog chrome + buttons) and app.css (.status toast).
+// ---------------------------------------------------------------------------
+// Telling a human what happened is a transport, like lib/mailer.js is for
+// email — there is exactly ONE of it (this file), and outcomes are routed by
+// CONSEQUENCE, not by convenience:
+//
+//   If the user cannot tell from looking at the screen that it worked, a
+//   toast is the wrong channel. If money moved, a customer was contacted, or
+//   a credential changed, it is must-see.
+//
+//   Must-see (tier 1) — money moved or failed to move; a customer message
+//     sent, refused, or failed; a credential / invite / sign-in link created
+//     or sent; an irreversible action completing.
+//       failure  -> openAlert({ danger: true, next })  dismissed by a human,
+//                   and `next` says what to do about it.
+//       success  -> openSuccessFlash()  center-screen, announced, no click.
+//   Durable inline (tier 2) — the row already reflects the change but the
+//     user needs a reason, a receipt, or the NEXT STEP: showInlineNotice()
+//     next to the thing (+ landOn() when the next step is a control that
+//     only just appeared). Persists until the next render / navigation.
+//   Toast (tier 3) — pure acknowledgement where the screen visibly changed
+//     already: "Saved", "Copied", filter applied. showStatus().
+//
+// Keep tier 1 small. If every save needs dismissing, must-see stops meaning
+// anything and people click through it blind.
+// ---------------------------------------------------------------------------
+//
+// Styling lives in ui-dialogs.css (dialog chrome + buttons) and app.css
+// (.status-stack / .status toast, .link-notice, .landed).
 (function () {
   function escapeHtml(s) {
     return String(s == null ? '' : s)
@@ -19,22 +50,121 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  // Toast. Finds the page's #status element, or creates one (so pages without it
-  // — e.g. settings, site-visit — still get toasts). .status CSS is in app.css.
-  function showStatus(msg, kind = 'info') {
-    let el = document.getElementById('status');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'status';
-      el.setAttribute('role', 'status');
-      el.setAttribute('aria-live', 'polite');
-      document.body.appendChild(el);
+  // ---- Toast stack (tier 3) --------------------------------------------------
+  // Corner toasts STACK: a new message never overwrites one that hasn't been
+  // read (the old single #status element + one shared timer meant "Loaded."
+  // from a background refresh could erase a charge failure before anyone saw
+  // it). Rules:
+  //   * info / success / warning auto-dismiss after TOAST_MS, paused while
+  //     the pointer is over them; 'error' stays until dismissed or the page
+  //     navigates. An error is never replaced by a later info/success.
+  //   * Each toast is its own live region — role="alert" (assertive) for
+  //     errors, role="status" (polite) for the rest. A polite region that
+  //     self-hides in 3s can be skipped entirely by assistive tech.
+  //   * Toasts never take focus; the × is a real button for keyboard users.
+  //   * opts.key: a later call with the same key REPLACES that toast in place
+  //     (progress: "Uploading 2/10…" → "3/10…" → "Done."). Replacement is the
+  //     caller's explicit choice, so it's allowed to replace an error.
+  //   * opts.sticky: don't auto-dismiss (a "working…" state that a keyed
+  //     follow-up call will replace).
+  //   * At most TOAST_MAX on screen: overflow drops the oldest transient
+  //     first; errors go only when the stack is nothing but errors.
+  // CSS: .status-stack / .status in app.css.
+  const TOAST_MS = 3000;
+  const TOAST_MAX = 4;
+
+  function toastStack() {
+    let stack = document.getElementById('status-stack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.id = 'status-stack';
+      stack.className = 'status-stack';
+      document.body.appendChild(stack);
     }
-    el.hidden = false;
+    return stack;
+  }
+
+  function findToast(stack, key) {
+    if (!key) return null;
+    return Array.from(stack.children).find((c) => c.dataset.toastKey === key) || null;
+  }
+
+  function showStatus(msg, kind = 'info', opts = {}) {
+    const stack = toastStack();
+    const isError = kind === 'error';
+    const el = document.createElement('div');
     el.className = `status ${kind}`;
-    el.textContent = msg;
-    clearTimeout(showStatus._t);
-    showStatus._t = setTimeout(() => { el.hidden = true; }, 3000);
+    el.setAttribute('role', isError ? 'alert' : 'status');
+    if (opts.key) el.dataset.toastKey = opts.key;
+    el.innerHTML = `<span class="status-msg"></span><button type="button" class="status-close" aria-label="Dismiss">&times;</button>`;
+    el.querySelector('.status-msg').textContent = msg;
+
+    let timer = null;
+    const autoDismiss = !isError && !opts.sticky;
+    function dismiss() { clearTimeout(timer); el.remove(); }
+    function arm() { if (autoDismiss) { clearTimeout(timer); timer = setTimeout(dismiss, TOAST_MS); } }
+    el.querySelector('.status-close').addEventListener('click', dismiss);
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', arm);
+    el._dismiss = dismiss;
+
+    const existing = findToast(stack, opts.key);
+    // (The replaced toast's pending timer only ever removes that detached node.)
+    if (existing) existing.replaceWith(el);
+    else stack.appendChild(el);
+
+    // Overflow: drop the oldest transient; only eat an error when every toast
+    // on screen is one.
+    while (stack.children.length > TOAST_MAX) {
+      const victim = Array.from(stack.children).find((c) => !c.classList.contains('error')) || stack.firstElementChild;
+      if (!victim || victim === el) break;
+      victim._dismiss ? victim._dismiss() : victim.remove();
+    }
+    arm();
+    return el;
+  }
+
+  // Remove one keyed toast (e.g. a "working…" state once a modal takes over),
+  // or every toast when called with no key.
+  function dismissStatus(key) {
+    const stack = document.getElementById('status-stack');
+    if (!stack) return;
+    const targets = key ? [findToast(stack, key)].filter(Boolean) : Array.from(stack.children);
+    targets.forEach((t) => (t._dismiss ? t._dismiss() : t.remove()));
+  }
+
+  // ---- Durable inline notice (tier 2) ----------------------------------------
+  // A .link-notice placed right before `beforeEl` — near the thing it
+  // describes — that stays until the next render or navigation. Generalises
+  // the set-password page's treatment: "takes over the card instead of
+  // whispering through the corner toast". One notice per anchor: a repeat call
+  // replaces the previous one rather than piling up. kind: info | success |
+  // warning | error.
+  function showInlineNotice(beforeEl, message, kind = 'info') {
+    if (!beforeEl || !beforeEl.parentNode) return null;
+    const prev = beforeEl.previousElementSibling;
+    if (prev && prev.dataset.inlineNotice === '1') prev.remove();
+    const el = document.createElement('div');
+    el.className = `link-notice ${kind}`;
+    el.dataset.inlineNotice = '1';
+    el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    el.textContent = message;
+    beforeEl.parentNode.insertBefore(el, beforeEl);
+    return el;
+  }
+
+  // Land the user on a control that just became real: scroll it into view,
+  // highlight it briefly, and move focus to it so keyboard / screen-reader
+  // users arrive there too. Never instruct toward a control that isn't on
+  // screen when the instruction is read — call this once it exists.
+  function landOn(el) {
+    if (!el) return false;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    try { el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' }); } catch (_) { el.scrollIntoView(); }
+    el.classList.add('landed');
+    setTimeout(() => el.classList.remove('landed'), 4000);
+    setTimeout(() => { try { el.focus({ preventScroll: true }); } catch (_) { el.focus(); } }, reduce ? 0 : 250);
+    return true;
   }
 
   // Styled inline confirm dialog (replaces window.confirm). Resolves true/false.
@@ -64,26 +194,55 @@
     });
   }
 
-  // Must-acknowledge notice (replaces window.alert) for outcomes too important
-  // for the corner toast — e.g. a refund that did NOT go through. One button.
-  function openAlert({ title = 'Notice', message = '', buttonText = 'OK', danger = false } = {}) {
+  // Must-acknowledge notice (tier 1 failures, replaces window.alert) for
+  // outcomes too important for the corner toast — a refund that did NOT go
+  // through, a set-password link that did NOT send. One button, dismissed by a
+  // human; takes focus and is announced (role=alertdialog). `next` is the
+  // "what to do now" line — a failure in this class must say what to do, not
+  // just what went wrong. Focus returns to where it was on close.
+  let alertSeq = 0;
+  function openAlert({ title = 'Notice', message = '', next = '', buttonText = 'OK', danger = false } = {}) {
     return new Promise((resolve) => {
+      const returnTo = document.activeElement;
+      const descId = `gc-alert-desc-${++alertSeq}`;
       const overlay = document.createElement('div');
       overlay.className = 'gc-rd-overlay';
       overlay.innerHTML = `
-        <div class="gc-rd-panel" role="alertdialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <div class="gc-rd-panel${danger ? ' gc-rd-danger' : ''}" role="alertdialog" aria-modal="true" aria-label="${escapeHtml(title)}" aria-describedby="${descId}">
           <h3 class="gc-rd-title">${escapeHtml(title)}</h3>
-          ${message ? `<div class="gc-rd-sub">${escapeHtml(message)}</div>` : ''}
+          <div id="${descId}">
+            ${message ? `<div class="gc-rd-sub">${escapeHtml(message)}</div>` : ''}
+            ${next ? `<div class="gc-rd-card gc-rd-next"><strong>What to do now:</strong> ${escapeHtml(next)}</div>` : ''}
+          </div>
           <div class="gc-rd-actions">
             <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'} gc-rd-submit">${escapeHtml(buttonText)}</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);
       const submitEl = overlay.querySelector('.gc-rd-submit');
-      function close() { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(); }
-      function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') close(); }
+      function close() {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        if (returnTo && returnTo.isConnected && typeof returnTo.focus === 'function') { try { returnTo.focus(); } catch (_) {} }
+        resolve();
+      }
+      // A danger alert (a refund / charge / send that did NOT happen) must be
+      // ACKNOWLEDGED, not clicked away: only the button or Escape closes it.
+      // No Enter (a held Enter from the preceding confirm would key-repeat
+      // straight through it) and no backdrop click (the reflex for getting a
+      // dialog out of the way without reading it). Non-danger alerts keep the
+      // lighter Enter / backdrop dismissal.
+      function onKey(e) {
+        if (e.key === 'Escape') { close(); return; }
+        if (e.key !== 'Enter') return;
+        // The OK button holds focus, so Enter would also activate it natively
+        // (Chrome fires that on keydown, so a held key repeats into it) —
+        // swallow it for danger alerts; Space and a real click still work.
+        if (danger) { e.preventDefault(); return; }
+        close();
+      }
       document.addEventListener('keydown', onKey);
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay && !danger) close(); });
       submitEl.addEventListener('click', close);
       setTimeout(() => submitEl.focus(), 30);
     });
@@ -255,5 +414,8 @@
   window.openSuccessFlash = openSuccessFlash;
   window.openQrDialog = openQrDialog;
   window.showStatus = showStatus;
+  window.dismissStatus = dismissStatus;
+  window.showInlineNotice = showInlineNotice;
+  window.landOn = landOn;
   window.BatesUI = { escapeHtml };
 })();

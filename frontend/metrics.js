@@ -79,14 +79,6 @@
     return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short' }) + " '" + String(y).slice(2);
   };
 
-  function showStatus(msg, kind) {
-    const el = $('status');
-    el.textContent = msg;
-    el.className = 'status ' + (kind || '');
-    el.hidden = false;
-    if (kind !== 'error') setTimeout(() => { el.hidden = true; }, 3500);
-  }
-
   // ---- Role check (must be office) ----
   async function checkRole() {
     try {

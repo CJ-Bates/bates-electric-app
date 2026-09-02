@@ -100,3 +100,12 @@ html.dark .gc-rd-overlay { background: rgba(0,0,0,0.45); }
 .gc-qr-note { font-size: var(--fs-sm); color: var(--ink-2); text-align: center; line-height: 1.45; margin: 0 0 14px; }
 .gc-qr-links { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
 .gc-qr-links .gc-qr-link { flex: 1; text-align: center; text-decoration: none; }
+
+/* openAlert extras: a danger alert (a refund / charge / send that did NOT
+   happen) gets a danger-colored title so it can't be mistaken for a routine
+   notice, and the "What to do now" line sits on its own card. Long values in
+   the message (a pasted link) wrap instead of overflowing the panel. */
+.gc-rd-sub { overflow-wrap: anywhere; }
+.gc-rd-danger .gc-rd-title { color: var(--danger); }
+.gc-rd-next { color: var(--ink); line-height: 1.45; }
+.gc-rd-next strong { font-weight: 700; }
