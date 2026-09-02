@@ -156,6 +156,9 @@
   // Small "new leads" count on the Leads section tab (shared-nav renders the
   // tab itself; we stamp the badge) — same idea as the Needs Attention
   // filter-pill counts. Hidden at zero so the tab stays quiet.
+  // DELIBERATELY the unfiltered New-stage count (an inbox-style "leads to
+  // work" signal), NOT the count of the filtered list below — so it says
+  // "new" explicitly; a bare integer here reads as the list count and isn't.
   function updateTabCount() {
     const tab = document.querySelector('.section-tab[data-match="gc-leads"]');
     if (!tab) return;
@@ -166,7 +169,8 @@
       tab.appendChild(badge);
     }
     const n = leads.filter((l) => l.status === 'new').length;
-    badge.textContent = String(n);
+    badge.textContent = `${n.toLocaleString()} new`;
+    badge.title = `${n.toLocaleString()} leads in the New stage (all months) — the list below follows its own filters`;
     badge.hidden = n === 0;
   }
 
@@ -213,7 +217,10 @@
     if (l.status === 'lost') {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="reopen" data-id="${escapeHtml(l.id)}">Reopen</button>`);
     }
-    actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-action="delete" data-id="${escapeHtml(l.id)}">Delete</button>`);
+    // Danger-styled and pushed apart from the routine actions (.lead-del CSS)
+    // so a permanent delete can't be mistaken for — or fat-fingered from —
+    // Edit/Note next to it. The openConfirm below names the lead.
+    actions.push(`<button type="button" class="btn btn-danger-soft btn-sm lead-del" data-action="delete" data-id="${escapeHtml(l.id)}">Delete</button>`);
 
     // WP4.1: in the month-cohort view every emailable lead gets a checkbox
     // (the invite selection); ineligible ones show why they can't be included.

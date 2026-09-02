@@ -518,10 +518,21 @@
     const dates = Array.prototype.slice.call(form.querySelectorAll('[data-pref-date]'));
     const windows = Array.prototype.slice.call(form.querySelectorAll('[data-pref-window]'));
     const slots = [];
+    const seen = new Set();
     for (let i = 0; i < dates.length; i++) {
       const date = (dates[i].value || '').trim();
       if (!date) continue;
-      slots.push({ date, window: windows[i] ? windows[i].value : window.BatesArrivalWindows.WINDOWS[0].code });
+      const win = windows[i] ? windows[i].value : window.BatesArrivalWindows.WINDOWS[0].code;
+      // Identical date+window pairs waste a preference slot (the same window
+      // on DIFFERENT dates is a legitimate preference, so only exact repeats
+      // are blocked).
+      const key = date + '|' + win;
+      if (seen.has(key)) {
+        showStatus('Two of your preferences are the same date and arrival window — make each one different.', 'warning');
+        return;
+      }
+      seen.add(key);
+      slots.push({ date, window: win });
     }
     if (!slots.length) {
       showStatus('Pick at least one preferred date.', 'warning');

@@ -119,11 +119,16 @@
       });
       if (!r.ok) throw new Error('Failed to get profile');
       const { profile } = await r.json();
+      // Cache for role-guard.js so the NEXT wrong-page hit redirects pre-paint
+      // (also corrects a stale cached role from a previous account).
+      try { localStorage.setItem('bates.profile', JSON.stringify(profile)); } catch (e) {}
       if (profile.role !== 'office') {
-        showStatus('Access denied. Office role required.', 'error');
-        setTimeout(() => window.location.replace('/home'), 1500);
+        // Immediately — no reason to hold a non-office user on office chrome
+        // (role-guard.js keeps the shell hidden while this check ran).
+        window.location.replace('/home');
         return;
       }
+      document.documentElement.classList.remove('role-pending');
       currentUserEmail = profile.email || null;
       userPerms = profile.permissions || null;
       // Prefill the admin test-email "Send to" with the logged-in user's email
@@ -133,6 +138,7 @@
       }
     } catch (err) {
       console.error('Role check failed:', err);
+      document.documentElement.classList.remove('role-pending');
     }
   }
 

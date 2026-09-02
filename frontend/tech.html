@@ -16,6 +16,9 @@
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="ui-dialogs.css" />
   <title>Bates Electric &mdash; My Day</title>
+  <!-- Synchronous pre-paint role guard: an office user is redirected to /home
+       before any of the My Day shell can paint (async /me stays authoritative). -->
+  <script src="role-guard.js" data-page="tech"></script>
   <style>
     /* Field-tech "My Day" landing — mobile-first (~390px primary). v3: colors/
        radii/shadows read tokens.css; badges/buttons use the shared components.css

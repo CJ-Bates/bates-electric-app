@@ -1,6 +1,7 @@
-const CACHE = 'bates-shell-v146';
+const CACHE = 'bates-shell-v147';
 const ASSETS = [
   './',
+  './role-guard.js',
   './arrival-windows.js',
   './qrcode.js',
   './ui-dialogs.js',

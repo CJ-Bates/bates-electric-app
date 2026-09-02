@@ -55,6 +55,9 @@
       try {
         localStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(REFRESH_KEY); sessionStorage.removeItem(REFRESH_KEY);
+        // Session is gone — drop the cached profile with it (role-guard.js
+        // routes on it pre-paint; the next sign-in may be a different role).
+        localStorage.removeItem('bates.profile');
       } catch (e) {}
       if (onLoginPage()) return false;
       try { sessionStorage.setItem('bates.auth.message', message || DEFAULT_EXPIRED_MSG); } catch (e) {}
@@ -146,7 +149,10 @@
     {
       section: 'Main',
       items: [
-        { label: 'Home', icon: 'house', href: '/home', id: 'drawer-home' },
+        // Home is the OFFICE hub: home.js bounces techs to /tech (their home is
+        // My Day — commit 33cfba7), so offering the link to techs was a trap
+        // that flashed the hub and bounced. Techs get "My Visits" instead.
+        { label: 'Home', icon: 'house', href: '/home', id: 'drawer-home', officeOnly: true },
         { label: 'My Visits', icon: 'zap', href: '/tech', id: 'drawer-tech', techOnly: true },
         { label: 'Inspections', icon: 'clipboardCheck', href: '/inspection', id: 'drawer-inspection' },
         { label: 'Site Visit', icon: 'mapPin', href: '/site-visit', id: 'drawer-site-visit' },
@@ -359,6 +365,9 @@
       sessionStorage.removeItem('bates.auth.token');
       localStorage.removeItem('bates.auth.refresh');
       sessionStorage.removeItem('bates.auth.refresh');
+      // Clear the cached profile too — role-guard.js routes on it pre-paint,
+      // and the next sign-in could be a different account/role.
+      localStorage.removeItem('bates.profile');
       window.location.href = '/';
     });
   }
