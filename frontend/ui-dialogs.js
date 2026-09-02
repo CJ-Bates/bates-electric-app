@@ -226,9 +226,23 @@
         if (returnTo && returnTo.isConnected && typeof returnTo.focus === 'function') { try { returnTo.focus(); } catch (_) {} }
         resolve();
       }
-      function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') close(); }
+      // A danger alert (a refund / charge / send that did NOT happen) must be
+      // ACKNOWLEDGED, not clicked away: only the button or Escape closes it.
+      // No Enter (a held Enter from the preceding confirm would key-repeat
+      // straight through it) and no backdrop click (the reflex for getting a
+      // dialog out of the way without reading it). Non-danger alerts keep the
+      // lighter Enter / backdrop dismissal.
+      function onKey(e) {
+        if (e.key === 'Escape') { close(); return; }
+        if (e.key !== 'Enter') return;
+        // The OK button holds focus, so Enter would also activate it natively
+        // (Chrome fires that on keydown, so a held key repeats into it) —
+        // swallow it for danger alerts; Space and a real click still work.
+        if (danger) { e.preventDefault(); return; }
+        close();
+      }
       document.addEventListener('keydown', onKey);
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay && !danger) close(); });
       submitEl.addEventListener('click', close);
       setTimeout(() => submitEl.focus(), 30);
     });
