@@ -135,7 +135,8 @@ async function latestRecentInboundAt(e164, now) {
 // itself — this is the explanation, sendSms is the enforcement.
 //   { allowed, reason, opted_in, opted_out, last_inbound_at, recent_inbound }
 //   reason: 'consent' | 'recent_inbound' (allowed)
-//           'opted_out' | 'no_consent_no_recent_inbound' | 'invalid_phone'
+//           'opted_out' | 'undeliverable' | 'no_consent_no_recent_inbound' |
+//           'invalid_phone'
 async function operatorReplyEligibility({ phone, customerId, now }) {
   const e164 = normalizePhone(phone);
   const out = { allowed: false, reason: 'invalid_phone', opted_in: false, opted_out: false, last_inbound_at: null, recent_inbound: false };
@@ -146,6 +147,7 @@ async function operatorReplyEligibility({ phone, customerId, now }) {
   out.last_inbound_at = await latestRecentInboundAt(e164, now);
   out.recent_inbound = !!out.last_inbound_at;
   if (out.opted_out) { out.reason = 'opted_out'; return out; }        // absolute, checked first
+  if (await undeliverableFlaggedAt({ customerId, e164 })) { out.reason = 'undeliverable'; return out; }
   if (out.opted_in) { out.allowed = true; out.reason = 'consent'; return out; }
   if (out.recent_inbound) { out.allowed = true; out.reason = 'recent_inbound'; return out; }
   out.reason = 'no_consent_no_recent_inbound';
@@ -450,10 +452,96 @@ async function upsertSimpleTextingContact({ phone, name }) {
 // 'quiet_hours', 'failed') is transient — the message stays owed and the
 // sms-reminders cron sweep retries it. Shared so the senders can't drift.
 // ============================================================================
-const SMS_TERMINAL_STATUSES = Object.freeze(['sent', 'no_consent', 'opted_out', 'invalid_phone']);
+const SMS_TERMINAL_STATUSES = Object.freeze(['sent', 'no_consent', 'opted_out', 'invalid_phone', 'undeliverable']);
 
 // ============================================================================
-// The send. Gate order: consent -> kill-switch -> quiet hours -> transport.
+// "Texts not deliverable" — SimpleTexting's INVALID_CONTACT (sql/036).
+//
+// SimpleTexting answers a send to a number it has marked invalid (landline,
+// disconnected, bad number) with
+//   409 {"status":"CONFLICT","errorCode":"INVALID_CONTACT",
+//        "message":"Contact marked as invalid"}
+// That is a permanent answer about the NUMBER, not a system failure: no retry
+// will ever succeed and there is nothing for an engineer to fix — the office
+// has to get a working number from the customer. So it gets the quiet
+// treatment, and ONLY it: every other provider failure (auth, 5xx, rate
+// limit, an unexpected body) stays a loud 'failed'.
+//   - status 'undeliverable', which is TERMINAL — queued messages drain
+//     instead of being re-sent by the hourly sweep (seen live 2026-09-29: the
+//     same booking confirmation failed, and alerted, every hour);
+//   - no reportError (no alert email) — one console warning, carrying the
+//     customer id and the last 4 digits only;
+//   - the customer is flagged (sms_invalid_at + sms_invalid_phone) so the
+//     office dashboard can say so next to the phone, and so later sends are
+//     refused here without asking SimpleTexting again.
+//
+// The flag only applies while the number being texted is still the flagged
+// one. A changed phone — by any path — stops being skipped on its own; the
+// office edit route also clears the columns. Email is never affected.
+// ============================================================================
+function isInvalidContactResponse(status, errBody) {
+  if (status !== 409) return false;
+  try {
+    const parsed = JSON.parse(errBody);
+    return !!parsed && (parsed.errorCode === 'INVALID_CONTACT' || parsed.code === 'INVALID_CONTACT');
+  } catch (e) {
+    return false; // not the documented shape -> unexpected response -> stays loud
+  }
+}
+
+function phoneLast4(e164) {
+  return String(e164 || '').replace(/\D/g, '').slice(-4);
+}
+
+// When the flag applies to this customer record as it stands now (its phone
+// is still the flagged number): the flagged-at timestamp, else null. For
+// callers that already hold the customer row (the office dashboard).
+function smsUndeliverableSince(customer) {
+  if (!customer || !customer.sms_invalid_at || !customer.sms_invalid_phone) return null;
+  return normalizePhone(customer.phone) === customer.sms_invalid_phone ? customer.sms_invalid_at : null;
+}
+
+// Same question for a send: is THIS number flagged on this customer? Fails
+// open — a lookup problem must never block a text, and the transport's 409
+// handling is the backstop if the number really is invalid.
+async function undeliverableFlaggedAt({ customerId, e164 }) {
+  if (!customerId || !e164) return null;
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('generator_customers')
+      .select('sms_invalid_at, sms_invalid_phone')
+      .eq('id', customerId)
+      .maybeSingle();
+    if (error) throw error;
+    return data && data.sms_invalid_at && data.sms_invalid_phone === e164 ? data.sms_invalid_at : null;
+  } catch (e) {
+    console.error('[sms] undeliverable-flag lookup failed (not blocking the send):', e && e.message);
+    return null;
+  }
+}
+
+// Flag the customer. A failed write is a real system problem (the office
+// would never see the note), so that stays loud. Returns whether it stuck.
+async function flagUndeliverable({ customerId, e164, at }) {
+  if (!customerId) return false;
+  try {
+    const { error } = await supabaseAdmin
+      .from('generator_customers')
+      .update({ sms_invalid_at: at, sms_invalid_phone: e164 })
+      .eq('id', customerId);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    const detail = 'could not flag customer ' + customerId + ' as not textable (phone ending ' + phoneLast4(e164) + '): ' + ((e && e.message) || e);
+    console.error('[sms] ' + detail);
+    reportError(new Error('[sms] ' + detail), { route: 'lib/sms flagUndeliverable' }).catch(() => {});
+    return false;
+  }
+}
+
+// ============================================================================
+// The send. Gate order: consent -> undeliverable flag -> kill-switch ->
+// quiet hours -> transport.
 // Every refusal logs a generator_sms_messages row saying why, so booking with
 // SMS_ENABLED=false still leaves the visible "would have sent" trail the
 // verification plan relies on. Never throws; returns { sent, status, reason }.
@@ -515,6 +603,15 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
     sentDetail = 'reply to customer-initiated text (no opt-in; their last text ' + lastInboundAt + ')';
   }
 
+  // Undeliverable flag: SimpleTexting already said this exact number can't
+  // be texted. Ahead of the kill-switch and quiet hours on purpose — those
+  // are transient refusals that keep a message queued, this is the permanent
+  // answer that lets it drain.
+  const flaggedAt = await undeliverableFlaggedAt({ customerId, e164 });
+  if (flaggedAt) {
+    return refuse('undeliverable', 'not sent: SimpleTexting marked this number as not textable on ' + flaggedAt + ' - check the phone number on the customer record');
+  }
+
   // Kill-switch: log the full would-be message, send nothing.
   if (!smsEnabled()) return refuse('disabled', 'SMS_ENABLED is not true');
 
@@ -553,6 +650,15 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
     });
     if (!resp.ok) {
       const errBody = await resp.text().catch(() => '');
+      if (isInvalidContactResponse(resp.status, errBody)) {
+        // Expected condition, not a failure (see "Texts not deliverable"
+        // above): no alert, one warning, flag the customer, terminal status.
+        const flagged = await flagUndeliverable({ customerId, e164, at: (now || new Date()).toISOString() });
+        console.warn('[sms] not deliverable: SimpleTexting marked the number invalid (INVALID_CONTACT) - customer ' +
+          (customerId || 'unknown') + ', phone ending ' + phoneLast4(e164) + '; ' +
+          (flagged ? 'customer flagged, texts skipped until the number changes' : 'customer NOT flagged') + ', no retry');
+        return refuse('undeliverable', 'SimpleTexting marked this number as invalid (INVALID_CONTACT) - texts cannot be delivered to it; check the phone number on the customer record');
+      }
       const detail = 'SimpleTexting ' + resp.status + ': ' + errBody.slice(0, 300);
       reportError(new Error('[sms] send failed: ' + detail), { route: 'lib/sms sendSms' }).catch(() => {});
       return refuse('failed', detail);
@@ -708,6 +814,7 @@ module.exports = {
   recordConsent,
   optOutPhone,
   upsertSimpleTextingContact,
+  smsUndeliverableSince,
   sendSms,
   sendMagicLoginSms,
   logSmsMessage,

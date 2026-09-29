@@ -21,7 +21,7 @@ const {
 const { sendEmail, buildWelcomeEmail, buildCancellationEmail } = require('../../lib/emails');
 const {
   normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, upsertSimpleTextingContact, CONSENT_TEXT,
-  withinQuietHours, operatorReplyEligibility, OPERATOR_REPLY_WINDOW_DAYS,
+  withinQuietHours, operatorReplyEligibility, OPERATOR_REPLY_WINDOW_DAYS, smsUndeliverableSince,
 } = require('../../lib/sms');
 const planChange = require('../../lib/planChange');
 const { buildAddonMenu, openVisitIdFrom } = require('../../lib/addonMenu');
@@ -77,8 +77,9 @@ router.get('/subscriptions', async (req, res) => {
     let addonRows = [];
     let adhocRows = [];
     let prefRows = [];
+    let flaggedRows = [];
     if (subIds.length) {
-      const [addonR, adhocR, prefR] = await Promise.all([
+      const [addonR, adhocR, prefR, flaggedR] = await Promise.all([
         supabaseAdmin
           .from('generator_pending_addons')
           .select('subscription_id, addon_type, amount_cents, status')
@@ -94,10 +95,17 @@ router.get('/subscriptions', async (req, res) => {
           .select('visit_id, slots, note, created_at, visit:generator_service_visits(subscription_id)')
           .eq('status', 'pending')
           .order('created_at', { ascending: false }),
+        // Customers SimpleTexting can't text (sql/036) — the office's only
+        // surface for these, since they deliberately raise no alert email.
+        supabaseAdmin
+          .from('generator_customers')
+          .select('id, phone, sms_invalid_at, sms_invalid_phone')
+          .not('sms_invalid_at', 'is', null),
       ]);
       if (!addonR.error && addonR.data) addonRows = addonR.data;
       if (!adhocR.error && adhocR.data) adhocRows = adhocR.data;
       if (!prefR.error && prefR.data) prefRows = prefR.data;
+      if (!flaggedR.error && flaggedR.data) flaggedRows = flaggedR.data;
     }
 
     const addonsBySub = new Map();
@@ -118,6 +126,11 @@ router.get('/subscriptions', async (req, res) => {
       const sid = p.visit && p.visit.subscription_id;
       if (sid && !prefBySub.has(sid)) prefBySub.set(sid, p); // rows sorted newest-first
     }
+
+    // Only flags that still apply (the phone on file is still the flagged one).
+    const undeliverableCustomers = new Set(
+      flaggedRows.filter((c) => smsUndeliverableSince(c)).map((c) => c.id)
+    );
 
     // Attach each sub's current OPEN (un-completed) visit so the list STATUS
     // column can show Needs scheduling vs Scheduled — without shipping every visit.
@@ -147,6 +160,7 @@ router.get('/subscriptions', async (req, res) => {
           pending_prefs: pref
             ? { visit_id: pref.visit_id, slots: pref.slots, note: pref.note, created_at: pref.created_at }
             : null,
+          sms_undeliverable: !!(s.customer && undeliverableCustomers.has(s.customer.id)),
         },
       };
     });
@@ -269,6 +283,9 @@ router.get('/subscriptions/:id', async (req, res) => {
       open_visit_id: openVisitId,
       visit_preferences: visitPreferences,
       sms_consent: smsConsent,
+      // When set, SimpleTexting can't text the phone on file (sql/036) — the
+      // contact card shows the "Texts not deliverable" note beside it.
+      sms_undeliverable_since: smsUndeliverableSince(subR.data && subR.data.customer),
       visit_sms: visitSms,
     });
   } catch (err) {
@@ -545,6 +562,7 @@ const REPLY_BLOCKED_MESSAGE = {
   opted_out: 'This customer has opted out of texts (STOP). Nothing can be sent to this number.',
   no_consent_no_recent_inbound: 'No text consent on file and no text from this customer in the last ' + OPERATOR_REPLY_WINDOW_DAYS + ' days. Record consent to text them, or wait for them to text first.',
   invalid_phone: 'No usable mobile number on file for this customer.',
+  undeliverable: 'Texts to this number are not deliverable. Check the phone number on the customer record.',
 };
 router.post('/customers/:id/sms-reply', sensitiveLimiter, requirePermission('customer_edit'), async (req, res) => {
   try {
@@ -583,6 +601,7 @@ router.post('/customers/:id/sms-reply', sensitiveLimiter, requirePermission('cus
         quiet_hours: 'Not sent: outside 8am-9pm Central and this customer has not texted recently. It was logged, not sent - try again after 8am.',
         disabled: 'Not sent: texting is switched off (SMS_ENABLED). The message was logged.',
         invalid_phone: REPLY_BLOCKED_MESSAGE.invalid_phone,
+        undeliverable: REPLY_BLOCKED_MESSAGE.undeliverable,
       }[result.status] || ('Not sent: ' + (result.reason || result.status));
       return res.status(409).json({ error: why, status: result.status });
     }
@@ -1174,6 +1193,22 @@ router.patch('/customers/:id', requirePermission('customer_edit'), async (req, r
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'no editable fields provided' });
+    }
+
+    // A changed number resets the "texts not deliverable" flag (sql/036,
+    // lib/sms.js) — that verdict was about the OLD number. Re-saving the same
+    // number (any formatting) keeps it: SimpleTexting would still refuse it.
+    if (updates.phone !== undefined) {
+      const { data: before, error: beforeErr } = await supabaseAdmin
+        .from('generator_customers')
+        .select('phone')
+        .eq('id', id)
+        .maybeSingle();
+      if (beforeErr) throw beforeErr;
+      if (before && normalizePhone(before.phone) !== normalizePhone(updates.phone)) {
+        updates.sms_invalid_at = null;
+        updates.sms_invalid_phone = null;
+      }
     }
 
     const { data: updated, error: custErr } = await supabaseAdmin

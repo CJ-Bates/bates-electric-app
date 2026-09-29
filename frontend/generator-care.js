@@ -446,6 +446,7 @@
     calendar: flagIcon('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
     file: flagIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
     check: flagIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 5-5.5"/>'),
+    nosms: flagIcon('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="m9.5 7.5 5 5M14.5 7.5l-5 5"/>'),
   };
   function rowFlags(sub) {
     const a = att(sub);
@@ -461,6 +462,7 @@
     }
     if (apptPassed(sub.open_visit) && sub.status !== 'canceled') flag('f-info', 'check', 'Appt passed');
     if (!sub.work_order_created_at && (sub.status === 'active' || sub.status === 'past_due')) flag('f-warn', 'file', 'Work order not created');
+    if (a.sms_undeliverable && sub.status !== 'canceled') flag('f-warn', 'nosms', 'Texts not deliverable');
     return out.length ? `<div>${out.join('')}</div>` : '';
   }
 
@@ -911,6 +913,14 @@
       </div>`;
   }
 
+  // SimpleTexting can't text the phone on file (lib/sms.js "Texts not
+  // deliverable", sql/036). Sits beside the number so Amy sees what to fix;
+  // saving a different number clears it. Email is unaffected.
+  function smsUndeliverableNote(customer) {
+    if (!customer || !customer.sms_undeliverable_since) return '';
+    return ` <span class="gc-flag f-warn" role="note">${FLAG_ICONS.nosms}Texts not deliverable &mdash; check phone number</span>`;
+  }
+
   // Read view of the Contact & Address info (swapped in/out of #gc-contact-region
   // when Amy toggles Edit). The internal-note editor lives outside this region so
   // an in-progress note isn't lost when entering edit mode.
@@ -926,7 +936,7 @@
     return `
       <h3 class="gc-card-h"><span>Contact &amp; Address</span><button type="button" class="btn btn-ghost btn-sm" id="gc-contact-edit-btn">Edit</button></h3>
       <div class="gc-card-row"><span class="gc-meta-label">Name</span><span class="gc-meta-value">${escapeHtml(fmtNameCase(customer.name)) || '&mdash;'}</span></div>
-      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(fmtPhoneDisplay(customer.phone)) || '&mdash;'}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(fmtPhoneDisplay(customer.phone)) || '&mdash;'}${smsUndeliverableNote(customer)}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
       ${operatingRow}`;
@@ -1167,6 +1177,7 @@
       case 'quiet_hours': return 'Text skipped (outside 8am&ndash;9pm)' + when;
       case 'stale': return 'Text dropped &mdash; appointment passed before it could send' + when;
       case 'failed': return 'Text failed to send' + when;
+      case 'undeliverable': return 'Text not sent &mdash; number not deliverable, check phone number';
       default: return null;
     }
   }
@@ -1627,14 +1638,15 @@
 
   // Status chip per logged message. Statuses come from lib/sms.js's message
   // log (out: sent|failed|disabled|no_consent|opted_out|quiet_hours|
-  // invalid_phone; in: received) — refused sends are logged too, so blocked
-  // texts are visible here rather than silently missing.
+  // invalid_phone|undeliverable|stale; in: received) — refused sends are
+  // logged too, so blocked texts are visible here rather than silently missing.
   function smsHistoryChip(m) {
     if (m.direction === 'in') return '<span class="badge badge-ok">Reply</span>';
     switch (m.status) {
       case 'sent': return '<span class="badge badge-ok">Sent</span>';
       case 'failed': return '<span class="badge badge-danger">Failed</span>';
       case 'invalid_phone': return '<span class="badge badge-danger">Invalid phone</span>';
+      case 'undeliverable': return '<span class="badge badge-warn">Not deliverable</span>';
       case 'no_consent': return '<span class="badge badge-warn">Not sent &mdash; no consent</span>';
       case 'opted_out': return '<span class="badge badge-warn">Not sent &mdash; opted out</span>';
       case 'quiet_hours': return '<span class="badge badge-neutral">Skipped &mdash; quiet hours</span>';
@@ -1662,7 +1674,7 @@
       ? ` <span>&middot; sent by ${escapeHtml(smsSenderLabel(m))}</span>`
       : '';
     // Failure reason (never the API token — lib/sms.js keeps it out of the log).
-    const failDetail = (m.status === 'failed' || m.status === 'invalid_phone') && m.detail
+    const failDetail = (m.status === 'failed' || m.status === 'invalid_phone' || m.status === 'undeliverable') && m.detail
       ? `<div class="gc-meta-label" style="margin-top:2px;color:var(--danger);">${escapeHtml(m.detail)}</div>`
       : '';
     const refused = !inbound && m.status !== 'sent';
@@ -1716,6 +1728,8 @@
           return blocked('Opted out', 'This customer sent STOP. Texts can\'t be sent to this number &mdash; replies are off.');
         case 'invalid_phone':
           return blocked('No mobile number', 'No usable mobile number on file for this customer.');
+        case 'undeliverable':
+          return blocked('Not deliverable', 'Texts to this number can\'t be delivered. Check the phone number (Contact &amp; Address, above) &mdash; saving a new number turns texting back on.');
         default:
           return blocked('No consent', `No text consent on file and no text from them in the last ${days} days. Record consent (above) to text them, or wait for them to text first.`);
       }
@@ -1807,7 +1821,7 @@
   // header. quiet_hours/disabled are expected states, not failures.
   function smsNeedsFlag(m) {
     return m && m.direction === 'out'
-      && ['failed', 'invalid_phone', 'no_consent', 'opted_out'].includes(m.status);
+      && ['failed', 'invalid_phone', 'undeliverable', 'no_consent', 'opted_out'].includes(m.status);
   }
 
   // Email status chip: the send attempt ('Failed' means Brevo never took it),
@@ -1925,8 +1939,9 @@
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { subscription, visits, pending_addons, adhoc_charges = [], addon_menu = null, visit_preferences = [], sms_consent = null, visit_sms = {} } = await r.json();
+      const { subscription, visits, pending_addons, adhoc_charges = [], addon_menu = null, visit_preferences = [], sms_consent = null, visit_sms = {}, sms_undeliverable_since = null } = await r.json();
       const c = subscription.customer || {};
+      c.sms_undeliverable_since = sms_undeliverable_since;
       title.textContent = fmtNameCase(c.name) || 'Customer';
       const isCanceled = subscription.status === 'canceled';
 

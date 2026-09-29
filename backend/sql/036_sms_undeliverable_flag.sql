@@ -1,0 +1,41 @@
+-- 036_sms_undeliverable_flag.sql
+-- "Texts not deliverable" flag on the customer record.
+--
+-- SimpleTexting refuses a send to a number it has marked invalid (landline,
+-- disconnected, bad number) with
+--   409 {"errorCode":"INVALID_CONTACT","message":"Contact marked as invalid"}
+-- That answer is permanent for the number, but lib/sms.js logged it as a
+-- plain 'failed' — a TRANSIENT status — so the message stayed owed and the
+-- hourly sms-reminders sweep re-sent it (and re-fired the backend-error alert
+-- email) every hour (seen live 2026-09-29: a booking confirmation, three
+-- attempts in 65 minutes).
+--
+--   sms_invalid_at    — when SimpleTexting told us the number can't be texted.
+--   sms_invalid_phone — the E.164 number that answer was about.
+--
+-- The flag only APPLIES while the customer's phone still normalizes to
+-- sms_invalid_phone, so a number changed by any path (office dashboard,
+-- Stripe portal sync) stops being skipped on its own; the office edit route
+-- also clears both columns when the number changes. While it applies,
+-- lib/sms.js refuses sends as 'undeliverable' (a TERMINAL status — queued
+-- messages drain instead of retrying) and the office dashboard shows a
+-- "Texts not deliverable" note by the phone. Email is unaffected.
+--
+-- Purely additive. APPLY BEFORE THE CODE DEPLOYS (the usual
+-- apply-before-merge rule): the office contact-edit route writes these
+-- columns when a phone number changes, so that save would fail without them.
+-- Run manually in the Supabase SQL Editor (idempotent — safe to re-run).
+--
+-- After running, record it in the ledger (see backend/sql/README.md):
+--   insert into public.schema_migrations (id) values ('036_sms_undeliverable_flag.sql') on conflict do nothing;
+--
+-- VERIFY after running (expected: flag_columns=2):
+--   select count(*) as flag_columns
+--     from information_schema.columns
+--    where table_schema = 'public'
+--      and table_name = 'generator_customers'
+--      and column_name in ('sms_invalid_at', 'sms_invalid_phone');
+
+alter table public.generator_customers
+  add column if not exists sms_invalid_at    timestamptz,
+  add column if not exists sms_invalid_phone text;
