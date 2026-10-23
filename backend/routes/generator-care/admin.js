@@ -15,6 +15,7 @@ const {
   buildCancellationEmail,
 } = require('../../lib/emails');
 const { reportError } = require('../../middleware/error-reporter');
+const { AR_EMAIL, buildSampleArNotice, SAMPLE_KINDS: AR_SAMPLE_KINDS } = require('../../lib/arNotify');
 
 const router = express.Router();
 
@@ -136,6 +137,37 @@ router.post('/admin/send-test-email', sensitiveLimiter, async (req, res) => {
     return res.json({ ok: true, sent: true, template, to: to.trim(), subject: subjectWithPrefix });
   } catch (err) {
     console.error('[admin/send-test-email] error:', err);
+    reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
+    return res.status(500).json({ error: err.message || 'unknown error' });
+  }
+});
+
+// POST /api/generator-care/admin/send-test-ar-email
+// Renders the internal AR payment notice with fixture data and sends it to
+// AR_EMAIL (never to a caller-supplied address), so AR can confirm delivery
+// and layout without a real charge. Body: { kind: 'payment_mo' | 'payment_fl'
+// | 'refund' | 'failed' }. Internal-ops only: no money moves, no customer data.
+router.post('/admin/send-test-ar-email', sensitiveLimiter, async (req, res) => {
+  try {
+    const { kind } = req.body || {};
+    const built = buildSampleArNotice(kind);
+    if (!built) {
+      return res.status(400).json({ error: `kind must be one of: ${AR_SAMPLE_KINDS.join(', ')}` });
+    }
+    const subjectWithPrefix = `[TEST] ${built.subject}`;
+    const result = await sendEmail({
+      to: AR_EMAIL,
+      subject: subjectWithPrefix,
+      html: built.html,
+      text: built.text,
+      logTag: `[test-email:ar-${kind}]`,
+    });
+    if (!result.sent) {
+      return res.status(502).json({ ok: false, kind, to: AR_EMAIL, error: result.reason });
+    }
+    return res.json({ ok: true, sent: true, kind, to: AR_EMAIL, subject: subjectWithPrefix });
+  } catch (err) {
+    console.error('[admin/send-test-ar-email] error:', err);
     reportError(err, { route: req.originalUrl, method: req.method, user: req.profile && req.profile.email }).catch(() => {});
     return res.status(500).json({ error: err.message || 'unknown error' });
   }

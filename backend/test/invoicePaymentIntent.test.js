@@ -26,6 +26,9 @@ const { chargePerformedAddonsForSub } = require('../lib/gcCharges');
 // load; node --test isolates per file) so handleInvoicePaid never hits Stripe.
 const receipts = require('../lib/receipts');
 receipts.sendReceiptEmail = async () => ({ sent: false, reason: 'test-stub' });
+// Same for the internal AR notice (lib/arNotify.js) the webhook fires alongside it.
+const arNotify = require('../lib/arNotify');
+arNotify.notifyArInvoicePaid = async () => ({ sent: false, reason: 'test-stub' });
 const { handleInvoicePaid } = require('../routes/generator-webhook')._test;
 
 const addonsRouter = require('../routes/generator-care/addons');

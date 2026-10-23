@@ -2988,6 +2988,44 @@
   }
   wireAdminTools();
 
+  // ---- Admin: Send test AR email (always goes to the AR mailbox) ----
+  function wireAdminArTool() {
+    const btn = document.getElementById('gc-test-ar-send-btn');
+    const kindSel = document.getElementById('gc-test-ar-kind');
+    const resultEl = document.getElementById('gc-test-ar-result');
+    if (!btn || !kindSel || !resultEl) return;
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = 'Sending...';
+      resultEl.textContent = '';
+      try {
+        const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/admin/send-test-ar-email`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: kindSel.value }),
+        });
+        const data = await r.json();
+        if (!r.ok || !data.sent) {
+          resultEl.textContent = `Failed: ${data.error || `HTTP ${r.status}`}`;
+          resultEl.style.color = 'var(--danger)';
+          return;
+        }
+        resultEl.textContent = `Sent to ${data.to}.`;
+        resultEl.style.color = 'var(--ok)';
+      } catch (err) {
+        console.error('Test AR email send failed:', err);
+        resultEl.textContent = `Failed: ${err.message}`;
+        resultEl.style.color = 'var(--danger)';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+  }
+  wireAdminArTool();
+
   // ---- Modal: lazy Stripe enrichment + new action handlers ----
 
   // Fetches payment method + lifetime billed + last 5 invoices, replaces

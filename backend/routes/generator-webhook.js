@@ -13,6 +13,10 @@ const { sendReceiptEmail } = require('../lib/receipts');
 const { sendEmail, buildWelcomeEmail, buildCardFailedEmail, buildRenewalUpcomingEmail, buildCancellationEmail, buildRefundReceiptEmail } = require('../lib/emails');
 const { recordConsent, sendSms, sendMagicLoginSms, buildOptInConfirmationSms, buildScheduleNudgeSms, upsertSimpleTextingContact, CONSENT_TEXT, SMS_TERMINAL_STATUSES } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
+// Internal AR money notices (lib/arNotify.js). Called through the module object
+// (not destructured) so tests can stub them; every call is fire-and-forget and
+// the module itself never throws.
+const arNotify = require('../lib/arNotify');
 
 const router = express.Router();
 
@@ -93,6 +97,12 @@ router.post('/', async (req, res) => {
       await handleInvoicePaid(event.data.object);
     } else if (event.type === 'charge.refunded') {
       await handleChargeRefunded(event.data.object);
+    } else if (event.type === 'payment_intent.succeeded') {
+      // Ad-hoc IMMEDIATE charges are raw PaymentIntents (no invoice), so this is
+      // the only money event they fire. Invoice-backed PIs are ignored here
+      // (invoice.paid already covers them). Requires the event to be enabled
+      // on the Stripe webhook endpoint.
+      await handlePaymentIntentSucceeded(event.data.object);
     } else if (event.type === 'invoice.payment_failed') {
       await handleInvoicePaymentFailed(event.data.object);
     } else if (event.type === 'invoice.upcoming') {
@@ -676,6 +686,17 @@ async function handleInvoicePaid(invoice) {
   // failures alert through reportError inside sendReceiptEmail.
   sendReceiptEmail(invoice, { dedupe: true, source: '/webhooks/stripe invoice.paid' })
     .catch((e) => console.error('[receipt-email] unexpected:', e && e.message));
+
+  // Internal AR notice (one per paid invoice; deduped on retry inside). Never
+  // gates the receipt or the webhook's 200.
+  arNotify.notifyArInvoicePaid(invoice)
+    .catch((e) => console.error('[ar-payment-notice] unexpected:', e && e.message));
+}
+
+async function handlePaymentIntentSucceeded(pi) {
+  if (!pi || pi.invoice) return; // invoice-backed: invoice.paid owns it
+  arNotify.notifyArPaymentIntentSucceeded(pi)
+    .catch((e) => console.error('[ar-payment-notice] unexpected:', e && e.message));
 }
 
 async function handleChargeRefunded(charge) {
@@ -684,6 +705,9 @@ async function handleChargeRefunded(charge) {
   // vary per customer). Non-blocking; a mail hiccup must never fail the webhook
   // (Stripe retries 500s).
   sendRefundReceiptEmail(charge).catch((e) => console.error('[refund-receipt-email] unexpected:', e && e.message));
+  // Internal AR notice for the refund (keyed on the refund object inside).
+  arNotify.notifyArChargeRefunded(charge)
+    .catch((e) => console.error('[ar-payment-notice] unexpected:', e && e.message));
 }
 
 // Build + send our state-branded refund confirmation for a refunded charge.
@@ -1045,6 +1069,10 @@ async function handleInvoicePaymentFailed(invoice) {
   } catch (e) {
     console.error('[card-failed-email] lookup error:', e && e.message);
   }
+
+  // Internal AR notice, clearly marked FAILED / not collected (once per attempt).
+  arNotify.notifyArInvoicePaymentFailed(invoice)
+    .catch((e) => console.error('[ar-payment-notice] unexpected:', e && e.message));
 }
 
 
@@ -1121,4 +1149,4 @@ async function sendCancellationEmail({ customer }) {
 module.exports = router;
 // Test seam only (offline unit tests with Stripe/Supabase mocked) — server.js
 // mounts the router; nothing at runtime reaches in through _test.
-module.exports._test = { handleSubscriptionCreated, attributeLeadConversion, handleInvoicePaid, handleInvoiceUpcoming, maybeSendScheduleNudge, NUDGE_TERMINAL_STATUSES };
+module.exports._test = { handleSubscriptionCreated, attributeLeadConversion, handleInvoicePaid, handleInvoiceUpcoming, maybeSendScheduleNudge, NUDGE_TERMINAL_STATUSES, handleChargeRefunded, handleInvoicePaymentFailed, handlePaymentIntentSucceeded };

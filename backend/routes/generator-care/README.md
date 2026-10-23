@@ -19,7 +19,7 @@ matters and how the other GC surfaces (tech, customer, webhook) compare.
       Stripe session/charge, or exposing another customer's data by id?
       (Existing examples that intentionally skip it: work-order-created/undo,
       tier-change-preview, resend-receipt, resend-welcome,
-      visit complete/schedule, admin send-test-email — all internal-ops or
+      visit complete/schedule, admin send-test-email / send-test-ar-email — all internal-ops or
       resend actions, none of them mutate billing or cross a customer
       boundary. portal-session used to be on this list but now requires
       `billing_actions`: a Billing Portal session URL is a bearer credential
