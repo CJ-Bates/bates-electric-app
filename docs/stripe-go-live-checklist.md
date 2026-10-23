@@ -159,6 +159,10 @@ both Gmail and Outlook if possible.
     - `invoice.paid`
     - `invoice.payment_succeeded`
     - `invoice.payment_failed`
+    - `charge.refunded`
+    - `invoice.upcoming`
+    - `payment_intent.succeeded` (AR notice for ad-hoc immediate charges, which
+      are raw PaymentIntents and never fire `invoice.paid`)
   - After saving the endpoint, **copy the signing secret** (`whsec_…`) —
     you'll paste it as the new `STRIPE_WEBHOOK_SECRET` env var in step 4.
 - [ ] Grab the live secret key (Dashboard → Developers → API keys → Standard

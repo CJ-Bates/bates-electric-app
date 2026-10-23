@@ -855,6 +855,109 @@ function buildRefundReceiptEmail({ customer, companyState, amountCents, refundDa
   return { subject: `Your refund from ${company}`, html, text };
 }
 
+// --- 10b. AR payment notice (internal) ---------------------------------------
+
+// Internal notice to Accounts Receivable for every Generator Care money event
+// (paid charge, refund, failed payment), so AR can post it in Jonas without a
+// Stripe login. NOT customer-facing: plain, scannable key/value rows, one fact
+// per line, no marketing copy. Branded navy like the rest of the family so it
+// is obviously ours in the AR inbox. Every value is escaped here.
+//
+//   kind           'paid' | 'refund' | 'failed'
+//   customer       { name, email, phone, install_address, install_city,
+//                    install_state, install_zip }
+//   workOrderNumber  Jonas WO# (falsy -> "WO not created yet")
+//   chargeType     'Signup' | 'Renewal' | 'Add-on charge' | 'Tier change' |
+//                  'Fleet Monitoring' | 'Refund' | 'Other' (free text ok)
+//   lineItems      [{ description, amountCents }]
+//   amountCents    the amount paid / refunded / attempted
+//   whenLabel      pre-formatted date/time string (caller formats, Central)
+//   cardBrand, cardLast4, receiptNumber, invoiceNumber, chargeId,
+//   paymentIntentId, planLabel, renewalDate (YYYY-MM-DD), isPartial (refund),
+//   originalInvoiceNumber (refund), failureReason (failed)
+const AR_FOOTER_LINE = {
+  paid: 'Internal AR notice \u2014 customer has already paid by card. Do not invoice.',
+  refund: 'Internal AR notice \u2014 refund returned to the customer\u2019s card. Do not invoice.',
+  failed: 'Internal AR notice \u2014 FAILED, nothing was collected. Do not post and do not invoice.',
+};
+
+function buildArPaymentNoticeEmail({
+  kind, customer, workOrderNumber, chargeType, lineItems, amountCents, whenLabel,
+  cardBrand, cardLast4, receiptNumber, invoiceNumber, chargeId, paymentIntentId,
+  planLabel, renewalDate, isPartial, originalInvoiceNumber, failureReason,
+}) {
+  const k = (kind === 'refund' || kind === 'failed') ? kind : 'paid';
+  const c = customer || {};
+  const name = c.name || 'Customer';
+  const state = c.install_state;
+  const entity = companyName(state) + (isFlorida(state) ? ' (FL)' : '');
+  const addr = [c.install_address, c.install_city, c.install_state, c.install_zip].filter(Boolean).join(', ');
+  const contact = [c.phone, c.email].filter(Boolean).join(' / ');
+  const brandName = cardBrand ? (cardBrand.charAt(0).toUpperCase() + cardBrand.slice(1)) : '';
+  const cardText = cardLast4 ? `${brandName ? brandName + ' ' : ''}**** ${cardLast4}` : '';
+  const items = Array.isArray(lineItems) ? lineItems.filter((li) => li && li.description) : [];
+  const money = fmtMoney(amountCents);
+
+  const title = k === 'paid' ? 'Payment received' : (k === 'refund' ? 'Refund issued' : 'Payment FAILED');
+  const subject = `[Generator Care] ${title} \u2014 ${name} \u2014 ${money}`;
+  const amountLabel = k === 'paid' ? 'Amount paid' : (k === 'refund' ? (isPartial ? 'Amount refunded (partial)' : 'Amount refunded') : 'Amount attempted (NOT collected)');
+  const whenRowLabel = k === 'paid' ? 'Paid at' : (k === 'refund' ? 'Refunded at' : 'Failed at');
+  const typeText = k === 'refund' ? ('Refund' + (chargeType ? ' of ' + chargeType : '')) : (chargeType || 'Other');
+
+  // [label, value] pairs; value is plain text (escaped once at render time).
+  const rows = [
+    ['Customer', name],
+    ['Install address', addr || '\u2014'],
+    ['Phone / email', contact || '\u2014'],
+    ['Branding entity', entity],
+    ['Jonas WO#', workOrderNumber || 'WO not created yet'],
+    ['Type', typeText],
+  ];
+  if (items.length) {
+    items.forEach((li, i) => rows.push([i === 0 ? 'Line items' : '', `${li.description} ${fmtMoney(li.amountCents || 0)}`]));
+  }
+  rows.push([amountLabel, money]);
+  if (whenLabel) rows.push([whenRowLabel, whenLabel]);
+  if (cardText) rows.push(['Card', cardText]);
+  if (k === 'failed' && failureReason) rows.push(['Failure reason', failureReason]);
+  if (receiptNumber) rows.push(['Stripe receipt #', receiptNumber]);
+  if (invoiceNumber) rows.push(['Stripe invoice #', invoiceNumber]);
+  if (k === 'refund' && originalInvoiceNumber) rows.push(['Original invoice #', originalInvoiceNumber]);
+  if (chargeId) rows.push(['Charge ID', chargeId]);
+  if (paymentIntentId) rows.push(['Payment ID', paymentIntentId]);
+  if (planLabel || renewalDate) {
+    rows.push(['Plan', [planLabel, renewalDate ? 'next renewal ' + fmtFriendlyDate(renewalDate) : null].filter(Boolean).join(' \u2014 ') || '\u2014']);
+  }
+
+  const failedBanner = k === 'failed'
+    ? `<p style="margin:0 0 16px;padding:10px 14px;border:2px solid #B91C1C;border-radius:6px;font-family:${FONT_STACK};font-size:15px;font-weight:700;color:#B91C1C;">FAILED &mdash; not collected. Do not post this in Jonas.</p>`
+    : '';
+  const rowsHtml = rows.map(([label, value]) =>
+    `<tr><td style="${TABLE_LABEL};width:34%;">${escHtml(label)}</td><td style="${TABLE_VALUE}">${escHtml(value)}</td></tr>`
+  ).join('');
+  const body =
+    failedBanner +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;">${rowsHtml}</table>` +
+    `<p style="${P_LAST}margin-top:24px;font-weight:600;">${escHtml(AR_FOOTER_LINE[k])}</p>`;
+
+  const html = renderBrandedEmail({
+    heading: title,
+    intro: `Generator Care &mdash; ${escHtml(name)}`,
+    body,
+    signoff: '',
+    companyState: state,
+  });
+
+  const text =
+    `${title.toUpperCase()} \u2014 Generator Care\n` +
+    (k === 'failed' ? 'FAILED \u2014 not collected. Do not post this in Jonas.\n' : '') +
+    '\n' +
+    rows.map(([label, value]) => (label ? `${label}: ${value}` : `  ${value}`)).join('\n') +
+    `\n\n${AR_FOOTER_LINE[k]}\n`;
+
+  return { subject, html, text };
+}
+
 // --- 11. Signup link (Growth Engine WP2) --------------------------------------
 
 // Sent by the office "send signup link" action (POST /leads/:id/send-signup).
@@ -1121,6 +1224,7 @@ module.exports = {
   buildCancellationEmail,
   buildReceiptEmail,
   buildRefundReceiptEmail,
+  buildArPaymentNoticeEmail,
   buildSignupLinkEmail,
   buildEnrollmentInviteEmail,
   buildSetPasswordEmail,

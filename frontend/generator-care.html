@@ -1025,6 +1025,24 @@
           <button type="button" id="gc-test-send-btn" class="btn btn-primary btn-sm gc-mark-done">Send test</button>
         </div>
         <p id="gc-test-result" style="margin: 12px 0 0; font-size: 0.82rem; min-height: 1.2em;" aria-live="polite"></p>
+
+        <h3 style="margin: 22px 0 6px; font-size: 0.95rem; color: var(--accent);">Send test AR email</h3>
+        <p style="margin: 0 0 14px; font-size: 0.82rem; color: var(--ink-2); line-height: 1.5;">
+          Sends the internal Accounts Receivable payment notice with sample data to the AR mailbox (subject prefixed <code>[TEST]</code>), so AR can confirm they receive it without a real charge.
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+          <div>
+            <label for="gc-test-ar-kind" style="display:block; font-size: 0.78rem; color: var(--ink-2); margin-bottom: 4px;">Sample</label>
+            <select id="gc-test-ar-kind" style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 4px; font-size: 0.9rem; font-family: inherit; min-width: 200px; background: var(--surface); color: var(--ink);">
+              <option value="payment_mo">Payment received (MO)</option>
+              <option value="payment_fl">Payment received (FL)</option>
+              <option value="refund">Refund issued</option>
+              <option value="failed">Payment failed</option>
+            </select>
+          </div>
+          <button type="button" id="gc-test-ar-send-btn" class="btn btn-primary btn-sm gc-mark-done">Send test to AR</button>
+        </div>
+        <p id="gc-test-ar-result" style="margin: 12px 0 0; font-size: 0.82rem; min-height: 1.2em;" aria-live="polite"></p>
       </div>
     </details>
   </main>
