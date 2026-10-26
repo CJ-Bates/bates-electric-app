@@ -429,7 +429,7 @@ async function listNeedingReplyForDigest({ now } = {}) {
   const cutoff = new Date((now ? new Date(now).getTime() : Date.now()) - NEEDS_REPLY_DIGEST_AGE_MS).toISOString();
   const { data, error } = await supabaseAdmin
     .from('generator_sms_conversations')
-    .select('id, phone, mode, needs_reply_since, last_inbound_at, customer:generator_customers(name), owner:profiles!generator_sms_conversations_owner_profile_id_fkey(full_name, email)')
+    .select('id, phone, mode, needs_reply_since, last_inbound_at, customer:generator_customers(name), owner:profiles!owner_profile_id(full_name, email)')
     .not('needs_reply_since', 'is', null)
     .lte('needs_reply_since', cutoff)
     .order('needs_reply_since', { ascending: true });
