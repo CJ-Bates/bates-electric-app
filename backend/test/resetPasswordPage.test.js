@@ -237,6 +237,16 @@ test('the script throwing during init (markup mismatch) -> error takeover, never
   assert.match(els['link-dead-body'].textContent, /regular browser/);
 });
 
+test('reset-password.html uses only root-absolute asset paths and no <base> (CSP base-uri none); nested email URL 301s to it', () => {
+  assert.doesNotMatch(PAGE_HTML, /<base\s/i, 'no <base> tag: the CSP base-uri none makes it a no-op');
+  const refs = Array.from(PAGE_HTML.matchAll(/\s(?:href|src)="([^"]+)"/g)).map((m) => m[1]);
+  const local = refs.filter((r) => !/^(https?:)?\/\//.test(r) && !r.startsWith('#'));
+  assert.ok(local.length >= 8, 'found the local asset refs');
+  for (const r of local) assert.ok(r.startsWith('/'), `asset ref must be root-absolute: ${r}`);
+  const redirects = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', '_redirects'), 'utf8');
+  assert.match(redirects, /^\/auth\/reset-password-page\s+\/reset-password\.html\s+301\s*$/m);
+});
+
 test('inline watchdog exists in the HTML, is ES5, and keys off the same ready flag', () => {
   const idx = PAGE_HTML.indexOf('__resetPageInitDone');
   assert.ok(idx > 0, 'watchdog references __resetPageInitDone');
