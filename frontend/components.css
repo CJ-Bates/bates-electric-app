@@ -111,3 +111,26 @@ html.dark .dialog-scrim{background:rgba(0,0,0,.45)}
 /* ============ EMPTY STATE ============ */
 .empty{border:1.5px dashed var(--line);border-radius:var(--radius);padding:var(--sp-6);text-align:center;color:var(--ink-2)}
 .empty .big{font-size:var(--fs-lg);font-weight:700;color:var(--ink);margin-bottom:4px}
+
+/* ============ ETA PANEL (eta-panel.js: On my way / Running late) ============ */
+.eta-panel{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+.eta-status{font-size:var(--fs-sm);color:var(--ink-2);display:flex;flex-direction:column;gap:3px}
+.eta-status svg{vertical-align:-2px;margin-right:4px}
+.eta-status .eta-late{color:var(--warn);font-weight:600}
+.eta-btns{display:flex;gap:6px;flex-wrap:wrap}
+.eta-btns .btn svg{margin-right:4px}
+.eta-chooser{border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px;background:var(--surface-2);display:flex;flex-direction:column;gap:8px}
+.eta-chooser-title{font-weight:700;font-size:var(--fs-sm);color:var(--ink)}
+.eta-quick{display:flex;gap:6px;flex-wrap:wrap}
+.eta-quick .filter{padding:6px 12px;background:var(--surface)}
+.eta-quick .filter.active{background:var(--accent);color:var(--ink-inverse)}
+.eta-at,.eta-reason{display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--ink-2)}
+.eta-at input,.eta-reason select{padding:6px 8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);font-family:inherit;font-size:var(--fs-sm)}
+.eta-actions{display:flex;gap:6px;flex-wrap:wrap}
+.eta-result{font-size:var(--fs-sm);padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--surface-2);color:var(--ink);display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.eta-result.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+.eta-result.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.eta-call svg{margin-right:4px}
+@media (max-width:640px){.eta-btns .btn,.eta-actions .btn{min-height:42px}.eta-quick .filter{min-height:40px}}
+/* System note rows in a text thread (status 'note': never sent to the customer) */
+.gc-sms-sysnote{align-self:center;text-align:center;max-width:92%;font-size:0.8rem;color:var(--ink-2);background:var(--surface-2);border:1px dashed var(--line);border-radius:10px;padding:6px 10px;display:flex;flex-direction:column;gap:2px}

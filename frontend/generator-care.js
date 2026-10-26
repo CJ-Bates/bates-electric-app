@@ -409,6 +409,17 @@
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
+  // Central clock time ('10:45 AM') and Central calendar date of an instant.
+  function fmtTimeCentral(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+  }
+  function centralDateOf(iso) {
+    return iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) : '';
+  }
+  const isTodayCentral = (iso) => !!iso && centralDateOf(iso) === centralDateOf(new Date().toISOString());
+
   // Booked appointment -> "Jul 21, 2026 · 8:00–10:00 AM arrival" when the
   // visit carries an arrival window (the whole app speaks windows, never a
   // bare clock time); legacy visits without one fall back to the stored time.
@@ -534,6 +545,7 @@
     refresh: attIcon('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>'),
     checksquare: attIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 5-5.5"/>'),
     userminus: attIcon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M17 11h6"/>'),
+    phone: attIcon('<path d="M15.5 20.5c-2.6-.6-5.2-2.1-7.4-4.3S4.4 11.4 3.8 8.8c-.3-1.2 0-2.4.9-3.2l1.3-1.2c.6-.6 1.6-.5 2.1.2l1.7 2.4c.4.6.4 1.4-.1 1.9l-1 1.1c.5 1.1 1.2 2.2 2.2 3.2s2.1 1.7 3.2 2.2l1.1-1c.5-.5 1.3-.5 1.9-.1l2.4 1.7c.7.5.8 1.5.2 2.1l-1.2 1.3c-.8.9-2 1.2-3.2.9z"/>'),
     wrench: attIcon('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
   };
   const TIER_ORDER = ['critical', 'money', 'action', 'upcoming'];
@@ -667,6 +679,24 @@
             title: 'Passed &mdash; no tech was assigned',
             desc: `${customerLink(sub)} &mdash; appointment was ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))} and no tech was ever dispatched. The job likely didn&rsquo;t happen &mdash; assign a tech and rebook.`,
             action: { kind: 'visits', label: 'Assign a tech' },
+          });
+        }
+      }
+
+      // ACTION — booked within 2 days and NOT confirmed: no Y to the text and
+      // no phone confirmation (sql/038). An office prompt to call - no text is
+      // sent for this. Clears on Y / Mark confirmed (by phone) / a rebook.
+      if ((sub.status === 'active' || sub.status === 'past_due')
+          && ov && ov.status === 'scheduled' && booked && !apptPassed(ov)
+          && !ov.sms_confirmed_at && !ov.phone_confirmed_at) {
+        const apptDays = daysUntil(toLocalDateInput(ov.appointment_at));
+        if (apptDays !== null && apptDays >= 0 && apptDays <= 2) {
+          const phone = (sub.customer || {}).phone;
+          items.push({
+            tier: 'action', cls: 'c-warn', icon: 'phone', sub, sort: -800 + apptDays,
+            title: 'Not confirmed &mdash; call to confirm',
+            desc: `${customerLink(sub)} &mdash; booked for ${escapeHtml(fmtAppt(ov.appointment_at, ov.arrival_window))}, no reply to the confirmation text.${phone ? ` Call ${escapeHtml(fmtPhoneDisplay(phone))}.` : ' No phone on file.'}`,
+            action: { kind: 'visits', label: 'Open visit' },
           });
         }
       }
@@ -1226,6 +1256,7 @@
         badge = `<span class="badge badge-ok">Scheduled &middot; ${escapeHtml(fmtAppt(v.appointment_at, v.arrival_window))}</span>`;
         // Customer replied Y to the confirmation text (SMS Phase 1).
         if (v.sms_confirmed_at) badge += ` <span class="badge badge-ok">Confirmed by text</span>`;
+        else if (v.phone_confirmed_at) badge += ` <span class="badge badge-ok">Confirmed by phone</span>`;
       } else {
         badge = `<span class="badge badge-warn">Needs scheduling</span>`;
       }
@@ -1243,6 +1274,10 @@
       // Latest outbound text for this visit (sent / logged-not-sent / blocked).
       const smsLine = !completed && smsStatusLine(visitSms[v.id]);
       if (smsLine) audit.push(smsLine);
+      // Tech ETA texts (038): en route / running late, with the time texted.
+      if (!completed && v.en_route_at) audit.push(`On my way sent ${escapeHtml(fmtTimeCentral(v.en_route_at))}${v.eta_at && !v.running_late_at ? ', ETA ' + escapeHtml(fmtTimeCentral(v.eta_at)) : ''}`);
+      if (!completed && v.running_late_at) audit.push(`<span style="color:var(--warn);font-weight:600;">Running late${v.eta_at ? ' &mdash; new ETA ' + escapeHtml(fmtTimeCentral(v.eta_at)) : ''}${v.late_reason && window.BatesEta ? ' (' + escapeHtml(window.BatesEta.reasonLabel(v.late_reason)) + ')' : ''}</span>`);
+      if (completed && v.review_request_outcome) audit.push(`Review request: ${escapeHtml(v.review_request_outcome)}`);
 
       let actions = '';
       if (!completed) {
@@ -1265,7 +1300,9 @@
             <select class="gc-appt-window" data-visit="${v.id}" aria-label="Arrival window" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-family:inherit;">${winOptions}</select>
             <button class="btn btn-secondary btn-sm" data-schedule-visit="${v.id}">${scheduled ? 'Reschedule' : 'Book appointment'}</button>
             <button class="btn btn-primary btn-sm" data-complete-visit="${v.id}">Mark complete</button>
-          </div>`;
+            ${scheduled && !v.sms_confirmed_at && !v.phone_confirmed_at ? `<button class="btn btn-ghost btn-sm" data-phone-confirm="${v.id}" title="The customer confirmed by phone - clears the call-to-confirm prompt">Mark confirmed (by phone)</button>` : ''}
+          </div>
+          ${scheduled && isTodayCentral(v.appointment_at) ? `<div class="gc-eta-mount" data-eta-visit="${v.id}"></div>` : ''}`;
       }
       // What the tech CHECKED OFF on a completed visit (service checklist).
       // Only checked items are listed — an unchecked item is simply absent
@@ -1662,6 +1699,7 @@
       case 'quiet_hours': return '<span class="badge badge-neutral">Skipped &mdash; quiet hours</span>';
       case 'stale': return '<span class="badge badge-neutral">Dropped &mdash; too late to send</span>';
       case 'held': return '<span class="badge badge-info">Held &mdash; office has the conversation</span>';
+      case 'note': return '<span class="badge badge-neutral">Note</span>';
       case 'disabled': return '<span class="badge badge-neutral">Logged &mdash; texting off</span>';
       default: return `<span class="badge badge-neutral">${escapeHtml(m.status || '')}</span>`;
     }
@@ -1679,6 +1717,10 @@
   // reads as a blocked bubble, never a delivered one. Bodies are
   // attacker-controllable free text from the inbound webhook — always escaped.
   function renderSmsBubble(m) {
+    if (m.status === 'note') {
+      // System note (running late): for the office, never sent to the customer.
+      return `<div class="gc-sms-sysnote"><span>${escapeHtml(m.body || '')}</span><span class="gc-meta-label">${escapeHtml(fmtDateTime(m.created_at))}</span></div>`;
+    }
     const inbound = m.direction === 'in';
     const visitTag = m.related_visit_id ? ` <span class="gc-sms-tag">visit</span>` : '';
     const sender = !inbound && m.sent_by
@@ -1992,6 +2034,17 @@
       });
       body.querySelectorAll('[data-schedule-visit]').forEach(btn => {
         btn.addEventListener('click', () => scheduleAppointment(btn.dataset.scheduleVisit, id));
+      });
+      body.querySelectorAll('[data-phone-confirm]').forEach(btn => {
+        btn.addEventListener('click', () => markPhoneConfirmed(btn.dataset.phoneConfirm, id));
+      });
+      // "On my way" / "Running late" for a visit scheduled today (eta-panel.js,
+      // the same panel the tech sees). The text reads as the assigned tech.
+      body.querySelectorAll('[data-eta-visit]').forEach((el) => {
+        const v = (visits || []).find((x) => x.id === el.dataset.etaVisit);
+        if (v && window.BatesEta) {
+          window.BatesEta.mount(el, v, (payload) => postVisitEta(v.id, payload), { onUpdate: () => { loadSmsHistory(id, c.id); if (window.BatesTexts) window.BatesTexts.refresh(); } });
+        }
       });
       // One-tap "use this slot": fill the visit's booking controls (date +
       // arrival window) from a customer-proposed slot, then Amy books with
@@ -2701,6 +2754,35 @@
   function closeModal() {
     document.getElementById('detailsModal').hidden = true;
     currentDetail = null;
+  }
+
+  // Office twin of the tech's ETA buttons (routes/generator-care/visits.js).
+  async function postVisitEta(visitId, payload) {
+    const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/eta`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data;
+  }
+
+  // "Mark confirmed (by phone)" (sql/038): stamps the visit and re-renders.
+  async function markPhoneConfirmed(visitId, subId) {
+    try {
+      const r = await BatesAuth.authFetch(`${API_BASE}/api/generator-care/visits/${visitId}/phone-confirmed`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      showStatus('Marked confirmed by phone.', 'success');
+      await showDetail(subId, 'visits');
+      loadSubscriptions();
+    } catch (err) {
+      console.error('[phone-confirmed] failed:', err);
+      openAlert({ title: 'Could not mark confirmed', message: err.message, danger: true });
+    }
   }
 
   // Called by the Texts tray after it sends: if that customer's record is

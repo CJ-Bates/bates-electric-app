@@ -27,7 +27,9 @@ const ALLOWLIST = {
     // bearer credential for the customer's billing) — no longer a no-flag route.
     '/subscriptions/:id/resend-welcome',
   ],
-  'visits.js': ['/visits/:id/complete', '/visits/:id/schedule'],
+  // eta + phone-confirmed (038): operational stamps/texts about today's
+  // visit, same basis as complete/schedule - no money, no data exposed.
+  'visits.js': ['/visits/:id/complete', '/visits/:id/schedule', '/visits/:id/eta', '/visits/:id/phone-confirmed'],
   // Leads are prospect tracking the whole office works: no money moved, no
   // Stripe objects created, no existing customer's data exposed by id
   // (convert only records a subscription id on the lead row; send-signup and

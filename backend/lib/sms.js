@@ -93,11 +93,22 @@ function smsEnabled() {
 // Quiet hours: sends allowed 8:00am-8:59pm in the customer's local time.
 // Every Generator Care customer is Central (no timezone column exists;
 // the whole app hardcodes America/Chicago — see fmtApptCentral etc.).
-function withinQuietHours(now) {
+// startHour (default 8): "On my way" / "Running late" texts for a visit THAT
+// DAY may go from 7 AM Central (CJ's call, 2026-10-26) - a 7-9 AM window
+// means the tech leaves before 8 and the customer is expecting exactly this
+// text. Nothing else passes a different start.
+function withinQuietHours(now, startHour) {
   const hour = Number(new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Chicago', hour: 'numeric', hour12: false,
   }).format(now || new Date()));
-  return hour >= 8 && hour < 21;
+  return hour >= (startHour || 8) && hour < 21;
+}
+
+// Central clock time of an instant, SMS form: '10:45 AM'.
+function fmtSmsTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
 }
 
 // ============================================================================
@@ -236,9 +247,12 @@ function buildHoldingReplySms({ installState }) {
 // one the morning of. Confirmation-aware: once the customer has replied Y
 // (visit.sms_confirmed_at set) the reminder just reminds — it never re-asks
 // for a Y. Legacy visits without an arrival window omit the window clause.
-function buildReminderSms({ installState, dateStr, windowCode, link, confirmed, isToday }) {
+// isTomorrow (2026-10-26): the final reminder now goes the EVENING BEFORE
+// (~6 PM Central) instead of the morning of - a 7-9 AM window used to get
+// its reminder after the window had started (quiet hours open at 8).
+function buildReminderSms({ installState, dateStr, windowCode, link, confirmed, isToday, isTomorrow }) {
   const windowText = smsWindowText(windowCode);
-  const when = (isToday ? 'today' : 'on ' + fmtSmsDate(dateStr)) + (windowText ? ', ' + windowText : '');
+  const when = (isToday ? 'today' : isTomorrow ? 'tomorrow' : 'on ' + fmtSmsDate(dateStr)) + (windowText ? ', ' + windowText : '');
   const lead = smsBrand(installState) + ' reminder: your generator maintenance is ' + when + '.';
   return confirmed
     ? lead + ' Need a different time? Tap ' + link + '.'
@@ -260,6 +274,35 @@ function buildOptInConfirmationSms({ installState }) {
 function buildScheduleNudgeSms({ installState, year, link }) {
   return smsBrand(installState) + ': it\'s time to schedule your generator maintenance' +
     (year ? ' for ' + year : '') + '. Tap to pick a date & time: ' + link + '. Reply STOP to opt out.';
+}
+
+// (8) ETA TEXTS - tech "On my way" / "Running late" (2026-10-26, after a
+// customer whose tech was late texted "No one has shown up"). Operational
+// texts the customer wants: sent with the tech as sentBy, so they show in
+// the thread under the tech's name and go out even in office mode.
+function buildOnMyWaySms({ installState, techFirstName, timeText }) {
+  return smsBrand(installState) + ': ' + (techFirstName || 'Your technician') + ' is on the way and should arrive around ' + timeText + '.';
+}
+function buildEtaUpdateSms({ installState, techFirstName, timeText }) {
+  return smsBrand(installState) + ': ' + (techFirstName ? techFirstName + '\'s' : 'Your technician\'s') + ' arrival time is now around ' + timeText + '.';
+}
+function buildRunningLateSms({ installState, techFirstName, timeText }) {
+  return smsBrand(installState) + ': ' + (techFirstName || 'Your technician') + ' is running a little behind and should now arrive around ' + timeText + '. Sorry for the wait.';
+}
+
+// (9) REVIEW REQUEST - the day after a completed visit (10 AM Central), off
+// unless SMS_REVIEW_REQUESTS_ENABLED. Brand at the end only (CJ, 2026-10-26).
+function buildReviewRequestSms({ name, installState, link }) {
+  const first = String(name || '').trim().split(/\s+/)[0];
+  return 'Thanks for having us out' + (first ? ', ' + first : '') + '! If we took good care of you, a quick review helps a lot: ' + link + '. ' +
+    MDASH + ' ' + smsBrand(installState);
+}
+
+// (5c) AFTER-HOURS HOLDING - the honest version of (5b) when the office is
+// closed (lib/officeHours.js decides, and supplies the phrase).
+function buildAfterHoursReplySms({ installState, phrase }) {
+  return 'Thanks for your message, our office is closed right now. We\'ll get back to you ' + phrase + '. ' +
+    MDASH + ' ' + smsBrand(installState);
 }
 
 // ============================================================================
@@ -612,9 +655,11 @@ async function heldAlreadyLogged({ e164, body, relatedVisitId }) {
 //           operator replies only; stored as sent_by_profile_id, sql/034),
 //         compliance? (carrier-required disclosure such as the opt-in
 //           confirmation: bypasses the office-mode hold, nothing else),
+//         quietHoursStart? (hour, Central; default 8 - ETA texts on the visit
+//           day pass 7, see withinQuietHours),
 //         now? (test seam for the quiet-hours / reply-window clock) }
 // ============================================================================
-async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, replyToInbound, sentBy, compliance, now }) {
+async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, replyToInbound, sentBy, compliance, quietHoursStart, now }) {
   const accountPhone = normalizePhone(process.env.SIMPLETEXTING_ACCOUNT_PHONE) || null;
   const e164 = normalizePhone(toPhone);
   const base = {
@@ -684,8 +729,8 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
   // Kill-switch: log the full would-be message, send nothing.
   if (!smsEnabled()) return refuse('disabled', 'SMS_ENABLED is not true');
 
-  if (!ignoreQuietHours && !withinQuietHours(now)) {
-    return refuse('quiet_hours', 'outside 8am-9pm Central');
+  if (!ignoreQuietHours && !withinQuietHours(now, quietHoursStart)) {
+    return refuse('quiet_hours', 'outside ' + (quietHoursStart || 8) + 'am-9pm Central');
   }
 
   const token = process.env.SIMPLETEXTING_API_TOKEN;
@@ -882,6 +927,12 @@ module.exports = {
   buildHoldingReplySms,
   buildOptInConfirmationSms,
   buildScheduleNudgeSms,
+  buildOnMyWaySms,
+  buildEtaUpdateSms,
+  buildRunningLateSms,
+  buildReviewRequestSms,
+  buildAfterHoursReplySms,
+  fmtSmsTime,
   getConsent,
   recordConsent,
   optOutPhone,

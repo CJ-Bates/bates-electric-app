@@ -9,12 +9,13 @@ const { sendViaBrevo } = require('../lib/mailer');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
 const {
   sendSms, sendMagicLoginSms, buildReminderSms, buildScheduleNudgeSms,
-  buildBookingConfirmationSms, withinQuietHours, smsEnabled, normalizePhone,
+  buildBookingConfirmationSms, buildReviewRequestSms, withinQuietHours, smsEnabled, normalizePhone,
   logSmsMessage, SMS_TERMINAL_STATUSES,
 } = require('../lib/sms');
+const { isFlorida } = require('../lib/branding');
 const { DASHBOARD_URL } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
-const { sweepOwnerAlerts, listNeedingReplyForDigest, TEXTS_TAB_URL } = require('../lib/smsConversations');
+const { sweepOwnerAlerts, listNeedingReplyForDigest, isOfficeMode, TEXTS_TAB_URL } = require('../lib/smsConversations');
 
 const router = express.Router();
 
@@ -164,16 +165,25 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
       console.error('[gc-cron] texts-needing-reply lookup failed (digest continues):', e && e.message);
     }
 
+    // Booked within 2 days and not confirmed by text (Y) or by phone (038):
+    // an office prompt to call. Own try/catch, same reason as above.
+    let notConfirmed = [];
+    try {
+      notConfirmed = await listUnconfirmedSoon({ now: new Date() });
+    } catch (e) {
+      console.error('[gc-cron] not-confirmed lookup failed (digest continues):', e && e.message);
+    }
+
     // The digest must go out EVERY day. Amy's runbook treats a missing email as
     // an outage signal, so on a genuinely quiet day we still send — just a short
     // "all quiet" note instead of suppressing the email entirely. overdue here
     // is the WHOLE passed-due set (needsScheduling + awaiting), so a day with
     // only awaiting-completion items still sends a full digest.
-    const isQuiet = overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0 && textsNeedingReply.length === 0;
+    const isQuiet = overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0 && textsNeedingReply.length === 0 && notConfirmed.length === 0;
 
     const { subject, html, text } = isQuiet
       ? buildQuietEmail({ todayStr })
-      : buildEmail({ needsScheduling, awaiting, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, textsNeedingReply, todayStr });
+      : buildEmail({ needsScheduling, awaiting, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, textsNeedingReply, notConfirmed, todayStr });
 
  // Send via Brevo. A missing BREVO_API_KEY or a provider error throws below ->
  // caught -> 500 + Healthchecks '/fail' ping, so we hear about it.
@@ -191,7 +201,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  // Digest sent successfully -- signal the dead-man's switch.
  pingHealthcheck();
 
- res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, needs_scheduling: needsScheduling.length, awaiting_completion: awaiting.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length, texts_needing_reply: textsNeedingReply.length });
+ res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, needs_scheduling: needsScheduling.length, awaiting_completion: awaiting.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length, texts_needing_reply: textsNeedingReply.length, not_confirmed: notConfirmed.length });
  } catch (err) {
  // Signal failure to Healthchecks first so we hear about a crashed cron.
  pingHealthcheck('/fail');
@@ -257,6 +267,28 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10);
 }
 
+// Central hour (0-23) of an instant.
+function centralHour(d) {
+  return Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hour12: false }).format(d)) % 24;
+}
+// A Central wall-clock time on a Central date, as a UTC ISO instant
+// ('2026-10-27' + '18:00' -> '2026-10-27T23:00:00.000Z' in CDT). Reads the
+// zone offset in force on that date, so DST is handled by Intl, not by us.
+function centralTimeToIso(dateStr, hhmm) {
+  const probe = new Date(dateStr + 'T12:00:00Z');
+  const off = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', timeZoneName: 'longOffset' })
+    .formatToParts(probe).find((p) => p.type === 'timeZoneName').value; // 'GMT-05:00'
+  const m = off.match(/([+-])(\d{2}):(\d{2})/);
+  const offset = m ? m[1] + m[2] + ':' + m[3] : '-06:00';
+  return new Date(dateStr + 'T' + hhmm + ':00' + offset).toISOString();
+}
+
+// Evening-before reminder (038): runs from EVE_HOUR Central for TOMORROW's
+// visits. Review requests (038): from REVIEW_HOUR for visits completed
+// yesterday. Both ride the hourly sms-reminders trigger.
+const EVE_HOUR = Number(process.env.SMS_EVE_REMINDER_HOUR) || 18;
+const REVIEW_HOUR = Number(process.env.SMS_REVIEW_HOUR) || 10;
+
 // One reminder pass: every scheduled, unstamped visit whose appointment falls
 // on targetDateStr IN CENTRAL TIME. appointment_at is a timestamptz, so the
 // query grabs a UTC superset ([target-1d, target+2d) covers every instant
@@ -276,11 +308,14 @@ function addDays(dateStr, n) {
 // inside a disabled window would be silently lost when the switch comes
 // back (this date-anchored query can't re-find it later; only the queue
 // mark can).
-async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToday, queueOnly, now }) {
+// isTomorrow: the evening-before copy. lateBookingCutoff (ISO): a visit
+// booked at/after this instant (scheduled_at) is NOT sent the reminder - the
+// booking confirmation it just got covers it - and is settled on record.
+async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToday, isTomorrow, queueOnly, lateBookingCutoff, now }) {
   const summary = { considered: 0, sent: 0, skipped: 0 };
   const { data: visits, error } = await supabaseAdmin
     .from('generator_service_visits')
-    .select('id, appointment_at, arrival_window, sms_confirmed_at, ' + queueColumn + ', subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
+    .select('id, appointment_at, arrival_window, sms_confirmed_at, scheduled_at, ' + queueColumn + ', subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state))')
     .eq('status', 'scheduled')
     .is(stampColumn, null)
     .not('appointment_at', 'is', null)
@@ -294,6 +329,21 @@ async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToda
 
     const customer = (v.subscription && v.subscription.customer) || null;
     if (!customer || !customer.phone) { summary.skipped++; continue; }
+
+    // Booked after the evening cutoff (or on the day): the confirmation text
+    // they just received is the reminder. Settle the debt on record.
+    if (lateBookingCutoff && v.scheduled_at && v.scheduled_at >= lateBookingCutoff) {
+      const dropped = await dropStaleQueuedSms({
+        visitId: v.id,
+        sentPatch: { [stampColumn]: (now || new Date()).toISOString() },
+        customer,
+        body: buildReminderSms({ installState: customer.install_state, dateStr: targetDateStr, windowCode: v.arrival_window, link: DASHBOARD_URL, confirmed: !!v.sms_confirmed_at, isToday, isTomorrow }),
+        detail: 'evening reminder skipped: booked after 6 PM the day before - the booking confirmation covers it',
+      });
+      summary.late_booked = (summary.late_booked || 0) + (dropped ? 1 : 0);
+      if (!dropped) summary.skipped++;
+      continue;
+    }
 
     // Queue BEFORE attempting (same rule as the nudge webhook): a process
     // death mid-send, or a transient refusal below, leaves the debt on
@@ -326,6 +376,7 @@ async function runReminderPass({ targetDateStr, stampColumn, queueColumn, isToda
         link: DASHBOARD_URL,
         confirmed: !!v.sms_confirmed_at,
         isToday,
+        isTomorrow,
       }),
       customerId: customer.id,
       relatedVisitId: v.id,
@@ -484,7 +535,13 @@ async function runBookingConfirmRetryPass({ now }) {
 async function runReminderRetryPass({ kind, now }) {
   const cfg = kind === '3day'
     ? { queueColumn: 'sms_reminder_3day_queued_at', stampColumn: 'sms_reminder_3day_at', label: '3-day reminder' }
-    : { queueColumn: 'sms_reminder_dayof_queued_at', stampColumn: 'sms_reminder_dayof_at', label: 'day-of reminder' };
+    : kind === 'eve'
+      ? { queueColumn: 'sms_reminder_eve_queued_at', stampColumn: 'sms_reminder_eve_at', label: 'evening reminder' }
+      : { queueColumn: 'sms_reminder_dayof_queued_at', stampColumn: 'sms_reminder_dayof_at', label: 'day-of reminder' };
+  // The day the date-anchored pass owns; past it the debt is settled here.
+  const horizon = kind === '3day' ? addDays(centralDateStr(now || new Date()), 3)
+    : kind === 'eve' ? addDays(centralDateStr(now || new Date()), 1)
+      : centralDateStr(now || new Date());
   const summary = { considered: 0, sent: 0, skipped: 0, stale: 0, rearmed: 0 };
   const clock = now || new Date();
   const todayCentral = centralDateStr(clock);
@@ -499,7 +556,7 @@ async function runReminderRetryPass({ kind, now }) {
 
   for (const v of visits || []) {
     const apptDate = centralDateStr(new Date(v.appointment_at));
-    const isTargetDay = kind === '3day' ? apptDate === addDays(todayCentral, 3) : apptDate === todayCentral;
+    const isTargetDay = apptDate === horizon;
     if (isTargetDay) continue; // the daily pass owns the target day
 
     summary.considered++;
@@ -507,7 +564,7 @@ async function runReminderRetryPass({ kind, now }) {
     if (!customer || !customer.phone) { summary.skipped++; continue; }
 
     // Rescheduled outward: not stale, just no longer owed for the old day.
-    if (apptDate > todayCentral && (kind === 'dayof' || apptDate > addDays(todayCentral, 3))) {
+    if (apptDate > todayCentral && apptDate > horizon) {
       const { error: rearmErr } = await supabaseAdmin
         .from('generator_service_visits')
         .update({ [cfg.queueColumn]: null })
@@ -529,12 +586,13 @@ async function runReminderRetryPass({ kind, now }) {
       link: DASHBOARD_URL,
       confirmed: !!v.sms_confirmed_at,
       isToday: false,
+      isTomorrow: kind === 'eve',
     });
 
     if (apptDate <= todayCentral) {
       const why = apptDate < todayCentral
         ? 'the appointment day (' + apptDate + ') passed'
-        : 'the appointment is today - the day-of reminder covers it';
+        : (kind === 'eve' ? 'the appointment day arrived before it could send' : 'the appointment is today - the day-of reminder covers it');
       const dropped = await dropStaleQueuedSms({
         visitId: v.id,
         sentPatch: { [cfg.stampColumn]: clock.toISOString() },
@@ -661,14 +719,17 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     // switch comes back on, the retry sweeps drain what's still true and
     // stale-drop the rest, on record. Booking confirmations and nudges
     // queue at their own trigger points, so they need nothing here.
+    const eveDue = centralHour(now) >= EVE_HOUR;
+    const eveArgs = {
+      targetDateStr: addDays(todayCentral, 1), stampColumn: 'sms_reminder_eve_at', queueColumn: 'sms_reminder_eve_queued_at',
+      isTomorrow: true, lateBookingCutoff: centralTimeToIso(todayCentral, '18:00'), now,
+    };
     if (!smsEnabled()) {
       const threeDayQueued = await runReminderPass({
         targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, queueOnly: true, now,
       });
-      const dayOfQueued = await runReminderPass({
-        targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, queueOnly: true, now,
-      });
-      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, day_of_queued: dayOfQueued, owner_alerts: ownerAlerts });
+      const eveQueued = eveDue ? await runReminderPass({ ...eveArgs, queueOnly: true }) : { skipped: 'before_' + EVE_HOUR };
+      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, eve_queued: eveQueued, owner_alerts: ownerAlerts });
     }
 
     // Confirmations first (a booking's "it's set" should precede any
@@ -678,16 +739,17 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     const threeDay = await runReminderPass({
       targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, now,
     });
-    const dayOf = await runReminderPass({
-      targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, now,
-    });
+    // The final reminder goes the EVENING BEFORE (038) - the morning-of pass
+    // is retired: a 7-9 AM window got its reminder after the window started.
+    const eve = eveDue ? await runReminderPass(eveArgs) : { skipped: 'before_' + EVE_HOUR };
     const threeDayRetry = await runReminderRetryPass({ kind: '3day', now });
-    const dayOfRetry = await runReminderRetryPass({ kind: 'dayof', now });
+    const eveRetry = await runReminderRetryPass({ kind: 'eve', now });
     const nudgeRetry = await runNudgeRetryPass({ now });
+    const review = await runReviewRequestPass({ now });
     res.json({
-      ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf,
-      three_day_retry: threeDayRetry, day_of_retry: dayOfRetry,
-      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry, owner_alerts: ownerAlerts,
+      ok: true, date: todayCentral, three_day: threeDay, eve,
+      three_day_retry: threeDayRetry, eve_retry: eveRetry,
+      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry, owner_alerts: ownerAlerts, review,
     });
   } catch (err) {
     console.error('[gc-cron] sms-reminders error:', err && err.message);
@@ -743,6 +805,53 @@ function buildSubject({ pastDueCount = 0, failedCount = 0, needsSchedulingCount 
   return 'Generator Care: ' + parts.join(', ');
 }
 
+// Scheduled visits within the next 2 days (Central) with neither a text
+// confirmation (Y) nor a phone confirmation (038) - the office calls.
+async function listUnconfirmedSoon({ now }) {
+  const clock = now || new Date();
+  const todayCentral = centralDateStr(clock);
+  const lastDay = addDays(todayCentral, 2);
+  const { data, error } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id, appointment_at, arrival_window, subscription:generator_subscriptions(id, customer:generator_customers(name, phone))')
+    .eq('status', 'scheduled')
+    .is('sms_confirmed_at', null)
+    .is('phone_confirmed_at', null)
+    .not('appointment_at', 'is', null)
+    .gte('appointment_at', addDays(todayCentral, -1) + 'T00:00:00Z')
+    .lt('appointment_at', addDays(lastDay, 2) + 'T00:00:00Z')
+    .order('appointment_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).filter((v) => {
+    const d = centralDateStr(new Date(v.appointment_at));
+    return d >= todayCentral && d <= lastDay;
+  }).map((v) => ({
+    visit_id: v.id,
+    subscription_id: v.subscription && v.subscription.id,
+    appointment_at: v.appointment_at,
+    arrival_window: v.arrival_window,
+    name: (v.subscription && v.subscription.customer && v.subscription.customer.name) || 'Customer',
+    phone: (v.subscription && v.subscription.customer && v.subscription.customer.phone) || '',
+  }));
+}
+
+function notConfirmedLine(n) {
+  const day = new Date(n.appointment_at).toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric' });
+  const win = arrivalWindowLabel(n.arrival_window);
+  return `${n.name} - ${day}${win ? ' ' + win : ''} - ${n.phone || 'no phone on file'}`;
+}
+
+function renderNotConfirmedSection(items) {
+  if (!items || !items.length) return '';
+  const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const rows = items.map((n) => `<li style="margin:0 0 4px;">${esc(notConfirmedLine(n))}</li>`).join('');
+  return `<div style="margin:18px 0 6px;padding:12px 14px;border-left:4px solid #D97706;background:#fffbeb;border-radius:4px;">
+ <div style="font-weight:700;color:#92400e;font-size:14px;margin-bottom:6px;">Not confirmed - call to confirm (${items.length})</div>
+ <div style="color:#4b5563;font-size:12px;margin-bottom:8px;">Booked within 2 days with no Y reply and no phone confirmation. Call, then click <strong>Mark confirmed (by phone)</strong> on the visit.</div>
+ <ul style="margin:0;padding-left:18px;color:#374151;font-size:13px;line-height:1.5;">${rows}</ul>
+ </div>`;
+}
+
 // Digest line per conversation that still needs a human answer (sql/037).
 function textsReplyLine(t) {
   const name = (t.customer && t.customer.name) || t.phone || 'Unknown';
@@ -763,7 +872,7 @@ function renderTextsNeedingReplySection(items) {
  </div>`;
 }
 
-function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], textsNeedingReply = [], todayStr }) {
+function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], textsNeedingReply = [], notConfirmed = [], todayStr }) {
  const total = needsScheduling.length + awaiting.length + upcoming.length;
  const subject = buildSubject({
    pastDueCount: pastDue.length,
@@ -930,6 +1039,7 @@ function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTen
  </p>
  ${renderPastDueSection(pastDue)}
  ${renderTextsNeedingReplySection(textsNeedingReply)}
+ ${renderNotConfirmedSection(notConfirmed)}
  ${section('Overdue - needs scheduling', needsScheduling, '#b91c1c', 'needs_scheduling')}
  ${section('Awaiting completion', awaiting, '#b45309', 'awaiting')}
           ${awaiting.length ? `<p style="margin:6px 0 14px;color:#6b7280;font-size:12px;line-height:1.5;">These had a visit on the books when the due date passed. If the visit already happened, mark it complete in the dashboard &mdash; that clears it and advances the next due date.</p>` : ''}
@@ -963,6 +1073,13 @@ function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTen
  for (const s of pastDue) {
  const c = s.customer || {};
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)} ${s.gen_model || ''}  -  ${planLabel(s.plan)}  -  ${c.phone || c.email || ''}`);
+ }
+ }
+ if (notConfirmed.length) {
+ textLines.push('');
+ textLines.push(`NOT CONFIRMED - CALL TO CONFIRM (${notConfirmed.length}) - booked within 2 days, no Y and no phone confirmation:`);
+ for (const n of notConfirmed) {
+ textLines.push(`- ${notConfirmedLine(n)}`);
  }
  }
  if (textsNeedingReply.length) {
@@ -1085,6 +1202,89 @@ function escapeHtml(s) {
 }
 
 module.exports = router;
+// Review request the day after a completed visit (038). Off unless
+// SMS_REVIEW_REQUESTS_ENABLED=true (CJ confirms carrier registration covers
+// it first). From REVIEW_HOUR Central, for visits completed YESTERDAY; one
+// terminal stamp per visit with the outcome ('sent' or 'skipped: why') so the
+// office can see in the record why one did not go. Skip rules, in order:
+// missed the day-after window, no phone, no review link (Florida needs its
+// own S.E. Bates link), tech was running late, a review request in the last
+// 12 months, office owns the conversation, the customer texted something
+// needing a reply in the last 7 days. Then the usual sendSms gates.
+async function runReviewRequestPass({ now }) {
+  if (process.env.SMS_REVIEW_REQUESTS_ENABLED !== 'true') return { skipped: 'disabled' };
+  const clock = now || new Date();
+  if (centralHour(clock) < REVIEW_HOUR) return { skipped: 'before_' + REVIEW_HOUR };
+  const todayCentral = centralDateStr(clock);
+  const yesterday = addDays(todayCentral, -1);
+  const summary = { considered: 0, sent: 0, skipped: 0 };
+  const { data: visits, error } = await supabaseAdmin
+    .from('generator_service_visits')
+    .select('id, completed_date, running_late_at, subscription:generator_subscriptions(customer:generator_customers(id, name, phone, install_state, last_review_request_at))')
+    .eq('status', 'completed')
+    .is('review_request_at', null)
+    .gte('completed_date', addDays(todayCentral, -3))
+    .lte('completed_date', yesterday);
+  if (error) throw error;
+
+  for (const v of visits || []) {
+    summary.considered++;
+    const customer = (v.subscription && v.subscription.customer) || null;
+    const stamp = async (outcome) => {
+      const { error: stErr } = await supabaseAdmin
+        .from('generator_service_visits')
+        .update({ review_request_at: clock.toISOString(), review_request_outcome: outcome })
+        .eq('id', v.id);
+      if (stErr) {
+        console.error('[gc-cron] review stamp failed for visit ' + v.id + ':', stErr.message);
+        reportError(new Error('review stamp failed for visit ' + v.id + ': ' + stErr.message), { route: '/api/cron/generator-care/sms-reminders' }).catch(() => {});
+      }
+    };
+    const skip = async (why) => { await stamp('skipped: ' + why); summary.skipped++; };
+
+    if (v.completed_date < yesterday) { await skip('missed the day-after window'); continue; }
+    if (!customer || !normalizePhone(customer.phone)) { await skip('no mobile number'); continue; }
+    const fl = isFlorida(customer.install_state);
+    const link = fl ? process.env.GOOGLE_REVIEW_URL_FL : process.env.GOOGLE_REVIEW_URL;
+    if (!link) { await skip(fl ? 'Florida customer - no S.E. Bates review link set' : 'no review link set'); continue; }
+    if (v.running_late_at) { await skip('tech was running late'); continue; }
+    if (customer.last_review_request_at && new Date(customer.last_review_request_at).getTime() > clock.getTime() - 365 * 86400000) {
+      await skip('review request already sent in the last 12 months'); continue;
+    }
+    const phone = normalizePhone(customer.phone);
+    if (await isOfficeMode({ customerId: customer.id, phone, now: clock })) { await skip('office is handling the conversation'); continue; }
+    const { data: recent, error: rErr } = await supabaseAdmin
+      .from('generator_sms_messages')
+      .select('detail, created_at')
+      .eq('direction', 'in')
+      .eq('customer_id', customer.id)
+      .gte('created_at', new Date(clock.getTime() - 7 * 86400000).toISOString());
+    if (rErr) throw rErr;
+    if ((recent || []).some((m) => /^intent: (other|reschedule)/.test(String(m.detail || '')))) {
+      await skip('customer texted something needing a reply in the last 7 days'); continue;
+    }
+
+    const result = await sendSms({
+      toPhone: customer.phone,
+      body: buildReviewRequestSms({ name: customer.name, installState: customer.install_state, link }),
+      customerId: customer.id,
+      relatedVisitId: v.id,
+      now: clock,
+    });
+    if (result.sent) {
+      await stamp('sent');
+      summary.sent++;
+      const { error: cErr } = await supabaseAdmin.from('generator_customers').update({ last_review_request_at: clock.toISOString() }).eq('id', customer.id);
+      if (cErr) console.error('[gc-cron] last_review_request_at stamp failed:', cErr.message);
+    } else if (SMS_TERMINAL_STATUSES.includes(result.status)) {
+      await skip(result.status);
+    } else {
+      summary.skipped++; // transient (held / disabled / failed): the next hourly run retries
+    }
+  }
+  return summary;
+}
+
 // Held-text sweep after a hand-back (routes/generator-care/texts.js): the
 // four retry passes, exactly as the hourly trigger runs them, so a text held
 // during office mode goes out now if still relevant or is stale-dropped on
@@ -1096,9 +1296,9 @@ async function runHeldSweep({ now } = {}) {
   try {
     const bookingConfirm = await runBookingConfirmRetryPass({ now: t });
     const threeDay = await runReminderRetryPass({ kind: '3day', now: t });
-    const dayOf = await runReminderRetryPass({ kind: 'dayof', now: t });
+    const eve = await runReminderRetryPass({ kind: 'eve', now: t });
     const nudge = await runNudgeRetryPass({ now: t });
-    return { booking_confirm: bookingConfirm, three_day: threeDay, day_of: dayOf, nudge };
+    return { booking_confirm: bookingConfirm, three_day: threeDay, eve, nudge };
   } catch (e) {
     console.error('[gc-cron] held sweep failed:', e && e.message);
     reportError(e, { route: 'gc-cron runHeldSweep' }).catch(() => {});
@@ -1109,4 +1309,4 @@ module.exports.runHeldSweep = runHeldSweep;
 
 // Offline-test seam (same pattern as generator-webhook.js) — lets the reminder
 // pass run with a pinned clock and mocked supabase, no HTTP/cron secret needed.
-module.exports._test = { runReminderPass, runNudgeRetryPass, runBookingConfirmRetryPass, runReminderRetryPass, runHeldSweep, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail, textsReplyLine };
+module.exports._test = { runReminderPass, runNudgeRetryPass, runBookingConfirmRetryPass, runReminderRetryPass, runReviewRequestPass, runHeldSweep, listUnconfirmedSoon, centralDateStr, addDays, centralHour, centralTimeToIso, EVE_HOUR, REVIEW_HOUR, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail, textsReplyLine, notConfirmedLine };

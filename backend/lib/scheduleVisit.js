@@ -42,8 +42,18 @@ async function scheduleServiceVisit({ visitId, appointmentAt, arrivalWindow, boo
       scheduled_at: new Date().toISOString(),
       status: 'scheduled',
       // A (re)booked time needs a fresh "Reply Y" — any earlier text
-      // confirmation was for the old slot (sql/025).
+      // confirmation was for the old slot (sql/025); same for a phone
+      // confirmation, the tech's ETA and the evening-before reminder (038).
       sms_confirmed_at: null,
+      phone_confirmed_at: null,
+      phone_confirmed_by: null,
+      en_route_at: null,
+      eta_at: null,
+      eta_sent_by: null,
+      running_late_at: null,
+      late_reason: null,
+      sms_reminder_eve_queued_at: null,
+      sms_reminder_eve_at: null,
     })
     .eq('id', visitId)
     .neq('status', 'completed');

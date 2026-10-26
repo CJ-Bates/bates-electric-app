@@ -14,6 +14,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { completeServiceVisit, generateStandingAddons } = require('../lib/completeVisit');
 const { scheduleServiceVisit } = require('../lib/scheduleVisit');
+const { sendEtaText } = require('../lib/etaTexts');
 const { sendEmail, buildSignupLinkEmail } = require('../lib/emails');
 const { ADDON_CATALOG, arrivalWindow, arrivalWindowLabel, lookupAddonPrice, isRecurringAddon, planVisitItems } = require('../lib/generator-catalog');
 const { chargeVisitCart, getVisitCartCharges, chargeAmountError, sanitizeChargeDescription } = require('../lib/gcCharges');
@@ -118,7 +119,8 @@ router.use(makeGeneralLimiter());
 // Curated visit shape: what a tech needs in the field, nothing about billing.
 const TECH_VISIT_SELECT = `
   id, status, visit_type, scheduled_date, appointment_at, arrival_window, completed_date, completed_by,
-  notes, internal_note, assigned_at,
+  notes, internal_note, assigned_at, assigned_tech_id,
+  en_route_at, eta_at, running_late_at, late_reason, sms_confirmed_at, phone_confirmed_at,
   subscription:generator_subscriptions(
     id, plan, gen_class, gen_type_label, gen_model, gen_serial,
     customer:generator_customers(name, phone, install_address, install_city, install_state, install_zip)
@@ -294,6 +296,29 @@ router.post('/my-visits/:id/complete', async (req, res) => {
 // so the office audit line reads "Booked by <tech>". Sends a plain INTERNAL
 // email to the office mailbox; deliberately NO customer email in this phase.
 // ============================================================================
+// POST /api/generator-care/tech/my-visits/:id/eta
+// Body: { kind: 'on_my_way' | 'running_late', eta_minutes? | eta_at?, reason? }
+// "On my way" / "Running late" texts to the customer for a visit assigned
+// to the calling tech and scheduled TODAY (lib/etaTexts.js owns the rules:
+// 7 AM allowance, office-mode exemption, consent still applies, running
+// late always alerts the office). A customer who can't be texted comes back
+// as can_text=false with the number to call - a 200, not an error, because
+// the tech needs the message, not a failure.
+router.post('/my-visits/:id/eta', sensitiveLimiter, async (req, res) => {
+  try {
+    const visit = await assignedVisit(req);
+    if (!visit) return res.status(403).json({ error: 'This visit is not assigned to you.' });
+    const b = req.body || {};
+    const r = await sendEtaText({ visitId: visit.id, kind: b.kind, etaAt: b.eta_at, etaMinutes: b.eta_minutes, reason: b.reason, sender: req.profile });
+    if (!r.ok) return res.status(r.httpStatus || 400).json({ error: r.error });
+    res.json(r);
+  } catch (err) {
+    console.error('[generator-tech] eta error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: 'POST', user: req.user && req.user.id }).catch(() => {});
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.post('/my-visits/:id/schedule', sensitiveLimiter, requirePermission('tech_reschedule'), async (req, res) => {
   try {
     const { appointment_at, arrival_window } = req.body || {};

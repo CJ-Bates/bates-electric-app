@@ -8,6 +8,7 @@ const { requirePermission } = require('../../middleware/permissions');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { completeServiceVisit } = require('../../lib/completeVisit');
 const { scheduleServiceVisit } = require('../../lib/scheduleVisit');
+const { sendEtaText } = require('../../lib/etaTexts');
 const { arrivalWindow, arrivalWindowLabel } = require('../../lib/generator-catalog');
 const { sendEmail, buildVisitScheduledEmail, DASHBOARD_URL } = require('../../lib/emails');
 const { sendSms, buildBookingConfirmationSms, SMS_TERMINAL_STATUSES } = require('../../lib/sms');
@@ -67,6 +68,47 @@ router.post('/visits/:id/complete', async (req, res) => {
 // intended seam for a future SMS confirmation/reminder (NOT built here).
 // Office-gated; the actor is recorded (not hard-coded), so a future
 // field-tech role could reuse this endpoint without a rewrite.
+// POST /api/generator-care/visits/:id/eta  { kind, eta_minutes? | eta_at?, reason? }
+// The office's twin of the tech's ETA buttons (same lib, same rules), for a
+// visit scheduled today. The text reads as the ASSIGNED tech ("Jacob is on
+// the way"); the office member is recorded as the sender. Coarse office
+// gate on purpose (allowlisted in check-gc-permissions): an operational
+// customer text about today's visit, no money, no data exposed.
+router.post('/visits/:id/eta', sensitiveLimiter, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await sendEtaText({ visitId: req.params.id, kind: b.kind, etaAt: b.eta_at, etaMinutes: b.eta_minutes, reason: b.reason, sender: req.profile });
+    if (!r.ok) return res.status(r.httpStatus || 400).json({ error: r.error });
+    res.json(r);
+  } catch (err) {
+    console.error('[generator-care] visit eta error:', err && err.message);
+    reportError(err, { route: req.originalUrl, method: 'POST', user: req.user && req.user.id }).catch(() => {});
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/generator-care/visits/:id/phone-confirmed
+// "Mark confirmed (by phone)": the office-side twin of the customer's Y
+// (sql/038). Clears the "Not confirmed - call to confirm" prompt. No text.
+// Rebooking clears it (lib/scheduleVisit.js), like sms_confirmed_at.
+router.post('/visits/:id/phone-confirmed', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('generator_service_visits')
+      .update({ phone_confirmed_at: new Date().toISOString(), phone_confirmed_by: req.profile.id })
+      .eq('id', req.params.id)
+      .eq('status', 'scheduled')
+      .select('id, phone_confirmed_at, phone_confirmed_by')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Only a scheduled visit can be confirmed.' });
+    res.json({ ok: true, visit: data });
+  } catch (err) {
+    console.error('[generator-care] phone-confirmed error:', err && err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.post('/visits/:id/schedule', sensitiveLimiter, async (req, res) => {
   try {
     const { id } = req.params;
