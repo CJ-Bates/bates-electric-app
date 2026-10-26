@@ -22,8 +22,18 @@
 //               platform already sends its own STOP confirmation + blocks).
 //   START    -> re-arm consent flags (platform handles the re-subscribe).
 //   HELP     -> log only (platform auto-replies).
-//   anything else -> reschedule intent: reply copy (5) with the dashboard
-//               link and email the office. NEVER auto-change the appointment.
+//   N / NO (whole message) or a clear reschedule phrase ("reschedule",
+//            "change the time", "different day", "can't make it", "cancel my
+//            appointment"...) -> reply copy (5) with the dashboard link and
+//            email the office. NEVER auto-change the appointment.
+//   anything else (free text: a complaint, a question, "No one has shown
+//            up") -> ONE short holding reply (copy 5b, no link) and an
+//            office alert. If the customer has a visit TODAY the alert is
+//            marked URGENT with the visit time, tech, and message.
+//   Loop guard: at most one automated reply per phone per 30 minutes; later
+//   texts in that window only alert the office. (2026-10-26: a customer whose
+//   tech was late texted three complaints and got the reschedule link three
+//   times, which read as "we're treating this as a cancellation".)
 //
 // This is a SHARED account with the service team: an inbound from a number
 // with no Generator Care consent row is somebody else's conversation — log it
@@ -38,13 +48,19 @@ const {
   normalizePhone,
   buildConfirmedReplySms,
   buildRescheduleReplySms,
+  buildHoldingReplySms,
   sendSms,
   logSmsMessage,
   optOutPhone,
 } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
+const { arrivalWindowLabel } = require('../lib/generator-catalog');
 
 const router = express.Router();
+
+// One automated reply per phone per this window; further texts inside it
+// only alert the office. Test seam via env.
+const AUTO_REPLY_WINDOW_MS = Number(process.env.SMS_AUTO_REPLY_WINDOW_MS) || 30 * 60 * 1000;
 
 const OFFICE_NOTIFY_TO = (process.env.GENERATOR_DIGEST_TO || 'cjbates@bates-electric.com,generators@bates-electric.com')
   .split(',').map((s) => s.trim()).filter(Boolean);
@@ -89,6 +105,26 @@ function verifySecret(req, res) {
 
 // Reply classification. Uppercase, strip surrounding punctuation/whitespace.
 // Exported for tests via _test below.
+//   'confirm'    Y / YES as the whole message
+//   'stop' / 'start' / 'help'  carrier keywords as the whole message (a bare
+//                CANCEL is a carrier opt-out keyword the platform acts on
+//                regardless of us, so it stays in this group)
+//   'reschedule' N / NO as the whole message, or a clear reschedule phrase
+//                that is not negated ("I did not cancel" is NOT a request)
+//   'other'      everything else = free text for a human
+//   'empty'      nothing to act on
+const RESCHEDULE_PHRASES = [
+  /\bRE-?SCHEDULE/,
+  /\bCHANGE\b/,                                   // "can I change the time"
+  /\b(DIFFERENT|ANOTHER|NEW|LATER|EARLIER)\s+(TIME|DAY|DATE|SLOT|APPOINTMENT|WEEK)\b/,
+  /\b(CAN'?T|CANNOT|CAN NOT|WON'?T BE ABLE TO|UNABLE TO|NOT ABLE TO)\s+(MAKE|DO)\b/, // "can't make it"
+  /\bCANCEL/,                                     // "cancel my appointment" (negation checked below)
+  /\b(MOVE|PUSH|BUMP)\s+(IT|THE|MY|THAT|THIS|OUR)\b/, // "move it to Friday"
+  /\bINSTEAD\b/,
+  /\bPOSTPONE/,
+];
+// A keyword right after a negation is a denial, not a request.
+const NEGATED_PHRASE = /\b(NOT|NEVER|DIDN'?T|DID NOT|DON'?T|DO NOT|HAVEN'?T|HAVE NOT|WASN'?T|WAS NOT|NO ONE|NOBODY)\s+(WANT(ED)? TO\s+|TRY(ING)? TO\s+|ASK(ED)? TO\s+|NEED TO\s+)?(RE-?SCHEDULE|CHANGE|CANCEL|MOVE|POSTPONE)/;
 function classifyReply(text) {
   const t = String(text || '').trim().toUpperCase().replace(/[.!?,\s]+$/g, '').replace(/^[\s]+/g, '');
   if (!t) return 'empty';
@@ -98,7 +134,115 @@ function classifyReply(text) {
   if (/^(STOP|STOPALL|UNSUBSCRIBE|CANCEL|END|QUIT)$/.test(t)) return 'stop';
   if (/^(START|UNSTOP|YES SUBSCRIBE)$/.test(t)) return 'start';
   if (/^(HELP|INFO)$/.test(t)) return 'help';
+  if (/^(N|NO|NOPE)$/.test(t)) return 'reschedule';
+  if (NEGATED_PHRASE.test(t)) return 'other';
+  if (RESCHEDULE_PHRASES.some((re) => re.test(t))) return 'reschedule';
   return 'other';
+}
+
+// Loop guard: has an AUTOMATED text (not an operator reply) gone to this phone
+// inside the window? Read from the message log; fails open on a lookup error
+// (one extra reply beats a silent customer).
+async function recentAutoReplyAt(e164, now) {
+  const since = new Date((now || Date.now()) - AUTO_REPLY_WINDOW_MS).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from('generator_sms_messages')
+    .select('created_at, body')
+    .eq('direction', 'out')
+    .eq('to_phone', e164)
+    .eq('status', 'sent')
+    .is('sent_by_profile_id', null)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return (data && data[0] && data[0].created_at) || null;
+}
+
+// Central-time calendar date ('YYYY-MM-DD') of an instant.
+function centralDate(d) {
+  return new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+}
+function centralTime(d) {
+  return new Date(d).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
+}
+
+// The customer's scheduled visit TODAY (Central), if any, with the assigned
+// tech's name — what makes a free-text reply urgent. Never throws.
+async function findVisitToday(customerIds, now) {
+  try {
+    const { data: subs, error: subErr } = await supabaseAdmin
+      .from('generator_subscriptions').select('id').in('customer_id', customerIds);
+    if (subErr) throw subErr;
+    const subIds = (subs || []).map((s) => s.id);
+    if (!subIds.length) return null;
+    const t = now || Date.now();
+    const { data: visits, error: vErr } = await supabaseAdmin
+      .from('generator_service_visits')
+      .select('id, subscription_id, appointment_at, arrival_window, status, technician_id')
+      .in('subscription_id', subIds)
+      .eq('status', 'scheduled')
+      .not('appointment_at', 'is', null)
+      .gte('appointment_at', new Date(t - 36 * 3600 * 1000).toISOString())
+      .lte('appointment_at', new Date(t + 36 * 3600 * 1000).toISOString())
+      .order('appointment_at', { ascending: true });
+    if (vErr) throw vErr;
+    const today = centralDate(t);
+    const visit = (visits || []).find((v) => v.appointment_at && centralDate(v.appointment_at) === today) || null;
+    if (!visit) return null;
+    let techName = null;
+    if (visit.technician_id) {
+      try {
+        const { data: tech } = await supabaseAdmin
+          .from('profiles').select('full_name, email').eq('id', visit.technician_id).maybeSingle();
+        techName = (tech && (tech.full_name || tech.email)) || null;
+      } catch (e) { /* name is a nicety */ }
+    }
+    const windowLabel = arrivalWindowLabel(visit.arrival_window);
+    return {
+      id: visit.id,
+      whenLabel: 'today ' + (windowLabel || centralTime(visit.appointment_at)),
+      techName: techName || 'unassigned',
+    };
+  } catch (e) {
+    console.error('[sms-inbound] visit-today lookup failed:', e && e.message);
+    return null;
+  }
+}
+
+// Office alert for a text that needs a human. `urgent` (visit today) goes out
+// with the visit time + tech in the subject line so it can't be skimmed past.
+// `urgent` = visit today AND this is the first text in the auto-reply window;
+// follow-ups in the same window still name the visit but go out plain so the
+// inbox shows one URGENT per incident, not one per message.
+function sendOfficeAlert({ customer, e164, text, intent, replied, visitToday, urgent }) {
+  const name = (customer && customer.name) || e164;
+  const msg = String(text || '').slice(0, 500);
+  const what = intent === 'reschedule'
+    ? (replied ? 'They were sent the reschedule link.' : 'Reschedule link NOT re-sent (one automated reply per 30 min).')
+    : (replied ? 'They were sent the holding reply ("someone will reach out shortly").' : 'No automated reply (one per 30 min already sent); they are waiting to hear from a person.');
+  const lines = [
+    'Customer: ' + name + ' (' + e164 + ')',
+    'Message: "' + msg + '"',
+  ];
+  if (visitToday) {
+    lines.push('Visit: ' + visitToday.whenLabel + ' - assigned tech: ' + visitToday.techName);
+  }
+  lines.push(what + ' No appointment was changed.');
+  const subject = urgent
+    ? 'URGENT: customer texted on visit day - ' + name + ' (' + visitToday.whenLabel + ', ' + visitToday.techName + ')'
+    : '[Generator Care] Text reply needs a look' + (visitToday ? ' (visit today)' : '') + ': ' + name;
+  const html = '<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;">' +
+    (urgent ? '<p style="color:#B91C1C;font-weight:700;margin:0 0 8px;">URGENT - this customer has a visit today.</p>' : '') +
+    lines.map((l) => '<p style="margin:0 0 6px;">' + escHtml(l) + '</p>').join('') + '</div>';
+  return sendEmail({
+    to: OFFICE_NOTIFY_TO,
+    subject,
+    html,
+    text: (urgent ? 'URGENT - this customer has a visit today.\n' : '') + lines.join('\n'),
+    logTag: '[sms-inbound-office-email]',
+    log: { customerId: (customer && customer.id) || null },
+  }).catch((e) => console.error('[sms-inbound-office-email] unexpected:', e && e.message));
 }
 
 // Consent rows for a phone, with the customer joined (name/state for replies
@@ -236,27 +380,35 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
     return;
   }
 
-  // Anything else = reschedule intent: point them at the dashboard slot
-  // picker and flag the office. The appointment itself is NEVER auto-changed.
-  await sendSms({
-    toPhone: e164,
-    body: buildRescheduleReplySms({
-      installState: customer && customer.install_state,
-      link: DASHBOARD_URL,
-    }),
-    customerId: (customer && customer.id) || null,
-    ignoreQuietHours: true,
-  });
-  const name = (customer && customer.name) || e164;
-  const line = 'Text reply from ' + name + ' (' + e164 + '): "' + String(text || '').slice(0, 500) + '" - they were sent the reschedule link; no appointment was changed.';
-  sendEmail({
-    to: OFFICE_NOTIFY_TO,
-    subject: '[Generator Care] Text reply needs a look: ' + name,
-    html: '<p style="font-family:system-ui,sans-serif;font-size:14px;">' + escHtml(line) + '</p>',
-    text: line,
-    logTag: '[sms-inbound-office-email]',
-    log: { customerId: (customer && customer.id) || null },
-  }).catch((e) => console.error('[sms-inbound-office-email] unexpected:', e && e.message));
+  // 'reschedule' or 'other' (free text). Both: NEVER auto-change the
+  // appointment, always tell the office. The automated reply differs — the
+  // dashboard link only for a clear reschedule request, a short holding
+  // line for anything else — and is capped at one per 30 minutes per phone.
+  const now = Date.now();
+  let recentAt = null;
+  try {
+    recentAt = await recentAutoReplyAt(e164, now);
+  } catch (e) {
+    console.error('[sms-inbound] auto-reply window lookup failed (replying anyway):', e && e.message);
+  }
+  let replied = false;
+  if (recentAt) {
+    console.log('[sms-inbound] automated reply to ' + e164 + ' already sent at ' + recentAt + ' - alerting office only');
+  } else {
+    const body = intent === 'reschedule'
+      ? buildRescheduleReplySms({ installState: customer && customer.install_state, link: DASHBOARD_URL })
+      : buildHoldingReplySms({ installState: customer && customer.install_state });
+    const r = await sendSms({
+      toPhone: e164,
+      body,
+      customerId: (customer && customer.id) || null,
+      ignoreQuietHours: true,
+    });
+    replied = !!(r && r.sent);
+  }
+
+  const visitToday = await findVisitToday(customerIds, now);
+  await sendOfficeAlert({ customer, e164, text, intent, replied, visitToday, urgent: !!(visitToday && !recentAt) });
 }
 
 // POST — v2 "supercharged" webhook JSON.
@@ -305,4 +457,4 @@ router.get('/inbound', inboundLimiter, async (req, res) => {
 
 module.exports = router;
 // Test seam only (offline unit tests) — server.js mounts the router.
-module.exports._test = { classifyReply, handleInbound, findVisitToConfirm };
+module.exports._test = { classifyReply, handleInbound, findVisitToConfirm, findVisitToday, recentAutoReplyAt };
