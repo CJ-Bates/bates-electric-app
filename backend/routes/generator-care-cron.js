@@ -14,6 +14,7 @@ const {
 } = require('../lib/sms');
 const { DASHBOARD_URL } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
+const { sweepOwnerAlerts, listNeedingReplyForDigest, TEXTS_TAB_URL } = require('../lib/smsConversations');
 
 const router = express.Router();
 
@@ -153,16 +154,26 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
     const pastDue = pastDueR.data || [];
     const failedTotal = failedAddons.length + failedAdhoc.length;
 
+    // Texts a person still has to answer (customer texted, nothing has
+    // answered for 2+ hours - sql/037). Its own try/catch: the inbox tables
+    // must never be able to take the digest down.
+    let textsNeedingReply = [];
+    try {
+      textsNeedingReply = await listNeedingReplyForDigest({ now: new Date() });
+    } catch (e) {
+      console.error('[gc-cron] texts-needing-reply lookup failed (digest continues):', e && e.message);
+    }
+
     // The digest must go out EVERY day. Amy's runbook treats a missing email as
     // an outage signal, so on a genuinely quiet day we still send — just a short
     // "all quiet" note instead of suppressing the email entirely. overdue here
     // is the WHOLE passed-due set (needsScheduling + awaiting), so a day with
     // only awaiting-completion items still sends a full digest.
-    const isQuiet = overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0;
+    const isQuiet = overdue.length === 0 && upcoming.length === 0 && failedTotal === 0 && pastDue.length === 0 && textsNeedingReply.length === 0;
 
     const { subject, html, text } = isQuiet
       ? buildQuietEmail({ todayStr })
-      : buildEmail({ needsScheduling, awaiting, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, todayStr });
+      : buildEmail({ needsScheduling, awaiting, upcoming, upcomingTentative, upcomingConfirmed, bookedBySubId, failedAddons, failedAdhoc, pastDue, textsNeedingReply, todayStr });
 
  // Send via Brevo. A missing BREVO_API_KEY or a provider error throws below ->
  // caught -> 500 + Healthchecks '/fail' ping, so we hear about it.
@@ -180,7 +191,7 @@ router.post('/daily-email', requireCronSecret, async (req, res) => {
  // Digest sent successfully -- signal the dead-man's switch.
  pingHealthcheck();
 
- res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, needs_scheduling: needsScheduling.length, awaiting_completion: awaiting.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length });
+ res.json({ ok: true, sent: true, quiet: isQuiet, recipients: TO_EMAILS, overdue: overdue.length, needs_scheduling: needsScheduling.length, awaiting_completion: awaiting.length, upcoming: upcoming.length, upcoming_tentative: upcomingTentative.length, upcoming_confirmed: upcomingConfirmed.length, failed_addons: failedAddons.length, failed_adhoc: failedAdhoc.length, past_due: pastDue.length, texts_needing_reply: textsNeedingReply.length });
  } catch (err) {
  // Signal failure to Healthchecks first so we hear about a crashed cron.
  pingHealthcheck('/fail');
@@ -629,13 +640,18 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     const now = new Date();
     const todayCentral = centralDateStr(now);
 
+    // Office-mode owner alerts (sql/037) are EMAILS, not texts, so they run
+    // before the quiet-hours / kill-switch guards: this is the durable
+    // backstop for the in-process 10-minute timer (lost on a restart).
+    const ownerAlerts = await sweepOwnerAlerts({ now });
+
     // Hourly-trigger guards. Outside quiet hours nothing may send — skip
     // outright rather than write an hourly quiet_hours refusal row for
     // every owed message; the debts (queue marks) already exist and the
     // first in-window run drains them. (Booking-time attempts still log
     // their refusal rows — the would-have-sent trail lives there.)
     if (!withinQuietHours(now)) {
-      return res.json({ ok: true, date: todayCentral, skipped: 'outside_quiet_hours' });
+      return res.json({ ok: true, date: todayCentral, skipped: 'outside_quiet_hours', owner_alerts: ownerAlerts });
     }
     // Kill-switch off: nothing may send either, but the day's reminder
     // debts must still be RECORDED — the date-anchored passes can't select
@@ -652,7 +668,7 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
       const dayOfQueued = await runReminderPass({
         targetDateStr: todayCentral, stampColumn: 'sms_reminder_dayof_at', queueColumn: 'sms_reminder_dayof_queued_at', isToday: true, queueOnly: true, now,
       });
-      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, day_of_queued: dayOfQueued });
+      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, day_of_queued: dayOfQueued, owner_alerts: ownerAlerts });
     }
 
     // Confirmations first (a booking's "it's set" should precede any
@@ -671,7 +687,7 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     res.json({
       ok: true, date: todayCentral, three_day: threeDay, day_of: dayOf,
       three_day_retry: threeDayRetry, day_of_retry: dayOfRetry,
-      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry,
+      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry, owner_alerts: ownerAlerts,
     });
   } catch (err) {
     console.error('[gc-cron] sms-reminders error:', err && err.message);
@@ -727,7 +743,27 @@ function buildSubject({ pastDueCount = 0, failedCount = 0, needsSchedulingCount 
   return 'Generator Care: ' + parts.join(', ');
 }
 
-function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], todayStr }) {
+// Digest line per conversation that still needs a human answer (sql/037).
+function textsReplyLine(t) {
+  const name = (t.customer && t.customer.name) || t.phone || 'Unknown';
+  const since = t.needs_reply_since ? new Date(t.needs_reply_since).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const who = t.mode === 'office' && t.owner ? ' - ' + (t.owner.full_name || t.owner.email) + ' has it' : ' - automated (no owner)';
+  return `${name} (${t.phone || ''}) - waiting since ${since}${who}`;
+}
+
+function renderTextsNeedingReplySection(items) {
+  if (!items || !items.length) return '';
+  const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const rows = items.map((t) => `<li style="margin:0 0 4px;">${esc(textsReplyLine(t))}</li>`).join('');
+  return `<div style="margin:18px 0 6px;padding:12px 14px;border-left:4px solid #7c3aed;background:#f5f3ff;border-radius:4px;">
+ <div style="font-weight:700;color:#5b21b6;font-size:14px;margin-bottom:6px;">Texts needing a reply (${items.length})</div>
+ <div style="color:#4b5563;font-size:12px;margin-bottom:8px;">A customer texted and nothing has answered for 2+ hours.</div>
+ <ul style="margin:0;padding-left:18px;color:#374151;font-size:13px;line-height:1.5;">${rows}</ul>
+ <p style="margin:8px 0 0;font-size:12px;"><a href="${TEXTS_TAB_URL}" style="color:#5b21b6;">Open the Texts inbox</a></p>
+ </div>`;
+}
+
+function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTentative = [], upcomingConfirmed = [], bookedBySubId = {}, failedAddons = [], failedAdhoc = [], pastDue = [], textsNeedingReply = [], todayStr }) {
  const total = needsScheduling.length + awaiting.length + upcoming.length;
  const subject = buildSubject({
    pastDueCount: pastDue.length,
@@ -893,6 +929,7 @@ function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTen
  ${awaiting.length ? `<span style="color:#b45309;font-weight:600;">${awaiting.length} awaiting completion.</span>` : ''}
  </p>
  ${renderPastDueSection(pastDue)}
+ ${renderTextsNeedingReplySection(textsNeedingReply)}
  ${section('Overdue - needs scheduling', needsScheduling, '#b91c1c', 'needs_scheduling')}
  ${section('Awaiting completion', awaiting, '#b45309', 'awaiting')}
           ${awaiting.length ? `<p style="margin:6px 0 14px;color:#6b7280;font-size:12px;line-height:1.5;">These had a visit on the books when the due date passed. If the visit already happened, mark it complete in the dashboard &mdash; that clears it and advances the next due date.</p>` : ''}
@@ -927,6 +964,14 @@ function buildEmail({ needsScheduling = [], awaiting = [], upcoming, upcomingTen
  const c = s.customer || {};
  textLines.push(`- ${c.name}  -  ${genClassLabel(s.gen_class)} ${s.gen_model || ''}  -  ${planLabel(s.plan)}  -  ${c.phone || c.email || ''}`);
  }
+ }
+ if (textsNeedingReply.length) {
+ textLines.push('');
+ textLines.push(`TEXTS NEEDING A REPLY (${textsNeedingReply.length}) - customer texted, nothing has answered for 2+ hours:`);
+ for (const t of textsNeedingReply) {
+ textLines.push(`- ${textsReplyLine(t)}`);
+ }
+ textLines.push(`  Open the Texts inbox: ${TEXTS_TAB_URL}`);
  }
  if (needsScheduling.length) {
  textLines.push('');
@@ -1040,6 +1085,28 @@ function escapeHtml(s) {
 }
 
 module.exports = router;
+// Held-text sweep after a hand-back (routes/generator-care/texts.js): the
+// four retry passes, exactly as the hourly trigger runs them, so a text held
+// during office mode goes out now if still relevant or is stale-dropped on
+// record. Guarded like the endpoint: outside quiet hours or with the
+// kill-switch off nothing is attempted (the hourly run will). Never throws.
+async function runHeldSweep({ now } = {}) {
+  const t = now || new Date();
+  if (!withinQuietHours(t) || !smsEnabled()) return { skipped: !smsEnabled() ? 'sms_disabled' : 'outside_quiet_hours' };
+  try {
+    const bookingConfirm = await runBookingConfirmRetryPass({ now: t });
+    const threeDay = await runReminderRetryPass({ kind: '3day', now: t });
+    const dayOf = await runReminderRetryPass({ kind: 'dayof', now: t });
+    const nudge = await runNudgeRetryPass({ now: t });
+    return { booking_confirm: bookingConfirm, three_day: threeDay, day_of: dayOf, nudge };
+  } catch (e) {
+    console.error('[gc-cron] held sweep failed:', e && e.message);
+    reportError(e, { route: 'gc-cron runHeldSweep' }).catch(() => {});
+    return { error: e && e.message };
+  }
+}
+module.exports.runHeldSweep = runHeldSweep;
+
 // Offline-test seam (same pattern as generator-webhook.js) — lets the reminder
 // pass run with a pinned clock and mocked supabase, no HTTP/cron secret needed.
-module.exports._test = { runReminderPass, runNudgeRetryPass, runBookingConfirmRetryPass, runReminderRetryPass, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail };
+module.exports._test = { runReminderPass, runNudgeRetryPass, runBookingConfirmRetryPass, runReminderRetryPass, runHeldSweep, centralDateStr, addDays, REMINDER_TERMINAL_STATUSES, splitOverdue, buildSubject, buildEmail, textsReplyLine };

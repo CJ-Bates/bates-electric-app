@@ -29,6 +29,7 @@ router.use(require('./charges'));
 router.use(require('./accounting'));
 router.use(require('./metrics'));
 router.use(require('./techs'));
+router.use(require('./texts'));
 router.use(require('./admin'));
 
 module.exports = router;

@@ -9,7 +9,7 @@ matters and how the other GC surfaces (tech, customer, webhook) compare.
 ## Before you add or change a route here that touches money or customer data
 
 - [ ] Does it declare `requirePermission('<flag>')` (`accounting`, `refunds`,
-      `billing_actions`, `customer_edit`, `tech_manage`) for the specific
+      `billing_actions`, `customer_edit`, `tech_manage`, `texting`) for the specific
       action, not just relying on `requireRole('office')`? `requireRole` only
       proves the caller is *some* office account — every office member passes
       it regardless of their permission flags.

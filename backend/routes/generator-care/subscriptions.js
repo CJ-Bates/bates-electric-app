@@ -23,6 +23,7 @@ const {
   normalizePhone, recordConsent, sendSms, buildOptInConfirmationSms, upsertSimpleTextingContact, CONSENT_TEXT,
   withinQuietHours, operatorReplyEligibility, OPERATOR_REPLY_WINDOW_DAYS, smsUndeliverableSince,
 } = require('../../lib/sms');
+const { sendOperatorText } = require('../../lib/officeTexting');
 const planChange = require('../../lib/planChange');
 const { buildAddonMenu, openVisitIdFrom } = require('../../lib/addonMenu');
 // Tighter limiter for the money-moving + email-sending endpoints in this file.
@@ -541,11 +542,12 @@ router.get('/subscriptions/:id/sms-messages', async (req, res) => {
 // POST /api/generator-care/customers/:id/sms-reply { body }
 // An office user texts a customer from the thread in their record (two-way
 // SMS). Same transport and guard stack as every other send — lib/sms.js
-// sendSms — nothing here talks to SimpleTexting. Permission: customer_edit,
-// the flag that already governs the office's customer-communication action
-// on this record (recording SMS consent, editing contact details); no money
-// moves, and the customer is resolved from the URL id only — the phone comes
-// from their record, never the request.
+// sendSms — nothing here talks to SimpleTexting. Permission: `texting`
+// (sql/037), the one flag for texting customers from anywhere (this box and
+// the Texts inbox); no money moves, and the customer is resolved from the
+// URL id only — the phone comes from their record, never the request.
+// Shared path: lib/officeTexting.js sendOperatorText — sending from here
+// also TAKES OVER the conversation (office mode), exactly like the inbox.
 //
 // Consent (the legal surface — see lib/sms.js operatorReplyEligibility):
 //   opted_out                     -> 409 always; nothing overrides a STOP
@@ -557,21 +559,8 @@ router.get('/subscriptions/:id/sms-messages', async (req, res) => {
 // message to a consented customer who has NOT texted recently is a cold
 // send and stays inside 8am-9pm Central — sendSms refuses it as quiet_hours
 // and the row is logged like any other refusal.
-const OPERATOR_SMS_MAX_CHARS = 1000;
-const REPLY_BLOCKED_MESSAGE = {
-  opted_out: 'This customer has opted out of texts (STOP). Nothing can be sent to this number.',
-  no_consent_no_recent_inbound: 'No text consent on file and no text from this customer in the last ' + OPERATOR_REPLY_WINDOW_DAYS + ' days. Record consent to text them, or wait for them to text first.',
-  invalid_phone: 'No usable mobile number on file for this customer.',
-  undeliverable: 'Texts to this number are not deliverable. Check the phone number on the customer record.',
-};
-router.post('/customers/:id/sms-reply', sensitiveLimiter, requirePermission('customer_edit'), async (req, res) => {
+router.post('/customers/:id/sms-reply', sensitiveLimiter, requirePermission('texting'), async (req, res) => {
   try {
-    const text = String((req.body && req.body.body) || '').replace(/\r\n/g, '\n').trim();
-    if (!text) return res.status(400).json({ error: 'Type a message first.' });
-    if (text.length > OPERATOR_SMS_MAX_CHARS) {
-      return res.status(400).json({ error: 'Message is too long (max ' + OPERATOR_SMS_MAX_CHARS + ' characters).' });
-    }
-
     const { data: customer, error: custErr } = await supabaseAdmin
       .from('generator_customers')
       .select('id, phone')
@@ -580,32 +569,14 @@ router.post('/customers/:id/sms-reply', sensitiveLimiter, requirePermission('cus
     if (custErr) throw custErr;
     if (!customer) return res.status(404).json({ error: 'customer not found' });
 
-    const phone = normalizePhone(customer.phone);
-    const eligibility = await operatorReplyEligibility({ phone, customerId: customer.id });
-    if (!eligibility.allowed) {
-      return res.status(409).json({ error: REPLY_BLOCKED_MESSAGE[eligibility.reason] || 'Texting this customer is not allowed.', reason: eligibility.reason });
+    const r = await sendOperatorText({ customer, profileId: req.profile.id, text: req.body && req.body.body });
+    if (!r.ok) {
+      const out = { error: r.error };
+      if (r.reason) out.reason = r.reason;
+      if (r.status) out.status = r.status;
+      return res.status(r.httpStatus || 409).json(out);
     }
-
-    const result = await sendSms({
-      toPhone: phone,
-      body: text,
-      customerId: customer.id,
-      replyToInbound: true,
-      ignoreQuietHours: eligibility.recent_inbound, // active conversation only — never a cold send
-      sentBy: req.profile.id,
-    });
-    if (!result.sent) {
-      const why = {
-        opted_out: REPLY_BLOCKED_MESSAGE.opted_out,
-        no_consent: REPLY_BLOCKED_MESSAGE.no_consent_no_recent_inbound,
-        quiet_hours: 'Not sent: outside 8am-9pm Central and this customer has not texted recently. It was logged, not sent - try again after 8am.',
-        disabled: 'Not sent: texting is switched off (SMS_ENABLED). The message was logged.',
-        invalid_phone: REPLY_BLOCKED_MESSAGE.invalid_phone,
-        undeliverable: REPLY_BLOCKED_MESSAGE.undeliverable,
-      }[result.status] || ('Not sent: ' + (result.reason || result.status));
-      return res.status(409).json({ error: why, status: result.status });
-    }
-    res.json({ ok: true, status: result.status, basis: eligibility.reason });
+    res.json({ ok: true, status: r.status, basis: r.basis });
   } catch (err) {
     console.error('[generator-care] sms-reply error:', err);
     res.status(500).json({ error: 'Server error' });

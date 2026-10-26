@@ -49,6 +49,7 @@
   let metricsLoaded = false;
   let accountingLoaded = false;
   let leadsLoaded = false;
+  let textsLoaded = false;     // BatesTexts.init() ran
   let chartJsPromise = null;
 
   const techName = (id) => {
@@ -1651,6 +1652,7 @@
       case 'opted_out': return '<span class="badge badge-warn">Not sent &mdash; opted out</span>';
       case 'quiet_hours': return '<span class="badge badge-neutral">Skipped &mdash; quiet hours</span>';
       case 'stale': return '<span class="badge badge-neutral">Dropped &mdash; too late to send</span>';
+      case 'held': return '<span class="badge badge-info">Held &mdash; office has the conversation</span>';
       case 'disabled': return '<span class="badge badge-neutral">Logged &mdash; texting off</span>';
       default: return `<span class="badge badge-neutral">${escapeHtml(m.status || '')}</span>`;
     }
@@ -1753,6 +1755,7 @@
         <span class="gc-meta-label" id="gc-sms-reply-count"></span>
         <button type="button" class="btn btn-primary btn-sm" id="gc-sms-reply-send" disabled>Send text</button>
       </div>
+      <div class="gc-meta-label" style="margin-top:6px;">Sending takes over this customer&rsquo;s conversation: automated replies pause until it is handed back on the Texts tab or sits idle for a while.</div>
     </div>`;
   }
 
@@ -1910,9 +1913,13 @@
     }
     if (!userPerms.customer_edit) {
       drop('#gc-contact-edit-btn, #gc-generator-edit-btn, #gc-save-note-btn, #gc-next-visit-save, #gc-sms-consent-btn');
+    }
+    // Texting customers is its own flag (sql/037) - the same one that gates
+    // the Texts inbox, so one toggle governs texting everywhere.
+    if (userPerms.texting === false) {
       const replyBox = scope.querySelector('#gc-sms-reply-box');
       if (replyBox) {
-        replyBox.outerHTML = `<div class="gc-sms-reply gc-sms-reply-blocked"><span class="chip chip-neutral">Read only</span> <span class="gc-meta-label">Replying by text needs the customer-edit permission. Ask an administrator.</span></div>`;
+        replyBox.outerHTML = `<div class="gc-sms-reply gc-sms-reply-blocked"><span class="chip chip-neutral">Read only</span> <span class="gc-meta-label">Replying by text needs the texting permission. Ask an administrator.</span></div>`;
       }
     }
     if (!userPerms.tech_manage) {
@@ -2688,12 +2695,12 @@
   // BatesMetrics/BatesAccounting modules). The shared section switcher
   // renders all four as top-level tabs (shared-nav.js); hash changes swap
   // views without a reload.
-  const HASH_VIEWS = ['attention', 'customers', 'leads', 'metrics', 'accounting'];
+  const HASH_VIEWS = ['attention', 'customers', 'leads', 'texts', 'metrics', 'accounting'];
   function currentHashView() {
     const h = location.hash.slice(1);
     return HASH_VIEWS.includes(h) ? h : 'attention';
   }
-  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', leads: 'gc-leads', metrics: 'metrics', accounting: 'accounting' };
+  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', leads: 'gc-leads', texts: 'gc-texts', metrics: 'metrics', accounting: 'accounting' };
 
   // Chart.js is only needed by Metrics and costs ~200KB, so it's fetched from
   // the CDN on first activation of that tab rather than unconditionally in
@@ -2717,6 +2724,7 @@
     document.getElementById('attention-view').hidden = view !== 'attention';
     document.getElementById('customers-view').hidden = view !== 'customers';
     document.getElementById('leads-view').hidden = view !== 'leads';
+    document.getElementById('texts-view').hidden = view !== 'texts';
     document.getElementById('metrics-view').hidden = view !== 'metrics';
     document.getElementById('accounting-view').hidden = view !== 'accounting';
     // Chart.js's canvases keep whatever size they last measured while
@@ -2761,6 +2769,10 @@
       leadsLoaded = true;
       window.BatesLeads.init();
     }
+    if (view === 'texts' && !textsLoaded) {
+      textsLoaded = true;
+      if (window.BatesTexts) window.BatesTexts.init();
+    }
   }
   window.addEventListener('hashchange', () => showView(currentHashView()));
 
@@ -2772,6 +2784,8 @@
   // One early leads fetch so the "new leads" count shows on the section tab
   // without the tab being opened; BatesLeads.init() reuses the same data.
   if (window.BatesLeads) window.BatesLeads.prime();
+  // Texts: unread badge on the section tab from anywhere in Generator Care.
+  if (window.BatesTexts) window.BatesTexts.prime();
   showView(currentHashView());
 
   document.getElementById('refresh-btn').addEventListener('click', () => {
@@ -2779,6 +2793,7 @@
     if (view === 'metrics') { if (window.BatesMetrics) window.BatesMetrics.refresh(); return; }
     if (view === 'accounting') { if (window.BatesAccounting) window.BatesAccounting.refresh(); return; }
     if (view === 'leads') { if (window.BatesLeads) window.BatesLeads.refresh(); return; }
+    if (view === 'texts') { if (window.BatesTexts) window.BatesTexts.refresh(); return; }
     loadSubscriptions();
     loadBillingSnapshot();
   });
@@ -4047,4 +4062,8 @@
     }
   }
 
+
+  // Shared with texts.js (the Texts inbox): open a customer record, and the
+  // SAME segment counter + status chips so both threads read identically.
+  window.BatesGC = { showDetail, smsSegments, smsHistoryChip };
 })();

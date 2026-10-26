@@ -378,6 +378,7 @@ async function handleSubscriptionCreated(subscription) {
           body: buildOptInConfirmationSms({ installState: customer.install_state }),
           customerId: customer.id,
           ignoreQuietHours: true, // immediate ack of an action the customer just took
+          compliance: true,       // carrier-required disclosure: never held by office mode
         });
       }
     }

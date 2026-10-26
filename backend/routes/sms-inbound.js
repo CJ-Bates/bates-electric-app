@@ -35,6 +35,14 @@
 //   tech was late texted three complaints and got the reschedule link three
 //   times, which read as "we're treating this as a cancellation".)
 //
+//   Office mode (sql/037, lib/smsConversations.js): when a staff member owns
+//   the conversation, STOP/START/HELP still run and a Y still stamps the
+//   visit, but NO automated reply goes out (no holding reply, no reschedule
+//   link, no confirmation) - the owner answers. Alerts go to the owner only,
+//   ~10 minutes later if they still haven't replied; an URGENT visit-day
+//   text is the exception and emails the owner + the office list at once.
+//   The inbox's "Needs reply" flag is set for free text / reschedule intents.
+//
 // This is a SHARED account with the service team: an inbound from a number
 // with no Generator Care consent row is somebody else's conversation — log it
 // as unmatched and do nothing.
@@ -55,6 +63,9 @@ const {
 } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
+const {
+  ensureConversation, resolveMode, recordInbound, scheduleOwnerAlert,
+} = require('../lib/smsConversations');
 
 const router = express.Router();
 
@@ -215,12 +226,17 @@ async function findVisitToday(customerIds, now) {
 // `urgent` = visit today AND this is the first text in the auto-reply window;
 // follow-ups in the same window still name the visit but go out plain so the
 // inbox shows one URGENT per incident, not one per message.
-function sendOfficeAlert({ customer, e164, text, intent, replied, visitToday, urgent }) {
+// `officeOwner` (office mode): { name, email } of the member who owns the
+// conversation - the email goes to them (plus the list only when urgent) and
+// says so, because no automated reply went out.
+function sendOfficeAlert({ customer, e164, text, intent, replied, visitToday, urgent, officeOwner, to }) {
   const name = (customer && customer.name) || e164;
   const msg = String(text || '').slice(0, 500);
-  const what = intent === 'reschedule'
-    ? (replied ? 'They were sent the reschedule link.' : 'Reschedule link NOT re-sent (one automated reply per 30 min).')
-    : (replied ? 'They were sent the holding reply ("someone will reach out shortly").' : 'No automated reply (one per 30 min already sent); they are waiting to hear from a person.');
+  const what = officeOwner
+    ? 'Office mode: ' + (officeOwner.name || officeOwner.email || 'a staff member') + ' owns this conversation, so no automated reply went out - they are waiting on a person.'
+    : intent === 'reschedule'
+      ? (replied ? 'They were sent the reschedule link.' : 'Reschedule link NOT re-sent (one automated reply per 30 min).')
+      : (replied ? 'They were sent the holding reply ("someone will reach out shortly").' : 'No automated reply (one per 30 min already sent); they are waiting to hear from a person.');
   const lines = [
     'Customer: ' + name + ' (' + e164 + ')',
     'Message: "' + msg + '"',
@@ -236,7 +252,7 @@ function sendOfficeAlert({ customer, e164, text, intent, replied, visitToday, ur
     (urgent ? '<p style="color:#B91C1C;font-weight:700;margin:0 0 8px;">URGENT - this customer has a visit today.</p>' : '') +
     lines.map((l) => '<p style="margin:0 0 6px;">' + escHtml(l) + '</p>').join('') + '</div>';
   return sendEmail({
-    to: OFFICE_NOTIFY_TO,
+    to: (to && to.length) ? to : OFFICE_NOTIFY_TO,
     subject,
     html,
     text: (urgent ? 'URGENT - this customer has a visit today.\n' : '') + lines.join('\n'),
@@ -283,6 +299,32 @@ async function findVisitToConfirm(customerIds) {
   return (visits && visits[0]) || null;
 }
 
+// The customer's conversation row (created on first contact), with the idle
+// timeout already applied. Null when conversation state is unavailable
+// (migration pending / query failure) - the webhook then behaves exactly as
+// before the inbox existed. Never throws.
+async function loadConversation({ customerId, e164, now }) {
+  try {
+    const conv = await ensureConversation({ customerId, phone: e164, now });
+    return await resolveMode(conv, now);
+  } catch (e) {
+    console.error('[sms-inbound] conversation state unavailable (treating as auto):', e && e.message);
+    return null;
+  }
+}
+
+// Owner of an office-mode conversation, for the alert. Never throws.
+async function ownerInfo(conv) {
+  if (!conv || conv.mode !== 'office' || !conv.owner_profile_id) return null;
+  try {
+    const { data } = await supabaseAdmin
+      .from('profiles').select('full_name, email').eq('id', conv.owner_profile_id).maybeSingle();
+    return data ? { name: data.full_name || null, email: data.email || null } : { name: null, email: null };
+  } catch (e) {
+    return { name: null, email: null };
+  }
+}
+
 // Core inbound processing, shared by the POST (v2 JSON) and GET (classic
 // forwarding) shapes. Never throws — the webhook must always 200 so
 // SimpleTexting doesn't consider us broken.
@@ -313,6 +355,12 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
   const matched = matches[0] || null; // a phone is nearly always one customer
   const customer = matched && matched.customer;
   const intent = classifyReply(text);
+  const now = Date.now();
+
+  // Inbox state (sql/037). Only for OUR customers - unmatched numbers get no
+  // conversation row, exactly as before.
+  let conv = (matched && customer && customer.id) ? await loadConversation({ customerId: customer.id, e164, now }) : null;
+  const officeMode = !!(conv && conv.mode === 'office');
 
   await logSmsMessage({
     direction: 'in',
@@ -320,12 +368,24 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
     to_phone: normalizePhone(toPhone),
     body: String(text || '').slice(0, 1600),
     status: 'received',
-    detail: matched ? 'intent: ' + intent : 'unmatched number (no Generator Care consent row)',
+    detail: matched
+      ? 'intent: ' + intent + (officeMode ? '; office mode - no automated reply' : '')
+      : 'unmatched number (no Generator Care consent row)',
     customer_id: (customer && customer.id) || null,
   });
 
   // Not ours (shared account) — never reply to someone else's conversation.
   if (!matched) return;
+
+  // Every text from the customer is activity; a Y needs no human answer,
+  // free text and reschedule requests do. In office mode this also arms the
+  // deferred owner alert for anything a person would answer (STOP/START/HELP
+  // are carrier plumbing).
+  if (conv) {
+    const humanIntent = intent === 'confirm' || intent === 'reschedule' || intent === 'other';
+    conv = await recordInbound({ conv, needsReply: intent === 'reschedule' || intent === 'other', armOwnerAlert: humanIntent, now });
+    if (officeMode && humanIntent) scheduleOwnerAlert(conv);
+  }
 
   if (intent === 'stop') {
     await optOutPhone(e164);
@@ -365,6 +425,11 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
       console.error('[sms-inbound] confirm stamp failed:', confErr.message);
       return;
     }
+    if (officeMode) {
+      // The visit is confirmed; the owner sees the Y in the inbox and answers.
+      console.log('[sms-inbound] Y from ' + e164 + ' stamped visit ' + visit.id + ' - office mode, no automated reply');
+      return;
+    }
     await sendSms({
       toPhone: e164,
       body: buildConfirmedReplySms({
@@ -384,7 +449,23 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
   // appointment, always tell the office. The automated reply differs — the
   // dashboard link only for a clear reschedule request, a short holding
   // line for anything else — and is capped at one per 30 minutes per phone.
-  const now = Date.now();
+  //
+  // OFFICE MODE: no automated reply at all. The owner is alerted ~10 minutes
+  // later if they still haven't answered (recordInbound armed it above);
+  // only an URGENT visit-day text emails right away - owner + office list.
+  if (officeMode) {
+    const visitTodayNow = await findVisitToday(customerIds, now);
+    if (visitTodayNow) {
+      const owner = await ownerInfo(conv);
+      const to = [owner && owner.email].concat(OFFICE_NOTIFY_TO).filter(Boolean)
+        .filter((addr, i, all) => all.findIndex((a) => a.toLowerCase() === addr.toLowerCase()) === i);
+      await sendOfficeAlert({ customer, e164, text, intent, replied: false, visitToday: visitTodayNow, urgent: true, officeOwner: owner || { name: null, email: null }, to });
+    } else {
+      console.log('[sms-inbound] ' + intent + ' from ' + e164 + ' in office mode - no automated reply, owner alert deferred');
+    }
+    return;
+  }
+
   let recentAt = null;
   try {
     recentAt = await recentAutoReplyAt(e164, now);
@@ -457,4 +538,4 @@ router.get('/inbound', inboundLimiter, async (req, res) => {
 
 module.exports = router;
 // Test seam only (offline unit tests) — server.js mounts the router.
-module.exports._test = { classifyReply, handleInbound, findVisitToConfirm, findVisitToday, recentAutoReplyAt };
+module.exports._test = { classifyReply, handleInbound, findVisitToConfirm, findVisitToday, recentAutoReplyAt, loadConversation };

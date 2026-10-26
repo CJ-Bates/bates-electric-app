@@ -15,7 +15,8 @@
 
 const { supabaseAdmin } = require('../lib/supabase');
 
-const OFFICE_FLAGS = ['accounting', 'refunds', 'billing_actions', 'customer_edit', 'tech_manage'];
+// `texting` (sql/037): the Texts inbox + sending texts to customers.
+const OFFICE_FLAGS = ['accounting', 'refunds', 'billing_actions', 'customer_edit', 'tech_manage', 'texting'];
 const TECH_FLAGS = ['tech_reschedule'];
 const ALL_FLAGS = OFFICE_FLAGS.concat(TECH_FLAGS);
 
