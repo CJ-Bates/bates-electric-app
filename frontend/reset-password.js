@@ -3,7 +3,26 @@
     ? 'http://localhost:4000'
     : 'https://bates-electric-app.onrender.com';
 
-  // Parse Supabase's recovery hash: #access_token=...&type=recovery&...
+  // The page MUST never sit on "Checking your link" indefinitely. Three
+  // independent guards make that true:
+  //   1. the verify request is aborted after VERIFY_TIMEOUT_MS and the page
+  //      says so (with Try again + Send me a new link);
+  //   2. any exception on this page flips it to an error state with a way out
+  //      (init is wrapped, plus a window 'error' listener);
+  //   3. an inline ES5 watchdog in reset-password.html covers the case where
+  //      THIS script never ran at all (blocked, failed to parse in an old
+  //      in-app browser, cached stale). It stands down once we set
+  //      window.__resetPageInitDone below.
+  // window.__RESET_VERIFY_TIMEOUT_MS is a test seam only.
+  const VERIFY_TIMEOUT_MS = Number(window.__RESET_VERIFY_TIMEOUT_MS) || 12000;
+
+  // Supabase OTP types our backend will verify a token_hash against. Our own
+  // invite/resend/forgot emails always send type=recovery; the others are
+  // accepted so a Supabase-template link (if one is ever used) still works.
+  const TOKEN_TYPES = ['recovery', 'invite', 'magiclink', 'signup', 'email'];
+
+  // Parse a Supabase-style fragment: #access_token=...&type=recovery&... or
+  // #error=...&error_description=...
   function parseHash() {
     const hash = (window.location.hash || '').replace(/^#/, '');
     const params = new URLSearchParams(hash);
@@ -11,7 +30,7 @@
       access_token: params.get('access_token') || '',
       refresh_token: params.get('refresh_token') || '',
       type: params.get('type') || '',
-      error: params.get('error_description') || params.get('error') || '',
+      error: params.get('error_description') || params.get('error_code') || params.get('error') || '',
     };
   }
 
@@ -23,7 +42,7 @@
       const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
       const padded = b64 + '==='.slice((b64.length + 3) % 4);
       return JSON.parse(atob(padded));
-    } catch {
+    } catch (e) {
       return null;
     }
   }
@@ -51,38 +70,78 @@
   // Copy for the takeover state. `expired` is the common case (Supabase
   // recovery links are single-use and short-lived); the others are rarer
   // but must not be mislabelled as "expired" — a network blip is not a dead link.
+  //   resend: show the "Send me a new link" form
+  //   retry:  show the "Try again" button (re-runs the same check)
+  const SECS = Math.round(VERIFY_TIMEOUT_MS / 1000);
   const DEAD_COPY = {
     expired: {
       tagline: 'This link can’t be used',
-      title: 'This link has expired',
+      title: 'This link has expired or was already used',
       body: 'Set-password links only work once and for a short time after they’re sent. '
-        + 'This one has expired or was already used, so it can’t be used to set a password.',
-      resend: true,
+        + 'If you were sent more than one, only the newest one works. Request a fresh link below '
+        + 'and open it as soon as it arrives.',
+      resend: true, retry: false,
     },
     missing: {
       tagline: 'This link can’t be used',
       title: 'This isn’t a complete link',
       body: 'This page opened without a valid set-password link. Open the link from your email '
         + 'directly (tap the button in the email rather than copying part of it), or request a fresh one below.',
-      resend: true,
+      resend: true, retry: false,
     },
     busy: {
       tagline: 'Please wait a moment',
       title: 'Too many attempts',
       body: 'This link has been checked too many times in a short period. Wait a few minutes, then try again. '
         + 'The link itself may still be fine.',
-      resend: false,
+      resend: false, retry: true,
     },
     network: {
       tagline: 'Couldn’t reach the server',
       title: 'Couldn’t check your link',
       body: 'We couldn’t reach the server to check this link. Make sure you’re online and try again. '
-        + 'The link itself may still be fine.',
-      resend: false,
+        + 'If it keeps happening, request a fresh link below.',
+      resend: true, retry: true,
+    },
+    timeout: {
+      tagline: 'This is taking too long',
+      title: 'The server didn’t answer in time',
+      body: 'We waited ' + SECS + ' seconds and got no reply while checking your link. '
+        + 'Try again, or request a fresh link below. If your connection is poor, try on Wi-Fi.',
+      resend: true, retry: true,
+    },
+    error: {
+      tagline: 'Something went wrong',
+      title: 'This page hit a problem',
+      body: 'Something on this page didn’t work. Try again, or open the link in your phone’s regular '
+        + 'browser (Safari or Chrome) instead of the email app. You can also request a fresh link below.',
+      resend: true, retry: true,
     },
   };
 
+  // Last-resort takeover used when init itself blew up (so the normal state
+  // functions may not exist). Touches only elements that are present.
+  function failSafe(kind) {
+    const copy = DEAD_COPY[kind] || DEAD_COPY.error;
+    const byId = (id) => document.getElementById(id);
+    const checking = byId('link-checking');
+    const form = byId('reset-form');
+    const dead = byId('link-dead');
+    const title = byId('link-dead-title');
+    const body = byId('link-dead-body');
+    const tagline = byId('reset-tagline');
+    if (checking) checking.hidden = true;
+    if (form) form.hidden = true;
+    if (title) title.textContent = copy.title;
+    if (body) body.textContent = copy.body;
+    if (tagline) tagline.textContent = copy.tagline;
+    if (dead) { dead.hidden = false; dead.dataset.kind = kind; }
+  }
+
   function init() {
+    // Tell the inline watchdog (reset-password.html) this script is alive.
+    window.__resetPageInitDone = true;
+
     const tagline = document.getElementById('reset-tagline');
     const emailInput = document.getElementById('reset-email');
     const newInput = document.getElementById('reset-new');
@@ -148,6 +207,7 @@
     let state = 'checking';
     // Remembered so a "Try again" after a network failure can re-run the check.
     let pendingTokenHash = '';
+    let pendingTokenType = 'recovery';
 
     // The password fields + submit are disabled in the markup and only enabled
     // here, once a token is actually in hand. Every other state re-disables
@@ -200,10 +260,10 @@
       deadTitle.textContent = copy.title;
       deadBody.textContent = copy.body;
       deadEl.dataset.kind = kind;
-      retryBtn.hidden = copy.resend;
+      retryBtn.hidden = !(copy.retry && pendingTokenHash);
       resendForm.hidden = !copy.resend;
-      // "Ask the office to resend" only makes sense when the link is dead,
-      // not when we simply couldn't reach the server.
+      // "Ask the office to resend" only makes sense when a new link is the
+      // way out, not when we simply couldn't reach the server.
       const foot = deadEl.querySelector('.link-panel-foot');
       if (foot) foot.hidden = !copy.resend;
       if (emailHint && resendEmail && !resendEmail.value) resendEmail.value = emailHint;
@@ -222,6 +282,15 @@
       tagline.textContent = 'You’re all set';
       showPanel('success');
     }
+
+    // Any uncaught error while we're still checking must not leave the
+    // spinner up. (Errors after that point are surfaced by their own handlers.)
+    window.addEventListener('error', () => {
+      if (state === 'checking') showDead('error');
+    });
+    window.addEventListener('unhandledrejection', () => {
+      if (state === 'checking') showDead('error');
+    });
 
     // ---- Set password -----------------------------------------------------
     form.addEventListener('submit', async (e) => {
@@ -343,7 +412,7 @@
         showMsg(
           resendMsg,
           `If an account exists for ${email}, a new link is on its way. Check your inbox (and spam folder) `
-            + 'and open it right away — it expires.',
+            + 'and open it right away — it expires, and it replaces any older link.',
           'success'
         );
       } catch (err) {
@@ -354,18 +423,36 @@
 
     // ---- Verify the link ----------------------------------------------------
     // Modern links: ?token_hash=...&type=recovery — exchange the token hash
-    // for a session via the backend before enabling the form.
-    function verifyTokenHash(tokenHash) {
+    // for a session via the backend before enabling the form. Bounded: the
+    // request is aborted after VERIFY_TIMEOUT_MS and the page says so.
+    function verifyTokenHash(tokenHash, tokenType) {
       showChecking();
+      const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        if (controller) controller.abort();
+        else showDead('timeout');
+      }, VERIFY_TIMEOUT_MS);
+
       return fetch(`${API_BASE}/auth/verify-recovery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token_hash: tokenHash }),
+        body: JSON.stringify({ token_hash: tokenHash, type: tokenType || 'recovery' }),
+        signal: controller ? controller.signal : undefined,
       })
         .then(async (res) => {
+          clearTimeout(timer);
+          if (timedOut) return;
           const body = await res.json().catch(() => ({}));
           if (res.status === 429) {
             showDead('busy');
+            return;
+          }
+          if (res.status >= 500) {
+            // The backend (or its upstream) couldn't answer. That says nothing
+            // about the link, so don't call it expired.
+            showDead('network');
             return;
           }
           if (!res.ok || !body.access_token) {
@@ -376,19 +463,40 @@
           showReady(body.email || '');
         })
         .catch(() => {
-          showDead('network');
+          clearTimeout(timer);
+          showDead(timedOut ? 'timeout' : 'network');
         });
     }
 
     retryBtn.addEventListener('click', () => {
-      if (pendingTokenHash) verifyTokenHash(pendingTokenHash);
+      if (pendingTokenHash) verifyTokenHash(pendingTokenHash, pendingTokenType);
     });
 
     const query = new URLSearchParams(window.location.search);
+
+    // Supabase's own redirect flow reports failures in the QUERY
+    // (?error=access_denied&error_code=otp_expired&error_description=...).
+    // We don't use that flow for our emails, but if such a link ever lands
+    // here it is a dead link, in our words.
+    const queryError = query.get('error_code') || query.get('error') || query.get('error_description');
+    if (queryError) {
+      showDead('expired');
+      return;
+    }
+
     const tokenHash = query.get('token_hash') || '';
-    if (tokenHash && query.get('type') === 'recovery') {
+    if (tokenHash) {
+      const qType = (query.get('type') || 'recovery').toLowerCase();
       pendingTokenHash = tokenHash;
-      verifyTokenHash(tokenHash);
+      pendingTokenType = TOKEN_TYPES.indexOf(qType) >= 0 ? qType : 'recovery';
+      verifyTokenHash(pendingTokenHash, pendingTokenType);
+      return;
+    }
+
+    // A PKCE ?code=... can only be exchanged by the client that started the
+    // flow (it holds the verifier). Nothing we can do with it here.
+    if (query.get('code')) {
+      showDead('missing');
       return;
     }
 
@@ -401,10 +509,13 @@
       showDead('expired');
       return;
     }
-    if (!access_token || type !== 'recovery') {
+    if (!access_token) {
       showDead('missing');
       return;
     }
+    // Any Supabase session type will do: the reset endpoint only needs a
+    // valid access token for this user (recovery, invite, magiclink, signup).
+    void type;
 
     const payload = decodeJwtPayload(access_token);
     const email = (payload && payload.email) || '';
@@ -420,9 +531,19 @@
     showReady(email);
   }
 
+  function safeInit() {
+    try {
+      init();
+    } catch (err) {
+      // Whatever broke, the user must not be left looking at a spinner.
+      try { console.error('[reset-password] init failed:', err); } catch (e) { /* no console */ }
+      failSafe('error');
+    }
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', safeInit);
   } else {
-    init();
+    safeInit();
   }
 })();

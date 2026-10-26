@@ -4,6 +4,7 @@ const { supabaseAnon, supabaseAdmin, supabaseForUser } = require('../lib/supabas
 const { requireAuth } = require('../middleware/auth');
 const { getPermissionRow, effectivePermissions } = require('../middleware/permissions');
 const { sendSetPasswordEmail } = require('../lib/emails');
+const { withTimeout, TimeoutError } = require('../lib/asyncGuards');
 
 const router = express.Router();
 
@@ -469,23 +470,49 @@ router.get('/reset-password-page', generalAuthLimiter, (req, res) => {
 </html>`);
 });
 
-// POST /auth/verify-recovery  { token_hash }
+// POST /auth/verify-recovery  { token_hash, type? }
 // Direct token-hash verification — bypasses Supabase's redirect flow entirely.
-// The email template links straight to our page with ?token_hash=...&type=recovery,
-// and the page POSTs the hash here so we can exchange it for a session.
+// Our invite / resend-invite / forgot-password emails all link straight to
+// our page with ?token_hash=...&type=recovery (lib/emails.js
+// sendSetPasswordEmail), and the page POSTs the hash here so we can exchange
+// it for a session. `type` is optional (default recovery) and whitelisted so
+// a Supabase-template link of another OTP type would also verify.
+//
+// Status contract the page relies on (reset-password.js):
+//   200 -> { access_token, email }   400 -> dead link (used / expired / bad)
+//   429 -> too many attempts          503 -> upstream slow/unreachable (NOT a
+//   verdict on the link: the page offers Try again). Bounded by withTimeout
+//   so a wedged GoTrue call answers in seconds, not at the 90s global ceiling.
+const VERIFY_OTP_TYPES = ['recovery', 'invite', 'magiclink', 'signup', 'email'];
+const VERIFY_OTP_TIMEOUT_MS = Number(process.env.VERIFY_OTP_TIMEOUT_MS) || 15000;
+const VERIFY_SLOW_MESSAGE = { error: 'The sign-in service is slow right now. Try again in a moment.' };
 router.post('/verify-recovery', generalAuthLimiter, async (req, res) => {
-  const { token_hash } = req.body || {};
-  if (!token_hash) {
+  const { token_hash, type } = req.body || {};
+  if (!token_hash || typeof token_hash !== 'string') {
     return res.status(400).json({ error: 'Missing token.' });
   }
+  const otpType = VERIFY_OTP_TYPES.includes(type) ? type : 'recovery';
 
   try {
-    const { data, error } = await supabaseAnon.auth.verifyOtp({
-      token_hash,
-      type: 'recovery',
-    });
+    const { data, error } = await withTimeout(
+      supabaseAnon.auth.verifyOtp({ token_hash, type: otpType }),
+      VERIFY_OTP_TIMEOUT_MS,
+      'verifyOtp',
+    );
 
     if (error) {
+      // GoTrue's own per-IP verification limit (shared by every user behind
+      // this backend's egress IP) must read as "wait", not "dead link".
+      if (error.status === 429 || /rate limit/i.test(error.message || '')) {
+        console.error('verifyOtp rate-limited upstream:', error.message);
+        return res.status(429).json(RATE_LIMIT_MESSAGE);
+      }
+      // supabase-js reports a network/5xx failure reaching GoTrue as a
+      // retryable fetch error rather than throwing — same treatment as a timeout.
+      if (error.name === 'AuthRetryableFetchError' || (typeof error.status === 'number' && error.status >= 500)) {
+        console.error('verifyOtp upstream unavailable:', error.message);
+        return res.status(503).json(VERIFY_SLOW_MESSAGE);
+      }
       console.error('verifyOtp failed:', error.message);
       return res.status(400).json({ error: 'This reset link is invalid or expired. Request a new one.' });
     }
@@ -499,6 +526,10 @@ router.post('/verify-recovery', generalAuthLimiter, async (req, res) => {
       email: data.user?.email || '',
     });
   } catch (err) {
+    if (err instanceof TimeoutError) {
+      console.error(`verify-recovery: verifyOtp exceeded ${VERIFY_OTP_TIMEOUT_MS}ms`);
+      return res.status(503).json(VERIFY_SLOW_MESSAGE);
+    }
     console.error('verify-recovery failed:', err);
     return res.status(500).json({ error: 'Internal error verifying token.' });
   }
