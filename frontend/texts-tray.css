@@ -147,6 +147,8 @@ html.bts-open .bts-launcher { display: none; }
 .bts-events summary { cursor: pointer; padding: 4px 0; color: var(--ink-3); }
 .bts-events ul { margin: 4px 0 6px; padding-left: 16px; line-height: 1.5; }
 
+.bts-sysnote { align-self: center; text-align: center; max-width: 92%; font-size: 0.76rem; color: var(--ink-2); background: var(--surface-2); border: 1px dashed var(--line); border-radius: 10px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px; }
+
 /* ---- Composer ---- */
 .bts-compose { flex: 0 0 auto; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: var(--surface); }
 .bts-compose textarea {

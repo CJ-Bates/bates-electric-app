@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v154';
+const CACHE = 'bates-shell-v155';
 const ASSETS = [
   './',
   './role-guard.js',
@@ -21,6 +21,7 @@ const ASSETS = [
   './generator-care.js',
   './leads.js',
   './texts.js',
+  './eta-panel.js',
   './texts-tray.css',
   './texts.html',
   './accounting.html',

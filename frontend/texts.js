@@ -430,6 +430,7 @@
     const p = c.preview;
     if (!p) return '<span class="bts-muted">No messages yet</span>';
     const who = p.direction === 'in' ? '' : (p.by_staff ? 'Office: ' : 'Auto: ');
+    if (p.status === 'note') return `<span class="bts-muted">Note: </span>${escapeHtml(p.body)}`;
     const refused = p.direction === 'out' && p.status !== 'sent';
     return `${who ? `<span class="bts-muted">${who}</span>` : ''}${escapeHtml(p.body)}${refused ? ` <span class="bts-muted">(${p.status === 'held' ? 'held' : 'not sent'})</span>` : ''}`;
   }
@@ -512,11 +513,15 @@
   function statusChip(m) {
     if (gc().smsHistoryChip) return gc().smsHistoryChip(m);
     if (m.direction === 'in') return '<span class="badge badge-ok">Reply</span>';
-    const map = { sent: ['badge-ok', 'Sent'], failed: ['badge-danger', 'Failed'], held: ['badge-info', 'Held'], undeliverable: ['badge-warn', 'Not deliverable'], opted_out: ['badge-warn', 'Not sent &mdash; opted out'], no_consent: ['badge-warn', 'Not sent &mdash; no consent'], quiet_hours: ['badge-neutral', 'Skipped &mdash; quiet hours'], stale: ['badge-neutral', 'Dropped'], disabled: ['badge-neutral', 'Logged &mdash; texting off'] };
+    const map = { sent: ['badge-ok', 'Sent'], failed: ['badge-danger', 'Failed'], held: ['badge-info', 'Held'], note: ['badge-neutral', 'Note'], undeliverable: ['badge-warn', 'Not deliverable'], opted_out: ['badge-warn', 'Not sent &mdash; opted out'], no_consent: ['badge-warn', 'Not sent &mdash; no consent'], quiet_hours: ['badge-neutral', 'Skipped &mdash; quiet hours'], stale: ['badge-neutral', 'Dropped'], disabled: ['badge-neutral', 'Logged &mdash; texting off'] };
     const [cls, label] = map[m.status] || ['badge-neutral', escapeHtml(m.status || '')];
     return `<span class="badge ${cls}">${label}</span>`;
   }
   function renderBubble(m) {
+    if (m.status === 'note') {
+      // System note (e.g. running late): shown to the office, never sent.
+      return `<div class="bts-sysnote"><span>${escapeHtml(m.body || '')}</span><span class="bts-muted">${escapeHtml(fmtCentral(m.created_at))}</span></div>`;
+    }
     const inbound = m.direction === 'in';
     const held = !inbound && m.status === 'held';
     const refused = !inbound && m.status !== 'sent';

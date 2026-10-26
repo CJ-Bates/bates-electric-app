@@ -57,12 +57,14 @@ const {
   buildConfirmedReplySms,
   buildRescheduleReplySms,
   buildHoldingReplySms,
+  buildAfterHoursReplySms,
   sendSms,
   logSmsMessage,
   optOutPhone,
 } = require('../lib/sms');
 const { reportError } = require('../middleware/error-reporter');
 const { arrivalWindowLabel } = require('../lib/generator-catalog');
+const { isOfficeOpen, nextOpenPhrase } = require('../lib/officeHours');
 const {
   ensureConversation, resolveMode, recordInbound, scheduleOwnerAlert,
 } = require('../lib/smsConversations');
@@ -476,9 +478,14 @@ async function handleInbound({ fromPhone, toPhone, text, kind }) {
   if (recentAt) {
     console.log('[sms-inbound] automated reply to ' + e164 + ' already sent at ' + recentAt + ' - alerting office only');
   } else {
+    // Free text while the office is closed gets the honest version: closed
+    // now, back "tomorrow morning" / "Monday morning" (lib/officeHours.js).
+    // The reschedule link reply is unchanged either way.
     const body = intent === 'reschedule'
       ? buildRescheduleReplySms({ installState: customer && customer.install_state, link: DASHBOARD_URL })
-      : buildHoldingReplySms({ installState: customer && customer.install_state });
+      : (isOfficeOpen(now)
+        ? buildHoldingReplySms({ installState: customer && customer.install_state })
+        : buildAfterHoursReplySms({ installState: customer && customer.install_state, phrase: nextOpenPhrase(now) }));
     const r = await sendSms({
       toPhone: e164,
       body,

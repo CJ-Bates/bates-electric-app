@@ -535,6 +535,12 @@
         ${!done ? `<div class="tvd-row" style="justify-content:flex-end;"><button type="button" class="btn btn-ghost btn-sm" id="tvd-resched-btn">${v.appointment_at ? 'Reschedule' : 'Book time'}</button></div>` : ''}
       </div>
 
+      ${(!done && v.appointment_at && localDateOf(v) === todayStr()) ? `<div class="tvd-sec" id="tvd-eta-sec">
+        <h3>Let the customer know</h3>
+        <p class="tvd-addon-hint" style="margin:0 0 4px;">Texts the customer your arrival time. Running late also lets the office know.</p>
+        <div id="tvd-eta-mount"></div>
+      </div>` : ''}
+
       ${checklist ? `<div class="tvd-sec" id="tvd-checklist-sec"></div>` : ''}
 
       ${(v.notes || v.internal_note) ? `<div class="tvd-sec">
@@ -577,6 +583,8 @@
     if (btn) btn.addEventListener('click', () => completeVisit(v.id));
     const reschedBtn = document.getElementById('tvd-resched-btn');
     if (reschedBtn) reschedBtn.addEventListener('click', () => rescheduleVisit(v));
+    const etaMount = document.getElementById('tvd-eta-mount');
+    if (etaMount && window.BatesEta) window.BatesEta.mount(etaMount, v, (payload) => postEta(v.id, payload));
     renderChecklist();
     wirePhotoUpload(v.id);
     loadPhotos(v.id);
@@ -1133,6 +1141,21 @@
   // Notes now live INLINE in the "Wrap up & notes" section right above this
   // button (filled in as the last step on site); completing just confirms and
   // posts the same fields to the same endpoint as before.
+  // "On my way" / "Running late" (eta-panel.js): POST and hand the result
+  // back to the panel. A refused send is a 200 with can_text=false (the
+  // panel shows "call them"); only real errors throw.
+  async function postEta(visitId, payload) {
+    const r = await BatesAuth.authFetch(`${TECH_BASE}/my-visits/${visitId}/eta`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    if (currentVisit && currentVisit.id === visitId && data.visit) Object.assign(currentVisit, data.visit);
+    return data;
+  }
+
   async function completeVisit(id) {
     const val = (elId) => { const el = document.getElementById(elId); return el ? el.value : ''; };
     const body = {
