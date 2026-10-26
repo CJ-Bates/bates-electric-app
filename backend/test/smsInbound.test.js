@@ -39,7 +39,7 @@ test.afterEach(() => {
 // ---------------------------------------------------------------------------
 // classifyReply — the parser the launch plan says to unit-test
 // ---------------------------------------------------------------------------
-test('classifyReply: Y/YES variants confirm; keywords route; anything else is a reschedule intent', () => {
+test('classifyReply: Y/YES variants confirm; keywords route; clear reschedule phrases vs free text', () => {
   assert.equal(classifyReply('Y'), 'confirm');
   assert.equal(classifyReply('y'), 'confirm');
   assert.equal(classifyReply(' YES '), 'confirm');
@@ -52,7 +52,9 @@ test('classifyReply: Y/YES variants confirm; keywords route; anything else is a 
   assert.equal(classifyReply('help'), 'help');
   assert.equal(classifyReply(''), 'empty');
   assert.equal(classifyReply('   '), 'empty');
-  assert.equal(classifyReply('Can we do Friday instead?'), 'other');
+  assert.equal(classifyReply('Can we do Friday instead?'), 'reschedule');
+  assert.equal(classifyReply('No'), 'reschedule', 'a bare No is a reschedule request');
+  assert.equal(classifyReply('No one has shown up.'), 'other', 'a sentence that merely starts with No is free text');
   assert.equal(classifyReply('Yes, but can it be later'), 'other', 'a sentence is not a bare Y — office should look');
   assert.equal(classifyReply('yellow'), 'other', 'Y must match the whole word, not a prefix');
 });
@@ -197,10 +199,10 @@ test('HELP: logged only — platform auto-replies, we send nothing', async () =>
   assert.equal(world.visitUpdates.length, 0);
 });
 
-test('anything else: reschedule reply (copy 5) attempted + visit NEVER auto-changed', async () => {
+test('clear reschedule request: reschedule reply (copy 5) attempted + visit NEVER auto-changed', async () => {
   const world = makeWorld();
   const res = makeRes();
-  await postHandler(makeReq({ query: { secret: SECRET }, body: v2Body('Could we do next Friday afternoon?') }), res);
+  await postHandler(makeReq({ query: { secret: SECRET }, body: v2Body('Could we reschedule to next Friday afternoon?') }), res);
   assert.equal(res.statusCode, 200);
   assert.equal(world.visitUpdates.length, 0, 'the appointment must not change');
   const reply = world.logged.find((l) => l.direction === 'out');

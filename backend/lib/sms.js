@@ -217,6 +217,14 @@ function buildRescheduleReplySms({ installState, link }) {
     MDASH + ' ' + smsBrand(installState);
 }
 
+// (5b) HOLDING — reply to free text we can't classify (a complaint, a
+// question, "no one has shown up"). Says a human is coming; promises nothing
+// about the appointment and never carries the reschedule link.
+function buildHoldingReplySms({ installState }) {
+  return 'Thanks ' + MDASH + ' we\'ve passed this to our office and someone will reach out shortly. ' +
+    MDASH + ' ' + smsBrand(installState);
+}
+
 // (3)/(4) APPOINTMENT REMINDER — the Phase 2 cron sends one 3 days out and
 // one the morning of. Confirmation-aware: once the customer has replied Y
 // (visit.sms_confirmed_at set) the reminder just reminds — it never re-asks
@@ -808,6 +816,7 @@ module.exports = {
   buildConfirmedReplySms,
   buildReminderSms,
   buildRescheduleReplySms,
+  buildHoldingReplySms,
   buildOptInConfirmationSms,
   buildScheduleNudgeSms,
   getConsent,
