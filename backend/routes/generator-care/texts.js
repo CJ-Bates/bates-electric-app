@@ -43,7 +43,12 @@ const sensitiveLimiter = makeSensitiveLimiter();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PREVIEW_SCAN_LIMIT = 1500; // newest message rows scanned for list previews
 
-const OWNER_EMBED = 'owner:profiles!generator_sms_conversations_owner_profile_id_fkey(id, full_name, email)';
+// PostgREST embed hints use the COLUMN-name form (table!column), never an
+// auto-generated constraint name: Postgres truncates identifiers to 63
+// chars, and generator_sms_conversation_events_previous_owner_profile_id_fkey
+// (64) came out truncated in the live DB, which 500'd the thread
+// (2026-10-26). test/embedHints.test.js guards the length rule.
+const OWNER_EMBED = 'owner:profiles!owner_profile_id(id, full_name, email)';
 const CUSTOMER_EMBED = 'customer:generator_customers(id, name, phone, install_state)';
 
 // Public shape of a conversation row for the UI. `unread` is per viewer.
@@ -264,7 +269,7 @@ router.get('/texts/conversations/:id', async (req, res) => {
         .limit(200),
       supabaseAdmin
         .from('generator_sms_conversation_events')
-        .select('id, created_at, from_mode, to_mode, reason, note, actor:profiles!generator_sms_conversation_events_actor_profile_id_fkey(full_name, email), previous_owner:profiles!generator_sms_conversation_events_previous_owner_profile_id_fkey(full_name, email), new_owner:profiles!generator_sms_conversation_events_new_owner_profile_id_fkey(full_name, email)')
+        .select('id, created_at, from_mode, to_mode, reason, note, actor:profiles!actor_profile_id(full_name, email), previous_owner:profiles!previous_owner_profile_id(full_name, email), new_owner:profiles!new_owner_profile_id(full_name, email)')
         .eq('conversation_id', conv.id)
         .order('created_at', { ascending: false })
         .limit(50),
