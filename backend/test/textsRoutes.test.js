@@ -41,6 +41,7 @@ const takeOverHandler = h('post', '/texts/conversations/:id/take-over');
 const handBackHandler = h('post', '/texts/conversations/:id/hand-back');
 const sendHandler = h('post', '/texts/conversations/:id/send');
 const handledHandler = h('post', '/texts/conversations/:id/mark-handled');
+const ensureHandler = h('post', '/texts/conversations/ensure');
 
 const hoursAgo = (hrs) => new Date(Date.now() - hrs * 3600 * 1000).toISOString();
 const profile = (id) => ({ id, role: 'office', is_admin: false });
@@ -115,7 +116,7 @@ async function call(handler, { id, body, who }) {
 // ---------------------------------------------------------------------------
 test('route stack: every mutating texts route requires texting; send also has the sensitive limiter', () => {
   const posts = texts.stack.filter((l) => l.route && l.route.methods.post);
-  assert.equal(posts.length, 5);
+  assert.equal(posts.length, 6);
   for (const l of posts) {
     const expected = l.route.path.endsWith('/send') ? 3 : 2;
     assert.equal(l.route.stack.length, expected, l.route.path);
@@ -198,6 +199,30 @@ test('hand back: returns to auto, audited, and starts the held sweep (which is w
   // Handing back an auto conversation is a harmless no-op (no sweep).
   const again = await call(handBackHandler, { id: CONV_ID, who: AMY });
   assert.equal(again.body.held_sweep, 'skipped');
+});
+
+test('ensure: returns the existing conversation for a customer, or creates an auto one for a customer who never texted; bad input 400/404/409', async () => {
+  let res = await call(ensureHandler, { body: { customer_id: CUSTOMER_ID } });
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.conversation.id, CONV_ID, 'existing row for the phone on file');
+  assert.equal(res.body.conversation.subscription_id, SUB_ID);
+  assert.equal(world.convs.rows.length, 2, 'nothing created');
+
+  const NEW_CUST = 'c0000000-0000-4000-8000-000000000002';
+  world.customers.rows.push({ id: NEW_CUST, name: 'Pat New', phone: '(636) 555-0142', install_state: 'MO' });
+  res = await call(ensureHandler, { body: { customer_id: NEW_CUST } });
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.conversation.mode, 'auto');
+  assert.equal(res.body.conversation.phone, '+16365550142');
+  assert.equal(world.convs.rows.length, 3, 'created once');
+  assert.equal(smsCalls.length, 0, 'ensure never texts');
+  assert.equal(world.events.rows.length, 0, 'ensure never changes mode');
+
+  const NO_PHONE = 'c0000000-0000-4000-8000-000000000003';
+  world.customers.rows.push({ id: NO_PHONE, name: 'No Phone', phone: null });
+  assert.equal((await call(ensureHandler, { body: { customer_id: NO_PHONE } })).statusCode, 409);
+  assert.equal((await call(ensureHandler, { body: { customer_id: 'nope' } })).statusCode, 400);
+  assert.equal((await call(ensureHandler, { body: { customer_id: 'c0000000-0000-4000-8000-0000000000ff' } })).statusCode, 404);
 });
 
 test('mark handled clears Needs reply without sending', async () => {

@@ -29,6 +29,7 @@
   // label in the refund dialog for ad-hoc/addon charges (which don't carry a
   // per-charge card client-side); invoices pass their exact card explicitly.
   let cardOnFile = null;
+  let currentDetail = null; // { subId, customerId } of the record open in the modal
   // Next-renewal + pending-plan-change info for the open customer, set by
   // loadStripeData. Used by the Change-plan confirm dialog (for the renewal date).
   let planBilling = null;
@@ -49,7 +50,6 @@
   let metricsLoaded = false;
   let accountingLoaded = false;
   let leadsLoaded = false;
-  let textsLoaded = false;     // BatesTexts.init() ran
   let chartJsPromise = null;
 
   const techName = (id) => {
@@ -937,7 +937,7 @@
     return `
       <h3 class="gc-card-h"><span>Contact &amp; Address</span><button type="button" class="btn btn-ghost btn-sm" id="gc-contact-edit-btn">Edit</button></h3>
       <div class="gc-card-row"><span class="gc-meta-label">Name</span><span class="gc-meta-value">${escapeHtml(fmtNameCase(customer.name)) || '&mdash;'}</span></div>
-      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(fmtPhoneDisplay(customer.phone)) || '&mdash;'}${smsUndeliverableNote(customer)}</span></div>
+      <div class="gc-card-row"><span class="gc-meta-label">Phone</span><span class="gc-meta-value">${escapeHtml(fmtPhoneDisplay(customer.phone)) || '&mdash;'}${smsUndeliverableNote(customer)}${textCustomerButton(customer)}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Email</span><span class="gc-meta-value">${escapeHtml(customer.email) || '&mdash;'}</span></div>
       <div class="gc-card-row"><span class="gc-meta-label">Install address</span><span class="gc-meta-value">${escapeHtml(addrLine) || '&mdash;'}</span></div>
       ${operatingRow}`;
@@ -997,6 +997,15 @@
         : `<span class="gc-meta-label">(no phone on file)</span>`;
     }
     return `<div class="gc-card-row"><span class="gc-meta-label">Appointment texts</span><span class="gc-meta-value" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${stateHtml}${action}</span></div>`;
+  }
+
+  // "Text" next to the phone number: opens the Texts tray straight to this
+  // customer's conversation (texts.js creates it if they have never texted).
+  // Hidden when there is no usable number or the member lacks `texting`.
+  function textCustomerButton(customer) {
+    if (!customer || !customer.phone || !customer.id) return '';
+    if (userPerms && userPerms.texting === false) return '';
+    return ` <button type="button" class="btn btn-ghost btn-sm" id="gc-text-customer-btn" data-customer-id="${escapeHtml(customer.id)}" title="Open this conversation in the Texts tray"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Text</button>`;
   }
 
   function renderContactCard(customer, smsConsent) {
@@ -1803,6 +1812,7 @@
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       ta.value = '';
       loadSmsHistory(subId, customerId); // the sent row joins the thread
+      if (window.BatesTexts) window.BatesTexts.refresh(); // and in the tray
       openSuccessFlash({ title: 'Text sent', message: 'It now shows in the thread.' });
     } catch (err) {
       // Keep what they typed: a blocked/failed attempt is logged and shows
@@ -1917,6 +1927,7 @@
     // Texting customers is its own flag (sql/037) - the same one that gates
     // the Texts inbox, so one toggle governs texting everywhere.
     if (userPerms.texting === false) {
+      drop('#gc-text-customer-btn');
       const replyBox = scope.querySelector('#gc-sms-reply-box');
       if (replyBox) {
         replyBox.outerHTML = `<div class="gc-sms-reply gc-sms-reply-blocked"><span class="chip chip-neutral">Read only</span> <span class="gc-meta-label">Replying by text needs the texting permission. Ask an administrator.</span></div>`;
@@ -2063,6 +2074,13 @@
 
       const smsConsentBtn = body.querySelector('#gc-sms-consent-btn');
       if (smsConsentBtn) smsConsentBtn.addEventListener('click', () => recordSmsConsent(c, smsConsentBtn.dataset.optin === 'true', id));
+      const textBtn = body.querySelector('#gc-text-customer-btn');
+      if (textBtn) {
+        textBtn.addEventListener('click', () => {
+          if (window.BatesTexts) window.BatesTexts.openForCustomer(textBtn.dataset.customerId);
+          else showStatus('The Texts tray is not available on this page.', 'warning');
+        });
+      }
 
       const genEditBtn = body.querySelector('#gc-generator-edit-btn');
       if (genEditBtn) genEditBtn.addEventListener('click', () => enterGeneratorEdit(subscription));
@@ -2154,6 +2172,7 @@
       // Kick off lazy Stripe enrichment (fills payment method, lifetime, invoices,
       // and the work-order packet's actual signup charge) + the text-message log.
       loadStripeData(id, subscription, pending_addons, c.id, openVisit);
+      currentDetail = { subId: id, customerId: c.id };
       loadSmsHistory(id, c.id);
       loadEmailHistory(id);
 
@@ -2681,6 +2700,15 @@
 
   function closeModal() {
     document.getElementById('detailsModal').hidden = true;
+    currentDetail = null;
+  }
+
+  // Called by the Texts tray after it sends: if that customer's record is
+  // open, its Text Message History picks up the new row.
+  function refreshSmsHistory(customerId) {
+    if (!currentDetail || currentDetail.customerId !== customerId) return;
+    if (document.getElementById('detailsModal').hidden) return;
+    loadSmsHistory(currentDetail.subId, currentDetail.customerId);
   }
 
   // ---- Helpers ----
@@ -2695,12 +2723,35 @@
   // BatesMetrics/BatesAccounting modules). The shared section switcher
   // renders all four as top-level tabs (shared-nav.js); hash changes swap
   // views without a reload.
-  const HASH_VIEWS = ['attention', 'customers', 'leads', 'texts', 'metrics', 'accounting'];
+  const HASH_VIEWS = ['attention', 'customers', 'leads', 'metrics', 'accounting'];
   function currentHashView() {
     const h = location.hash.slice(1);
     return HASH_VIEWS.includes(h) ? h : 'attention';
   }
-  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', leads: 'gc-leads', texts: 'gc-texts', metrics: 'metrics', accounting: 'accounting' };
+  const SECTION_TAB_MATCH = { attention: 'gc-attention', customers: 'gc-customers', leads: 'gc-leads', metrics: 'metrics', accounting: 'accounting' };
+
+  // Two special hashes that are not views:
+  //   #texts        - the old Texts tab URL (the daily digest still links to
+  //                   it): open the Texts TRAY, land on the default view.
+  //   #sub=<uuid>   - open a customer record directly (the tray's "Open
+  //                   record" from another page / the pop-out window uses it).
+  // Both are consumed once and replaced so Back / Refresh do not re-fire.
+  function consumeSpecialHash() {
+    const h = location.hash;
+    if (h === '#texts') {
+      history.replaceState(null, '', location.pathname + '#attention');
+      if (window.BatesTexts) window.BatesTexts.open();
+      else window.__batesTextsOpenOnLoad = true; // texts.js checks location.hash at boot, which we just replaced
+      return true;
+    }
+    const m = h.match(/^#sub=([0-9a-f-]{36})$/i);
+    if (m) {
+      history.replaceState(null, '', location.pathname + '#customers');
+      showDetail(m[1]);
+      return true;
+    }
+    return false;
+  }
 
   // Chart.js is only needed by Metrics and costs ~200KB, so it's fetched from
   // the CDN on first activation of that tab rather than unconditionally in
@@ -2724,7 +2775,6 @@
     document.getElementById('attention-view').hidden = view !== 'attention';
     document.getElementById('customers-view').hidden = view !== 'customers';
     document.getElementById('leads-view').hidden = view !== 'leads';
-    document.getElementById('texts-view').hidden = view !== 'texts';
     document.getElementById('metrics-view').hidden = view !== 'metrics';
     document.getElementById('accounting-view').hidden = view !== 'accounting';
     // Chart.js's canvases keep whatever size they last measured while
@@ -2769,12 +2819,8 @@
       leadsLoaded = true;
       window.BatesLeads.init();
     }
-    if (view === 'texts' && !textsLoaded) {
-      textsLoaded = true;
-      if (window.BatesTexts) window.BatesTexts.init();
-    }
   }
-  window.addEventListener('hashchange', () => showView(currentHashView()));
+  window.addEventListener('hashchange', () => { consumeSpecialHash(); showView(currentHashView()); });
 
   // ---- Init ----
   // Permission flags shape the queue's buttons (e.g. Charge vs View add-ons),
@@ -2784,8 +2830,7 @@
   // One early leads fetch so the "new leads" count shows on the section tab
   // without the tab being opened; BatesLeads.init() reuses the same data.
   if (window.BatesLeads) window.BatesLeads.prime();
-  // Texts: unread badge on the section tab from anywhere in Generator Care.
-  if (window.BatesTexts) window.BatesTexts.prime();
+  consumeSpecialHash();
   showView(currentHashView());
 
   document.getElementById('refresh-btn').addEventListener('click', () => {
@@ -2793,7 +2838,6 @@
     if (view === 'metrics') { if (window.BatesMetrics) window.BatesMetrics.refresh(); return; }
     if (view === 'accounting') { if (window.BatesAccounting) window.BatesAccounting.refresh(); return; }
     if (view === 'leads') { if (window.BatesLeads) window.BatesLeads.refresh(); return; }
-    if (view === 'texts') { if (window.BatesTexts) window.BatesTexts.refresh(); return; }
     loadSubscriptions();
     loadBillingSnapshot();
   });
@@ -4065,5 +4109,5 @@
 
   // Shared with texts.js (the Texts inbox): open a customer record, and the
   // SAME segment counter + status chips so both threads read identically.
-  window.BatesGC = { showDetail, smsSegments, smsHistoryChip };
+  window.BatesGC = { showDetail, smsSegments, smsHistoryChip, refreshSmsHistory };
 })();

@@ -22,16 +22,19 @@
 //   POST /texts/conversations/:id/hand-back
 //   POST /texts/conversations/:id/send     { body }  (also takes over)
 //   POST /texts/conversations/:id/mark-handled
+//   POST /texts/conversations/ensure       { customer_id } -> the customer's
+//        conversation for their current phone, created in auto if they have
+//        never texted (the "Text" button on the customer record)
 
 const express = require('express');
 const { supabaseAdmin } = require('../../lib/supabase');
 const { requirePermission } = require('../../middleware/permissions');
 const { makeSensitiveLimiter } = require('../../middleware/limiters');
 const {
-  operatorReplyEligibility, withinQuietHours, OPERATOR_REPLY_WINDOW_DAYS, smsEnabled,
+  normalizePhone, operatorReplyEligibility, withinQuietHours, OPERATOR_REPLY_WINDOW_DAYS, smsEnabled,
 } = require('../../lib/sms');
 const {
-  CONV_SELECT, IDLE_MS, findConversationById, resolveMode, takeOver, handBack, markHandled, markRead, idleDeadline,
+  CONV_SELECT, IDLE_MS, findConversationById, ensureConversation, resolveMode, takeOver, handBack, markHandled, markRead, idleDeadline,
 } = require('../../lib/smsConversations');
 const { sendOperatorText } = require('../../lib/officeTexting');
 const { arrivalWindowLabel } = require('../../lib/generator-catalog');
@@ -302,6 +305,32 @@ router.get('/texts/conversations/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('[texts] thread error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /texts/conversations/ensure { customer_id }
+// The customer's conversation for the phone on their record, created in
+// 'auto' when none exists yet (a customer who has never been texted). Pure
+// bookkeeping: no text is sent, no mode changes. Declared BEFORE the /:id
+// routes so 'ensure' can never be read as an id.
+router.post('/texts/conversations/ensure', requirePermission('texting'), async (req, res) => {
+  try {
+    const customerId = String((req.body && req.body.customer_id) || '').trim().toLowerCase();
+    if (!UUID_RE.test(customerId)) return res.status(400).json({ error: 'customer_id is required' });
+    const { data: customer, error: custErr } = await supabaseAdmin
+      .from('generator_customers').select('id, phone').eq('id', customerId).maybeSingle();
+    if (custErr) throw custErr;
+    if (!customer) return res.status(404).json({ error: 'customer not found' });
+    const phone = normalizePhone(customer.phone);
+    if (!phone) return res.status(409).json({ error: 'No usable mobile number on file for this customer. Add one on the customer record first.' });
+    const conv = await ensureConversation({ customerId: customer.id, phone });
+    const subIds = await subscriptionIdsByCustomer([customer.id]);
+    const full = await loadConversationFull(conv.id);
+    const reads = await myReadMap(req.profile.id, [conv.id]);
+    res.json({ ok: true, conversation: { ...serializeConversation(full || conv, { readAt: reads[conv.id], viewerId: req.profile.id }), subscription_id: subIds[customer.id] || null } });
+  } catch (err) {
+    console.error('[texts] ensure error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
