@@ -25,6 +25,11 @@
 //   - EVERY outbound attempt is logged to generator_sms_messages, including
 //     refused ones (status says why) — that's the office's visibility and the
 //     SMS_ENABLED=false test surface.
+//   - OFFICE MODE (sql/037, lib/smsConversations.js): while a staff member
+//     owns a customer's conversation, nothing automated goes to them. sendSms
+//     refuses with the NON-TERMINAL status 'held' so queue-and-sweep senders
+//     retry after hand-back; operator sends (sentBy) and carrier compliance
+//     sends (compliance: true - the opt-in disclosure) bypass the hold.
 //   - NEVER log or expose SIMPLETEXTING_API_TOKEN.
 //
 // Env (Render): SIMPLETEXTING_API_TOKEN (secret), SIMPLETEXTING_ACCOUNT_PHONE
@@ -36,6 +41,8 @@ const { supabaseAdmin } = require('./supabase');
 const { isFlorida } = require('./branding');
 const { arrivalWindow } = require('./generator-catalog');
 const { reportError } = require('../middleware/error-reporter');
+
+const { isOfficeMode, recordOutbound } = require('./smsConversations');
 
 const SIMPLETEXTING_BASE = 'https://api-app2.simpletexting.com/v2';
 
@@ -547,9 +554,47 @@ async function flagUndeliverable({ customerId, e164, at }) {
   }
 }
 
+// Has this exact held message already been logged (same phone, body, visit)
+// since the office took the conversation over? The hourly sweep re-attempts
+// every owed text, and one 'held' row per message is the honest record; one
+// per hour would bury the thread. Fails open to "not logged" (one duplicate
+// row beats a missing one).
+async function heldAlreadyLogged({ e164, body, relatedVisitId }) {
+  try {
+    let q = supabaseAdmin
+      .from('generator_sms_messages')
+      .select('id, created_at')
+      .eq('direction', 'out')
+      .eq('to_phone', e164)
+      .eq('status', 'held')
+      .eq('body', body)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    q = relatedVisitId ? q.eq('related_visit_id', relatedVisitId) : q.is('related_visit_id', null);
+    const { data, error } = await q;
+    if (error) throw error;
+    if (!data || !data[0]) return false;
+    // A newer sent/stale row for the same message means a fresh hold cycle.
+    const { data: later, error: laterErr } = await supabaseAdmin
+      .from('generator_sms_messages')
+      .select('id')
+      .eq('direction', 'out')
+      .eq('to_phone', e164)
+      .eq('body', body)
+      .in('status', ['sent', 'stale'])
+      .gt('created_at', data[0].created_at)
+      .limit(1);
+    if (laterErr) throw laterErr;
+    return !(later && later.length);
+  } catch (e) {
+    console.error('[sms] held de-dup lookup failed (logging the row):', e && e.message);
+    return false;
+  }
+}
+
 // ============================================================================
-// The send. Gate order: consent -> undeliverable flag -> kill-switch ->
-// quiet hours -> transport.
+// The send. Gate order: consent -> undeliverable flag -> office-mode hold ->
+// kill-switch -> quiet hours -> transport.
 // Every refusal logs a generator_sms_messages row saying why, so booking with
 // SMS_ENABLED=false still leaves the visible "would have sent" trail the
 // verification plan relies on. Never throws; returns { sent, status, reason }.
@@ -565,9 +610,11 @@ async function flagUndeliverable({ customerId, e164, at }) {
 //           unlock a send; opted_out still refuses unconditionally),
 //         sentBy? (profiles.id of the office user who composed the message —
 //           operator replies only; stored as sent_by_profile_id, sql/034),
+//         compliance? (carrier-required disclosure such as the opt-in
+//           confirmation: bypasses the office-mode hold, nothing else),
 //         now? (test seam for the quiet-hours / reply-window clock) }
 // ============================================================================
-async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, replyToInbound, sentBy, now }) {
+async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietHours, logBody, replyToInbound, sentBy, compliance, now }) {
   const accountPhone = normalizePhone(process.env.SIMPLETEXTING_ACCOUNT_PHONE) || null;
   const e164 = normalizePhone(toPhone);
   const base = {
@@ -618,6 +665,20 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
   const flaggedAt = await undeliverableFlaggedAt({ customerId, e164 });
   if (flaggedAt) {
     return refuse('undeliverable', 'not sent: SimpleTexting marked this number as not textable on ' + flaggedAt + ' - check the phone number on the customer record');
+  }
+
+  // Office-mode hold: a staff member owns this conversation, so no
+  // automated text may go out. 'held' is NON-terminal - the queue-and-sweep
+  // senders keep the message owed and retry after hand-back (the sweep's
+  // own staleness rules drop it if it no longer applies). Operator sends
+  // and compliance disclosures are never held. The log row is written once
+  // per held message, not once per hourly sweep attempt.
+  if (!sentBy && !compliance && customerId && await isOfficeMode({ customerId, phone: e164, now })) {
+    const detail = 'held: the office is handling this conversation - will send after hand-back if still relevant';
+    if (await heldAlreadyLogged({ e164, body: base.body, relatedVisitId })) {
+      return { sent: false, status: 'held', reason: detail };
+    }
+    return refuse('held', detail);
   }
 
   // Kill-switch: log the full would-be message, send nothing.
@@ -674,6 +735,8 @@ async function sendSms({ toPhone, body, customerId, relatedVisitId, ignoreQuietH
     const data = await resp.json().catch(() => ({}));
     await logSmsMessage({ ...base, status: 'sent', provider_id: (data && data.id) || null, detail: sentDetail });
     console.log('[sms] sent to ' + e164 + (relatedVisitId ? ' (visit ' + relatedVisitId + ')' : ''));
+    // Inbox bookkeeping (sql/037): last text that actually reached them.
+    await recordOutbound({ customerId, phone: e164, now });
     return { sent: true, status: 'sent' };
   } catch (e) {
     const detail = 'request failed: ' + ((e && e.message) || e);

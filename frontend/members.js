@@ -29,6 +29,7 @@
     { key: 'billing_actions', label: 'Billing actions', hint: 'Add-on charges, adhoc charges, plan/tier changes, fleet' },
     { key: 'customer_edit',   label: 'Customer edit',   hint: 'Contact, generator, and notes editing' },
     { key: 'tech_manage',     label: 'Tech manage',     hint: 'Create/deactivate techs, assign visits' },
+    { key: 'texting',         label: 'Texting',         hint: 'Texts inbox, take over / hand back, send texts to customers' },
   ];
 
   let me = null;          // profile from /me (with permissions + is_admin)

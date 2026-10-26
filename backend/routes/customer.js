@@ -627,6 +627,7 @@ router.post('/sms-consent', writeLimiter, async (req, res) => {
         body: buildOptInConfirmationSms({ installState: customer.install_state }),
         customerId: customer.id,
         ignoreQuietHours: true, // immediate ack of the toggle they just flipped
+        compliance: true,       // carrier-required disclosure: never held by office mode
       });
     }
 

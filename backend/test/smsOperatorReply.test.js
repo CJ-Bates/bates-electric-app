@@ -11,7 +11,8 @@
 //   - GET /subscriptions/:id/sms-messages `reply` block + phone-matched
 //     inbound rows
 //   - role/permission gates: tech + customer profiles 403 (requireRole),
-//     an office member without customer_edit 403s (requirePermission)
+//     an office member without `texting` 403s (requirePermission; sql/037
+//     moved this route from customer_edit to the texting flag)
 require('./helpers/env');
 
 const test = require('node:test');
@@ -330,7 +331,7 @@ test('reply: no usable phone on the record -> 409 invalid_phone', async () => {
 // ---------------------------------------------------------------------------
 // Gates: role (index.js requireRole('office')), permission, limiter
 // ---------------------------------------------------------------------------
-test('route stack: sensitive limiter + requirePermission(customer_edit) sit in front of the handler', () => {
+test('route stack: sensitive limiter + requirePermission(texting) sit in front of the handler', () => {
   const layer = subscriptionsRouter.stack.find((l) => l.route && l.route.path === '/customers/:id/sms-reply' && l.route.methods.post);
   assert.ok(layer, 'route exists');
   assert.equal(layer.route.stack.length, 3, 'limiter, permission check, handler');
@@ -354,11 +355,11 @@ test('a tech token and a customer token both 403 at the office role gate', () =>
   assert.equal(res.statusCode, 403, 'no profile at all');
 });
 
-test('an office member whose customer_edit flag is off gets 403 from requirePermission', async () => {
+test('an office member whose texting flag is off gets 403 from requirePermission', async () => {
   restoreSupabase = installMockSupabase({
-    member_permissions: () => ({ data: { profile_id: PROFILE_ID, customer_edit: false }, error: null }),
+    member_permissions: () => ({ data: { profile_id: PROFILE_ID, texting: false }, error: null }),
   });
-  const check = requirePermission('customer_edit');
+  const check = requirePermission('texting');
   const res = makeRes();
   let nexted = false;
   await check({ profile: { id: PROFILE_ID, role: 'office', is_admin: false } }, res, () => { nexted = true; });
