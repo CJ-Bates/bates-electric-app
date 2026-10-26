@@ -477,73 +477,7 @@
     .lead-preview-row .why { margin-left: auto; font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; }
     .lead-preview-skip-h { padding: 7px 12px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); background: var(--surface-2); border-top: 1px solid var(--line); }
 
-    /* ============ TEXTS inbox (sql/037) ============
-       Two panes on desktop (list | thread); on phones the list fills the
-       screen and .is-thread swaps in the thread with a back button. */
-    .texts-layout { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; align-items: start; }
-    .texts-pane { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-1); min-height: 420px; }
-    .texts-list-pane { display: flex; flex-direction: column; overflow: hidden; }
-    .texts-list-head { padding: 12px 12px 8px; border-bottom: 1px solid var(--line); }
-    .texts-list-head .gc-tabs { margin-bottom: 8px; }
-    .texts-list-head input { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font-family: inherit; font-size: 0.9rem; }
-    .texts-list-head input:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
-    #texts-list { max-height: calc(100vh - 300px); overflow-y: auto; }
-    .texts-row { display: flex; gap: 10px; width: 100%; text-align: left; padding: 12px 12px 12px 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; font-family: inherit; position: relative; }
-    .texts-row:hover { background: var(--accent-soft); }
-    .texts-row.active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
-    .texts-row-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: transparent; margin-top: 7px; }
-    .texts-row.unread .texts-row-dot { background: var(--info); }
-    .texts-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
-    .texts-row-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
-    .texts-row-name { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .texts-row.unread .texts-row-name { font-weight: 800; }
-    .texts-row-time { flex: 0 0 auto; font-size: 0.75rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-    .texts-row-preview { font-size: 0.84rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .texts-row.unread .texts-row-preview { color: var(--ink); }
-    .texts-row-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
-    .texts-row-chips .chip, .texts-thread-chips .chip { gap: 4px; }
-    .texts-chip-office { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-    .texts-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    .texts-muted { color: var(--ink-3); font-weight: 400; }
-    .texts-center { text-align: center; padding: 24px 0; }
-    .texts-thread-pane { display: flex; flex-direction: column; min-height: 420px; }
-    .texts-placeholder { padding: 60px 20px; text-align: center; color: var(--ink-2); }
-    .texts-placeholder .gc-att-empty-ico { display: inline-flex; width: 44px; height: 44px; border-radius: 50%; background: var(--info-bg); color: var(--info); align-items: center; justify-content: center; margin-bottom: 10px; }
-    .texts-placeholder .big { font-size: 1.05rem; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
-    .texts-thread-head { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); align-items: start; }
-    .texts-back { display: none; grid-column: 1 / -1; justify-self: start; padding-left: 4px; }
-    .texts-thread-name { font-weight: 700; font-size: 1.05rem; }
-    .texts-thread-name .texts-muted { font-size: 0.85rem; margin-left: 4px; }
-    .texts-thread-chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; font-size: 0.8rem; }
-    .texts-thread-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-    .texts-thread-facts { grid-column: 1 / -1; font-size: 0.84rem; color: var(--ink-2); }
-    .texts-messages { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; overflow-y: auto; max-height: calc(100vh - 460px); min-height: 200px; flex: 1 1 auto; }
-    .texts-day { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 4px 0; }
-    .texts-day::before, .texts-day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-    .texts-sender { font-weight: 600; color: var(--ink-2); }
-    .texts-held .gc-sms-bubble { border-style: dashed; border-color: var(--info); color: var(--ink-2); }
-    .texts-held-note { color: var(--info); margin-top: 2px; }
-    .texts-fail { color: var(--danger); margin-top: 2px; }
-    .texts-events { margin: 0 16px; font-size: 0.8rem; color: var(--ink-2); }
-    .texts-events summary { cursor: pointer; padding: 6px 0; color: var(--ink-3); }
-    .texts-events ul { margin: 4px 0 8px; padding-left: 18px; line-height: 1.5; }
-    .texts-thread-pane .gc-sms-reply { margin: 0 16px 16px; }
-    .texts-thread-pane .gc-sms-reply-blocked { margin: 12px 16px 16px; }
-    @media (max-width: 860px) {
-      .texts-layout { grid-template-columns: 1fr; }
-      .texts-layout .texts-thread-pane { display: none; }
-      .texts-layout.is-thread .texts-list-pane { display: none; }
-      .texts-layout.is-thread .texts-thread-pane { display: flex; }
-      .texts-back { display: inline-flex; }
-      #texts-list { max-height: none; }
-      .texts-messages { max-height: none; }
-      .texts-thread-head { grid-template-columns: 1fr; }
-      .texts-thread-actions { justify-content: flex-start; }
-      .texts-thread-actions .btn { min-height: 40px; }
-    }
-
     /* "New leads" count on the Leads section tab (stamped by leads.js).
-       The Texts tab reuses it for its unread count (texts.js).
        Same pill treatment as the filter counts on the Customers tabs. */
     .section-tab .tab-count { background: var(--accent); color: var(--ink-inverse); border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 700; padding: 1px 7px; margin-left: 6px; }
     .section-tab.active .tab-count { background: rgba(255, 255, 255, 0.22); }
@@ -1063,39 +997,6 @@
       </div>
     </section>
 
-    <!-- ============ TEXTS (office inbox, sql/037) ============
-         Lazy-loaded: generator-care.js calls BatesTexts.init() the first
-         time this section is activated (texts.js primes the unread badge on
-         the section tab at page load). One conversation per Generator Care
-         customer + phone; Jason's service-team texts on the shared number
-         never appear here. -->
-    <section id="texts-view" hidden>
-      <div class="texts-layout" id="texts-layout">
-        <div class="texts-pane texts-list-pane">
-          <div class="texts-list-head">
-            <div class="gc-tabs" id="texts-tabs" role="tablist" aria-label="Conversation filter">
-              <button type="button" class="filter texts-tab active" data-filter="all" role="tab">All <span class="count" id="texts-count-all">0</span></button>
-              <button type="button" class="filter texts-tab" data-filter="needs" id="texts-tab-needs" role="tab">Needs reply <span class="count" id="texts-count-needs">0</span></button>
-              <button type="button" class="filter texts-tab" data-filter="office" role="tab">Office <span class="count" id="texts-count-office">0</span></button>
-              <button type="button" class="filter texts-tab" data-filter="auto" role="tab">Auto <span class="count" id="texts-count-auto">0</span></button>
-            </div>
-            <input type="search" id="texts-search" placeholder="Search by name or phone" aria-label="Search conversations" autocomplete="off" />
-          </div>
-          <div id="texts-loading" aria-hidden="true" style="padding: 12px;">
-            <span class="gc-skeleton gc-skeleton-line gc-skeleton-text-md"></span>
-            <span class="gc-skeleton gc-skeleton-line gc-skeleton-text-lg"></span>
-          </div>
-          <div id="texts-list" role="list"></div>
-          <div id="texts-empty" class="gc-att-empty" hidden style="margin: 12px; padding: 32px 16px;">
-            <div class="gc-att-empty-ico" style="background: var(--info-bg); color: var(--info);"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
-            <div class="big">No conversations</div>
-            <div id="texts-empty-sub"></div>
-          </div>
-        </div>
-        <div class="texts-pane texts-thread-pane" id="texts-thread" aria-live="polite"></div>
-      </div>
-    </section>
-
     <details id="gc-admin-tools" style="margin-top: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);">
       <summary style="padding: 12px 16px; cursor: pointer; font-weight: 600; color: var(--ink-2); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;">
         Admin tools
@@ -1179,7 +1080,6 @@
   <script src="metrics.js"></script>
   <script src="accounting.js"></script>
   <script src="leads.js"></script>
-  <script src="texts.js"></script>
   <script src="generator-care.js"></script>
 </body>
 </html>
