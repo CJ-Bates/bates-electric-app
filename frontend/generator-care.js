@@ -1216,6 +1216,7 @@
       case 'opted_out': return 'Text not sent &mdash; customer opted out';
       case 'quiet_hours': return 'Text skipped (outside 8am&ndash;9pm)' + when;
       case 'stale': return 'Text dropped &mdash; appointment passed before it could send' + when;
+      case 'dropped': return 'Text not sent &mdash; ' + escapeHtml(m.detail || 'no longer relevant');
       case 'failed': return 'Text failed to send' + when;
       case 'undeliverable': return 'Text not sent &mdash; number not deliverable, check phone number';
       default: return null;
@@ -1685,7 +1686,7 @@
 
   // Status chip per logged message. Statuses come from lib/sms.js's message
   // log (out: sent|failed|disabled|no_consent|opted_out|quiet_hours|
-  // invalid_phone|undeliverable|stale; in: received) — refused sends are
+  // invalid_phone|undeliverable|stale|held|dropped|released|note; in: received) — refused sends are
   // logged too, so blocked texts are visible here rather than silently missing.
   function smsHistoryChip(m) {
     if (m.direction === 'in') return '<span class="badge badge-ok">Reply</span>';
@@ -1699,6 +1700,8 @@
       case 'quiet_hours': return '<span class="badge badge-neutral">Skipped &mdash; quiet hours</span>';
       case 'stale': return '<span class="badge badge-neutral">Dropped &mdash; too late to send</span>';
       case 'held': return '<span class="badge badge-info">Held &mdash; office has the conversation</span>';
+      case 'dropped': return '<span class="badge badge-neutral">Not sent</span>';
+      case 'released': return '<span class="badge badge-neutral">Held &mdash; sent later</span>';
       case 'note': return '<span class="badge badge-neutral">Note</span>';
       case 'disabled': return '<span class="badge badge-neutral">Logged &mdash; texting off</span>';
       default: return `<span class="badge badge-neutral">${escapeHtml(m.status || '')}</span>`;
@@ -1729,7 +1732,9 @@
     // Failure reason (never the API token — lib/sms.js keeps it out of the log).
     const failDetail = (m.status === 'failed' || m.status === 'invalid_phone' || m.status === 'undeliverable') && m.detail
       ? `<div class="gc-meta-label" style="margin-top:2px;color:var(--danger);">${escapeHtml(m.detail)}</div>`
-      : '';
+      : (!inbound && m.status === 'dropped'
+        ? `<div class="gc-meta-label" style="margin-top:2px;">Not sent &mdash; ${escapeHtml(m.detail || 'no longer relevant')}</div>`
+        : '');
     const refused = !inbound && m.status !== 'sent';
     return `<div class="gc-sms-msg ${inbound ? 'gc-sms-in' : 'gc-sms-out'}${refused ? ' gc-sms-refused' : ''}">
       <div class="gc-sms-bubble">${escapeHtml(m.body || '')}</div>
@@ -2740,6 +2745,7 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showStatus(`Couldn't assign: ${data.error || ('HTTP ' + r.status)}`, 'error'); return; }
       showStatus(techId ? `Assigned to ${techName(techId)}.` : 'Assignment cleared.', 'success');
+      if (window.BatesTexts) window.BatesTexts.refresh(); // tray header "Tech:" line
       await loadSubscriptions();
       showDetail(subscriptionId);
     } catch (err) {

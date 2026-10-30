@@ -145,6 +145,55 @@ test('Running late: text + office email + system note in the thread, visit flagg
   assert.equal(notes()[0].detail, 'system note - not a text');
 });
 
+// Live test 2026-10-26: On my way "30 min" at 3:37 (ETA 4:07), then Running
+// late "30 min" at 3:38 told the customer 4:08 - the same time.
+test('Running late adds to the ETA the customer already has, not to now', async () => {
+  setup();
+  await sendEtaText({ visitId: VISIT_ID, kind: 'on_my_way', etaMinutes: 30, sender: TECH, now: NOW }); // ETA 10:00
+  const oneMinLater = new Date(NOW.getTime() + 60000);
+  const r = await sendEtaText({ visitId: VISIT_ID, kind: 'running_late', etaMinutes: 30, sender: TECH, now: oneMinLater });
+  assert.equal(r.sent, true);
+  assert.equal(smsCalls[1].text, 'Bates Generator Care: Jacob is running a little behind and should now arrive around 10:30 AM. Sorry for the wait.');
+  assert.equal(visit().eta_at, new Date(NOW.getTime() + 60 * 60000).toISOString(), 'previous ETA + 30');
+  assert.equal(r.eta_at, visit().eta_at);
+});
+
+test('Running late with no prior ETA counts from now', async () => {
+  setup();
+  const r = await sendEtaText({ visitId: VISIT_ID, kind: 'running_late', etaMinutes: 30, sender: TECH, now: NOW });
+  assert.equal(r.sent, true);
+  assert.equal(visit().eta_at, new Date(NOW.getTime() + 30 * 60000).toISOString());
+  assert.match(smsCalls[0].text, /around 10:00 AM/);
+});
+
+test('Running late after the previous ETA already slipped by counts from now (never a time in the past)', async () => {
+  setup();
+  world.visits.rows[0].en_route_at = '2026-10-27T13:30:00.000Z';
+  world.visits.rows[0].eta_at = '2026-10-27T14:00:00.000Z'; // 9:00, it is 9:30
+  const r = await sendEtaText({ visitId: VISIT_ID, kind: 'running_late', etaMinutes: 15, sender: TECH, now: NOW });
+  assert.equal(r.sent, true);
+  assert.match(smsCalls[0].text, /around 9:45 AM/);
+});
+
+test('Running late refuses a time that is not later than the current ETA; Update ETA may move it earlier with the neutral copy', async () => {
+  setup();
+  await sendEtaText({ visitId: VISIT_ID, kind: 'on_my_way', etaMinutes: 30, sender: TECH, now: NOW }); // ETA 10:00
+  for (const etaAt of ['2026-10-27T14:50:00.000Z', '2026-10-27T15:00:00.000Z']) { // 9:50, exactly 10:00
+    const r = await sendEtaText({ visitId: VISIT_ID, kind: 'running_late', etaAt, sender: TECH, now: NOW });
+    assert.equal(r.ok, false);
+    assert.equal(r.httpStatus, 400);
+    assert.match(r.error, /later than the current ETA \(10:00 AM\)/);
+  }
+  assert.equal(smsCalls.length, 1, 'nothing went out under the running-late copy');
+  assert.equal(visit().running_late_at, null);
+  assert.equal(emails.length, 0, 'no office alert for a refused request');
+
+  const upd = await sendEtaText({ visitId: VISIT_ID, kind: 'on_my_way', etaAt: '2026-10-27T14:50:00.000Z', sender: TECH, now: NOW });
+  assert.equal(upd.sent, true);
+  assert.equal(smsCalls[1].text, 'Bates Generator Care: Jacob\'s arrival time is now around 9:50 AM.');
+  assert.doesNotMatch(smsCalls[1].text, /behind|Sorry/);
+});
+
 for (const [label, consent, why] of [['no consent', 'none', 'no text consent on file'], ['opted out', 'out', 'they replied STOP']]) {
   test(`${label}: can_text=false with the number to call; Running late still alerts the office`, async () => {
     setup({ consent });

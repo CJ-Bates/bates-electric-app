@@ -280,6 +280,21 @@ test('thread: oldest-first messages scoped to the conversation phone, reply elig
   assert.equal(typeof res.body.idle_minutes, 'number');
 });
 
+test('thread header names the ASSIGNED tech (assigned_tech_id), not the completing tech column', async () => {
+  // Live 2026-10-26: CJ Bates was assigned, the tray said "Tech: unassigned".
+  world.visits.rows.push({ id: 'v1', subscription_id: SUB_ID, status: 'scheduled', appointment_at: new Date(Date.now() + 2 * 86400000).toISOString(), arrival_window: '13-15', assigned_tech_id: BRENDA, technician_id: null, sms_confirmed_at: null });
+  let res = await call(threadHandler, { id: CONV_ID, who: AMY });
+  assert.equal(res.body.next_visit.tech, 'Brenda');
+  assert.equal(res.body.next_visit.assigned_tech_id, BRENDA);
+  // Reassigned: the next fetch (tray poll / refresh) shows the new tech.
+  world.visits.rows[0].assigned_tech_id = AMY;
+  res = await call(threadHandler, { id: CONV_ID, who: AMY });
+  assert.equal(res.body.next_visit.tech, 'Amy Pyatt');
+  world.visits.rows[0].assigned_tech_id = null;
+  res = await call(threadHandler, { id: CONV_ID, who: AMY });
+  assert.equal(res.body.next_visit.tech, null, 'genuinely unassigned');
+});
+
 // ---------------------------------------------------------------------------
 test('digest: "Texts needing a reply" section in HTML and plain text', () => {
   const { buildEmail, textsReplyLine } = cron._test;

@@ -36,15 +36,17 @@ const OFFICE_NOTIFY_TO = (process.env.GENERATOR_DIGEST_TO || 'cjbates@bates-elec
 const centralDate = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
 const firstName = (name) => String(name || '').trim().split(/\s+/)[0] || '';
 
-// Resolve the ETA the caller asked for: an ISO instant, or minutes from now.
-// Must be in the near future (up to 12h) - a typo'd "tomorrow" is rejected.
-function resolveEta({ etaAt, etaMinutes, now }) {
+// Resolve the ETA the caller asked for: an ISO instant, or minutes from
+// `from` (default now). Must be in the near future (up to 12h) - a typo'd
+// "tomorrow" is rejected.
+function resolveEta({ etaAt, etaMinutes, now, from }) {
   const t = now ? new Date(now).getTime() : Date.now();
   let eta = null;
   if (etaMinutes != null && etaMinutes !== '') {
     const m = Number(etaMinutes);
     if (!Number.isFinite(m) || m < 0 || m > 12 * 60) return null;
-    eta = new Date(t + m * 60000);
+    const base = from ? new Date(from).getTime() : t;
+    eta = new Date((Number.isFinite(base) ? base : t) + m * 60000);
   } else if (etaAt) {
     eta = new Date(etaAt);
     if (isNaN(eta.getTime())) return null;
@@ -70,6 +72,13 @@ async function profileName(id) {
   return (data && (data.full_name || data.email)) || null;
 }
 
+// Where "Running late +N min" counts from: the current ETA, or now once that
+// ETA has passed (or there is none).
+function lateBase(prevEta, clock) {
+  if (!prevEta || isNaN(prevEta.getTime())) return null;
+  return prevEta.getTime() > clock.getTime() ? prevEta : null;
+}
+
 // kind: 'on_my_way' | 'running_late'. sender: req.profile (tech or office).
 async function sendEtaText({ visitId, kind, etaAt, etaMinutes, reason, sender, now }) {
   const clock = now ? new Date(now) : new Date();
@@ -77,11 +86,22 @@ async function sendEtaText({ visitId, kind, etaAt, etaMinutes, reason, sender, n
   if (kind === 'running_late' && reason != null && reason !== '' && !LATE_REASONS[reason]) {
     return { ok: false, httpStatus: 400, error: 'Unknown reason.' };
   }
-  const eta = resolveEta({ etaAt, etaMinutes, now: clock });
-  if (!eta) return { ok: false, httpStatus: 400, error: 'Pick an arrival time in the next 12 hours.' };
-
   const visit = await loadVisit(visitId);
   if (!visit) return { ok: false, httpStatus: 404, error: 'Visit not found.' };
+
+  // Running late counts from the ETA the customer already has, not from now
+  // (live test 2026-10-26: "On my way, 30 min" at 3:37 then "Running late,
+  // 30 min" at 3:38 told the customer 4:08 - the same time). An ETA that has
+  // already slipped by counts from now, so "+15" is never in the past.
+  const prevEta = visit.eta_at ? new Date(visit.eta_at) : null;
+  const from = kind === 'running_late' ? lateBase(prevEta, clock) : null;
+  const eta = resolveEta({ etaAt, etaMinutes, now: clock, from });
+  if (!eta) return { ok: false, httpStatus: 400, error: 'Pick an arrival time in the next 12 hours.' };
+  // "Running late" must move the time LATER - an earlier time under the
+  // apology copy would contradict itself. (Update ETA uses the neutral copy.)
+  if (kind === 'running_late' && prevEta && eta.getTime() <= prevEta.getTime()) {
+    return { ok: false, httpStatus: 400, error: 'Running late needs a time later than the current ETA (' + fmtSmsTime(prevEta) + '). To send an earlier time, use Update ETA.' };
+  }
   if (visit.status !== 'scheduled' || !visit.appointment_at) return { ok: false, httpStatus: 409, error: 'This visit is not scheduled.' };
   if (centralDate(visit.appointment_at) !== centralDate(clock)) {
     return { ok: false, httpStatus: 409, error: 'ETA texts are for a visit scheduled today.' };
@@ -201,4 +221,4 @@ async function notifyOfficeRunningLate({ visit, customer, techFull, timeText, re
   void clock;
 }
 
-module.exports = { sendEtaText, resolveEta, LATE_REASONS, ETA_QUIET_START_HOUR };
+module.exports = { sendEtaText, resolveEta, lateBase, LATE_REASONS, ETA_QUIET_START_HOUR };

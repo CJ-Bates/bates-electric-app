@@ -16,6 +16,7 @@ const { isFlorida } = require('../lib/branding');
 const { DASHBOARD_URL } = require('../lib/emails');
 const { reportError } = require('../middleware/error-reporter');
 const { sweepOwnerAlerts, listNeedingReplyForDigest, isOfficeMode, TEXTS_TAB_URL } = require('../lib/smsConversations');
+const { closeStaleHeldTexts } = require('../lib/heldTexts');
 
 const router = express.Router();
 
@@ -702,6 +703,11 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     // before the quiet-hours / kill-switch guards: this is the durable
     // backstop for the in-process 10-minute timer (lost on a restart).
     const ownerAlerts = await sweepOwnerAlerts({ now });
+    // Held texts that can never go out get a terminal status (lib/heldTexts.js).
+    // DB only, so it runs every hour regardless of quiet hours / kill-switch -
+    // which also made it the one-time cleanup of rows held before it shipped.
+    const heldClosed = await closeStaleHeldTexts({ now });
+    const held = { checked: heldClosed.checked, dropped: heldClosed.dropped, released: heldClosed.released };
 
     // Hourly-trigger guards. Outside quiet hours nothing may send — skip
     // outright rather than write an hourly quiet_hours refusal row for
@@ -709,7 +715,7 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     // first in-window run drains them. (Booking-time attempts still log
     // their refusal rows — the would-have-sent trail lives there.)
     if (!withinQuietHours(now)) {
-      return res.json({ ok: true, date: todayCentral, skipped: 'outside_quiet_hours', owner_alerts: ownerAlerts });
+      return res.json({ ok: true, date: todayCentral, skipped: 'outside_quiet_hours', owner_alerts: ownerAlerts, held });
     }
     // Kill-switch off: nothing may send either, but the day's reminder
     // debts must still be RECORDED — the date-anchored passes can't select
@@ -729,7 +735,7 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
         targetDateStr: addDays(todayCentral, 3), stampColumn: 'sms_reminder_3day_at', queueColumn: 'sms_reminder_3day_queued_at', isToday: false, queueOnly: true, now,
       });
       const eveQueued = eveDue ? await runReminderPass({ ...eveArgs, queueOnly: true }) : { skipped: 'before_' + EVE_HOUR };
-      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, eve_queued: eveQueued, owner_alerts: ownerAlerts });
+      return res.json({ ok: true, date: todayCentral, skipped: 'sms_disabled', three_day_queued: threeDayQueued, eve_queued: eveQueued, owner_alerts: ownerAlerts, held });
     }
 
     // Confirmations first (a booking's "it's set" should precede any
@@ -749,7 +755,7 @@ router.post('/sms-reminders', requireCronSecret, async (req, res) => {
     res.json({
       ok: true, date: todayCentral, three_day: threeDay, eve,
       three_day_retry: threeDayRetry, eve_retry: eveRetry,
-      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry, owner_alerts: ownerAlerts, review,
+      booking_confirm_retry: bookingConfirmRetry, nudge_retry: nudgeRetry, owner_alerts: ownerAlerts, review, held,
     });
   } catch (err) {
     console.error('[gc-cron] sms-reminders error:', err && err.message);
@@ -1292,13 +1298,19 @@ async function runReviewRequestPass({ now }) {
 // kill-switch off nothing is attempted (the hourly run will). Never throws.
 async function runHeldSweep({ now } = {}) {
   const t = now || new Date();
-  if (!withinQuietHours(t) || !smsEnabled()) return { skipped: !smsEnabled() ? 'sms_disabled' : 'outside_quiet_hours' };
+  if (!withinQuietHours(t) || !smsEnabled()) {
+    // Nothing may send, but a held text that no longer applies is still closed now.
+    await closeStaleHeldTexts({ now: t });
+    return { skipped: !smsEnabled() ? 'sms_disabled' : 'outside_quiet_hours' };
+  }
   try {
     const bookingConfirm = await runBookingConfirmRetryPass({ now: t });
     const threeDay = await runReminderRetryPass({ kind: '3day', now: t });
     const eve = await runReminderRetryPass({ kind: 'eve', now: t });
     const nudge = await runNudgeRetryPass({ now: t });
-    return { booking_confirm: bookingConfirm, three_day: threeDay, eve, nudge };
+    // Then close out the held rows those passes just settled (sent or dropped).
+    const held = await closeStaleHeldTexts({ now: t });
+    return { booking_confirm: bookingConfirm, three_day: threeDay, eve, nudge, held: { checked: held.checked, dropped: held.dropped, released: held.released } };
   } catch (e) {
     console.error('[gc-cron] held sweep failed:', e && e.message);
     reportError(e, { route: 'gc-cron runHeldSweep' }).catch(() => {});

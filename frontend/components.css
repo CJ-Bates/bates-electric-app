@@ -121,6 +121,7 @@ html.dark .dialog-scrim{background:rgba(0,0,0,.45)}
 .eta-btns .btn svg{margin-right:4px}
 .eta-chooser{border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px;background:var(--surface-2);display:flex;flex-direction:column;gap:8px}
 .eta-chooser-title{font-weight:700;font-size:var(--fs-sm);color:var(--ink)}
+.eta-current{font-weight:400;color:var(--ink-2)}
 .eta-quick{display:flex;gap:6px;flex-wrap:wrap}
 .eta-quick .filter{padding:6px 12px;background:var(--surface)}
 .eta-quick .filter.active{background:var(--accent);color:var(--ink-inverse)}

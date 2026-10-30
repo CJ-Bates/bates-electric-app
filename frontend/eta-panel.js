@@ -23,6 +23,12 @@
   const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: CENTRAL, hour: 'numeric', minute: '2-digit' }) : '');
   const reasonLabel = (code) => (REASONS.find((r) => r[0] === code) || [])[1] || code;
   const digits = (p) => String(p || '').replace(/[^\d+]/g, '');
+  // Running late counts from the ETA the customer already has (same rule as
+  // lib/etaTexts.js); once that ETA has slipped by, from now. Null = from now.
+  const lateBase = (v) => {
+    const t = v.eta_at ? new Date(v.eta_at).getTime() : NaN;
+    return Number.isFinite(t) && t > Date.now() ? t : null;
+  };
 
   // mount(el, visit, send, { onUpdate }) - renders into el and keeps `visit`
   // updated from each result so the status line stays current.
@@ -37,13 +43,19 @@
       return lines.length ? `<div class="eta-status">${lines.map((l) => `<div>${l}</div>`).join('')}</div>` : '';
     }
 
+    function quickLabel(m) {
+      const base = st.kind === 'running_late' ? lateBase(v) : null;
+      return base ? `+${m} min (${esc(fmtTime(new Date(base + m * 60000).toISOString()))})` : `${m} min`;
+    }
+
     function render() {
       const omwLabel = v.en_route_at ? 'Update ETA' : 'On my way';
+      const lateTitle = v.eta_at ? `New arrival time <span class="eta-current">(current ETA ${esc(fmtTime(v.eta_at))})</span>` : 'New arrival time';
       const chooser = st.kind ? `
         <div class="eta-chooser" role="group" aria-label="Arrival time">
-          <div class="eta-chooser-title">${st.kind === 'running_late' ? 'New arrival time' : (v.en_route_at ? 'Send an updated arrival time' : 'Arrival time')}</div>
+          <div class="eta-chooser-title">${st.kind === 'running_late' ? lateTitle : (v.en_route_at ? 'Send an updated arrival time' : 'Arrival time')}</div>
           <div class="eta-quick">
-            ${QUICK.map((m) => `<button type="button" class="filter${st.minutes === m && !st.timeVal ? ' active' : ''}" data-eta-min="${m}">${m} min</button>`).join('')}
+            ${QUICK.map((m) => `<button type="button" class="filter${st.minutes === m && !st.timeVal ? ' active' : ''}" data-eta-min="${m}">${quickLabel(m)}</button>`).join('')}
           </div>
           <label class="eta-at">or at <input type="time" data-eta-time value="${esc(st.timeVal)}" aria-label="Arrival time" /></label>
           ${st.kind === 'running_late' ? `<label class="eta-reason">Reason (office only) <select data-eta-reason>${REASONS.map((r) => `<option value="${r[0]}"${st.reason === r[0] ? ' selected' : ''}>${esc(r[1])}</option>`).join('')}</select></label>` : ''}
@@ -101,10 +113,19 @@
 
     async function doSend() {
       if (st.busy || !st.kind) return;
+      const p = payload();
+      // "Running late" must move the time later (the backend refuses it too):
+      // an earlier time goes out as Update ETA, never under the apology copy.
+      if (st.kind === 'running_late' && p.eta_at && v.eta_at && new Date(p.eta_at).getTime() <= new Date(v.eta_at).getTime()) {
+        st.result = null;
+        st.error = `Running late needs a time after the current ETA (${fmtTime(v.eta_at)}). For an earlier time, use ${v.en_route_at ? 'Update ETA' : 'On my way'}.`;
+        render();
+        return;
+      }
       st.busy = true; st.error = null; st.result = null;
       render();
       try {
-        const res = await send(payload());
+        const res = await send(p);
         st.result = res;
         if (res && res.visit) Object.assign(v, res.visit);
         st.kind = null;

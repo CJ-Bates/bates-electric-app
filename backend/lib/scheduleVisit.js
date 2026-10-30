@@ -20,6 +20,7 @@
 // visit means not found / already completed / not assigned to that tech.
 
 const { supabaseAdmin } = require('./supabase');
+const { dropHeldForReschedule } = require('./heldTexts');
 
 async function scheduleServiceVisit({ visitId, appointmentAt, arrivalWindow, bookedBy, assignedTechId }) {
   // Pre-read for the audit trail ("moved from X to Y") with the same scoping
@@ -63,6 +64,11 @@ async function scheduleServiceVisit({ visitId, appointmentAt, arrivalWindow, boo
     .select('*, subscription:generator_subscriptions(id, plan, customer:generator_customers(id, name, email, phone, install_state))')
     .maybeSingle();
   if (error) throw error;
+
+  // Texts held during office mode for the OLD slot (its confirmation and
+  // reminders) can never be true now - close them out before the caller
+  // sends the new confirmation. Never throws.
+  if (updated) await dropHeldForReschedule({ visitId, appointmentAt: updated.appointment_at });
 
   return {
     visit: updated || null,

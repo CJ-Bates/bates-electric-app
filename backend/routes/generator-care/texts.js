@@ -227,7 +227,7 @@ async function nextVisitFor(customerId, now) {
   if (!subIds.length) return null;
   const { data: visits, error: vErr } = await supabaseAdmin
     .from('generator_service_visits')
-    .select('id, appointment_at, arrival_window, status, technician_id, sms_confirmed_at')
+    .select('id, appointment_at, arrival_window, status, assigned_tech_id, sms_confirmed_at')
     .in('subscription_id', subIds)
     .eq('status', 'scheduled')
     .not('appointment_at', 'is', null)
@@ -237,9 +237,11 @@ async function nextVisitFor(customerId, now) {
   if (vErr) throw vErr;
   const v = visits && visits[0];
   if (!v) return null;
+  // The dispatched tech (assigned_tech_id). technician_id is who COMPLETED a
+  // visit - always empty on an upcoming one, hence "Tech: unassigned".
   let tech = null;
-  if (v.technician_id) {
-    const { data: t } = await supabaseAdmin.from('profiles').select('full_name, email').eq('id', v.technician_id).maybeSingle();
+  if (v.assigned_tech_id) {
+    const { data: t } = await supabaseAdmin.from('profiles').select('full_name, email').eq('id', v.assigned_tech_id).maybeSingle();
     tech = (t && (t.full_name || t.email)) || null;
   }
   return {
@@ -248,6 +250,7 @@ async function nextVisitFor(customerId, now) {
     arrival_window: v.arrival_window,
     arrival_window_label: arrivalWindowLabel(v.arrival_window),
     tech,
+    assigned_tech_id: v.assigned_tech_id || null,
     sms_confirmed_at: v.sms_confirmed_at,
   };
 }
