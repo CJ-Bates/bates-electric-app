@@ -84,7 +84,7 @@ function makeWorld({ mode = 'office', visitToday = false, matched = true } = {})
     events: memTable([]),
     messages: memTable([]),
     visits: memTable([{
-      id: VISIT_ID, subscription_id: 'sub1', status: 'scheduled', sms_confirmed_at: null, technician_id: TECH_ID,
+      id: VISIT_ID, subscription_id: 'sub1', status: 'scheduled', sms_confirmed_at: null, assigned_tech_id: TECH_ID,
       arrival_window: '7-9',
       appointment_at: visitToday ? todayCentralIso() : new Date(Date.now() + 5 * 86400000).toISOString(),
     }]),

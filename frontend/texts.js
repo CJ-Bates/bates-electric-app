@@ -432,7 +432,8 @@
     const who = p.direction === 'in' ? '' : (p.by_staff ? 'Office: ' : 'Auto: ');
     if (p.status === 'note') return `<span class="bts-muted">Note: </span>${escapeHtml(p.body)}`;
     const refused = p.direction === 'out' && p.status !== 'sent';
-    return `${who ? `<span class="bts-muted">${who}</span>` : ''}${escapeHtml(p.body)}${refused ? ` <span class="bts-muted">(${p.status === 'held' ? 'held' : 'not sent'})</span>` : ''}`;
+    const tag = p.status === 'held' ? 'held' : (p.status === 'released' ? 'held, sent later' : 'not sent');
+    return `${who ? `<span class="bts-muted">${who}</span>` : ''}${escapeHtml(p.body)}${refused ? ` <span class="bts-muted">(${tag})</span>` : ''}`;
   }
   function renderList() {
     const list = $('#bts-list', tray);
@@ -513,7 +514,7 @@
   function statusChip(m) {
     if (gc().smsHistoryChip) return gc().smsHistoryChip(m);
     if (m.direction === 'in') return '<span class="badge badge-ok">Reply</span>';
-    const map = { sent: ['badge-ok', 'Sent'], failed: ['badge-danger', 'Failed'], held: ['badge-info', 'Held'], note: ['badge-neutral', 'Note'], undeliverable: ['badge-warn', 'Not deliverable'], opted_out: ['badge-warn', 'Not sent &mdash; opted out'], no_consent: ['badge-warn', 'Not sent &mdash; no consent'], quiet_hours: ['badge-neutral', 'Skipped &mdash; quiet hours'], stale: ['badge-neutral', 'Dropped'], disabled: ['badge-neutral', 'Logged &mdash; texting off'] };
+    const map = { sent: ['badge-ok', 'Sent'], failed: ['badge-danger', 'Failed'], held: ['badge-info', 'Held'], note: ['badge-neutral', 'Note'], undeliverable: ['badge-warn', 'Not deliverable'], opted_out: ['badge-warn', 'Not sent &mdash; opted out'], no_consent: ['badge-warn', 'Not sent &mdash; no consent'], quiet_hours: ['badge-neutral', 'Skipped &mdash; quiet hours'], stale: ['badge-neutral', 'Dropped'], dropped: ['badge-neutral', 'Not sent'], released: ['badge-neutral', 'Held &mdash; sent later'], disabled: ['badge-neutral', 'Logged &mdash; texting off'] };
     const [cls, label] = map[m.status] || ['badge-neutral', escapeHtml(m.status || '')];
     return `<span class="badge ${cls}">${label}</span>`;
   }
@@ -528,9 +529,11 @@
     const who = inbound ? '' : `<span class="bts-sender">${escapeHtml(senderLabel(m))}</span>`;
     const fail = (m.status === 'failed' || m.status === 'invalid_phone' || m.status === 'undeliverable') && m.detail ? `<div class="bts-note fail">${escapeHtml(m.detail)}</div>` : '';
     const heldNote = held ? '<div class="bts-note held">Held &mdash; will send if still relevant after hand-back</div>' : '';
+    // A held text closed out by lib/heldTexts.js: why it never went out.
+    const droppedNote = !inbound && m.status === 'dropped' ? `<div class="bts-note">Not sent &mdash; ${escapeHtml(m.detail || 'no longer relevant')}</div>` : '';
     return `<div class="bts-msg ${inbound ? 'bts-in' : 'bts-out'}${refused ? ' bts-refused' : ''}${held ? ' bts-held' : ''}">
       <div class="bts-bubble">${escapeHtml(m.body || '')}</div>
-      <div class="bts-meta">${who}<span>${escapeHtml(fmtCentral(m.created_at))}</span>${statusChip(m)}</div>${heldNote}${fail}
+      <div class="bts-meta">${who}<span>${escapeHtml(fmtCentral(m.created_at))}</span>${statusChip(m)}</div>${heldNote}${droppedNote}${fail}
     </div>`;
   }
   function renderMessages(messages) {

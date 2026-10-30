@@ -96,7 +96,7 @@ function makeWorld({ visitToday = true } = {}) {
       if (upd) { world.visitUpdates.push(upd.args[0]); return { data: null, error: null }; }
       return {
         data: visitToday
-          ? [{ id: VISIT_ID, subscription_id: 'sub1', appointment_at: todayCentralIso(), arrival_window: '7-9', status: 'scheduled', sms_confirmed_at: null, technician_id: TECH_ID }]
+          ? [{ id: VISIT_ID, subscription_id: 'sub1', appointment_at: todayCentralIso(), arrival_window: '7-9', status: 'scheduled', sms_confirmed_at: null, assigned_tech_id: TECH_ID }]
           : [],
         error: null,
       };

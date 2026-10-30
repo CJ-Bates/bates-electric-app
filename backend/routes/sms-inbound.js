@@ -192,7 +192,7 @@ async function findVisitToday(customerIds, now) {
     const t = now || Date.now();
     const { data: visits, error: vErr } = await supabaseAdmin
       .from('generator_service_visits')
-      .select('id, subscription_id, appointment_at, arrival_window, status, technician_id')
+      .select('id, subscription_id, appointment_at, arrival_window, status, assigned_tech_id')
       .in('subscription_id', subIds)
       .eq('status', 'scheduled')
       .not('appointment_at', 'is', null)
@@ -204,10 +204,10 @@ async function findVisitToday(customerIds, now) {
     const visit = (visits || []).find((v) => v.appointment_at && centralDate(v.appointment_at) === today) || null;
     if (!visit) return null;
     let techName = null;
-    if (visit.technician_id) {
+    if (visit.assigned_tech_id) { // the dispatched tech (technician_id = who completed it)
       try {
         const { data: tech } = await supabaseAdmin
-          .from('profiles').select('full_name, email').eq('id', visit.technician_id).maybeSingle();
+          .from('profiles').select('full_name, email').eq('id', visit.assigned_tech_id).maybeSingle();
         techName = (tech && (tech.full_name || tech.email)) || null;
       } catch (e) { /* name is a nicety */ }
     }

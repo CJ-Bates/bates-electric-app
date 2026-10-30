@@ -149,7 +149,8 @@ test('queued 3-day reminder during office mode: held (stamp untouched); after ha
   assert.match(smsCalls[0].text, /reminder: your generator maintenance is on/);
   assert.ok(world.visits.rows[0].sms_reminder_3day_at, 'stamped terminal after the real send');
   const statuses = outRows().map((m) => m.status);
-  assert.deepEqual(statuses, ['held', 'sent']);
+  assert.deepEqual(statuses, ['released', 'sent'], 'the held row is closed out once the real send happened');
+  assert.match(outRows()[0].detail, /sent after hand-back/);
 });
 
 test('held reminder whose appointment day has passed by hand-back is DROPPED on record, never sent late', async () => {
