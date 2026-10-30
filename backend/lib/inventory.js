@@ -1,0 +1,145 @@
+// backend/lib/inventory.js
+// Warehouse inventory (sql/039) helpers shared by routes/inventory.js.
+//
+// The one rule: quantities move ONLY through the inventory_post_txn() /
+// inventory_post_count_session() database functions, which lock the item and
+// write the ledger row + the new qty in one transaction (a trigger refuses any
+// other change to qty_on_hand). postTxn() below is the single JS door to them;
+// it maps the functions' errors to HTTP statuses (22023 = a rule said no ->
+// 400 with the function's own message; P0002 = not found -> 404).
+
+const { supabaseAdmin } = require('./supabase');
+
+const PHOTOS_BUCKET = 'inventory-photos';
+const PHOTO_URL_TTL_SECONDS = 60 * 60 * 8; // a warehouse shift
+
+// Categories are validated here, not in SQL, so adding one needs no migration.
+const CATEGORIES = [
+  ['ats', 'Transfer switch (ATS)'],
+  ['generator_part', 'Generator part'],
+  ['filter', 'Filter'],
+  ['battery', 'Battery'],
+  ['breaker', 'Breaker'],
+  ['panel', 'Panel / load center'],
+  ['wire', 'Wire / cable'],
+  ['fitting', 'Conduit / fittings'],
+  ['tool', 'Tool'],
+  ['misc', 'Misc'],
+];
+const CATEGORY_KEYS = new Set(CATEGORIES.map((c) => c[0]));
+const CONDITIONS = new Set(['new', 'open_box', 'used']);
+const TXN_TYPES = new Set(['initial_count', 'received', 'scanned_out', 'adjustment', 'sold', 'disposed']);
+
+class InventoryError extends Error {
+  constructor(status, message, extra) {
+    super(message);
+    this.status = status;
+    this.extra = extra || null;
+  }
+}
+
+function mapRpcError(error) {
+  const msg = (error && error.message) || 'Inventory update failed';
+  if (error && error.code === '22023') return new InventoryError(400, msg);
+  if (error && error.code === 'P0002') return new InventoryError(404, msg);
+  return new InventoryError(500, msg);
+}
+
+// Post one ledger row. Returns the inventory_transactions row (the original
+// one when client_op_id was already used - an offline resend).
+async function postTxn({ itemId, type, actorId, qtyChange, setQty, unitId, clientOpId, sessionId, jobNote, customerId, note, occurredAt, source, allowNegative }) {
+  if (!TXN_TYPES.has(type)) throw new InventoryError(400, 'Unknown transaction type.');
+  const { data, error } = await supabaseAdmin.rpc('inventory_post_txn', {
+    p_item_id: itemId,
+    p_type: type,
+    p_actor_id: actorId || null,
+    p_qty_change: qtyChange == null ? null : Number(qtyChange),
+    p_set_qty: setQty == null ? null : Number(setQty),
+    p_unit_id: unitId || null,
+    p_client_op_id: clientOpId || null,
+    p_session_id: sessionId || null,
+    p_job_note: jobNote || null,
+    p_customer_id: customerId || null,
+    p_note: note || null,
+    p_occurred_at: occurredAt || null,
+    p_source: source || null,
+    p_allow_negative: !!allowNegative,
+  });
+  if (error) throw mapRpcError(error);
+  return Array.isArray(data) ? data[0] : data;
+}
+
+async function postCountSession({ sessionId, actorId }) {
+  const { data, error } = await supabaseAdmin.rpc('inventory_post_count_session', { p_session_id: sessionId, p_actor_id: actorId || null });
+  if (error) throw mapRpcError(error);
+  return Number(data) || 0;
+}
+
+// Signed URLs for a list of storage paths -> Map(path -> url). Never throws:
+// a missing photo is a blank thumbnail, not a broken page.
+async function signPhotoUrls(paths, ttl = PHOTO_URL_TTL_SECONDS) {
+  const out = new Map();
+  const list = [...new Set((paths || []).filter(Boolean))];
+  if (!list.length) return out;
+  try {
+    const { data, error } = await supabaseAdmin.storage.from(PHOTOS_BUCKET).createSignedUrls(list, ttl);
+    if (error) throw error;
+    for (const row of data || []) if (row && row.path && row.signedUrl) out.set(row.path, row.signedUrl);
+  } catch (e) {
+    console.error('[inventory] photo signing failed:', e && e.message);
+  }
+  return out;
+}
+
+// Numbers from the API body: finite, rounded to cents (qty is numeric(12,2)).
+function num(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.round(n * 100) / 100;
+}
+const n2 = (v) => (v == null ? 0 : Number(v));
+
+// CSV cell: quoted, and spreadsheet-formula injection defused (a cell that
+// starts with = + - @ is prefixed with ' so Excel shows it as text).
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+function toCsv(rows) {
+  return rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+}
+
+const money = (cents) => (cents == null ? '' : (cents / 100).toFixed(2));
+const conditionLabel = (c) => ({ new: 'New', open_box: 'New - open box', used: 'Used' }[c] || c || '');
+const categoryLabel = (k) => (CATEGORIES.find((c) => c[0] === k) || [k, k || ''])[1];
+
+// The surplus export rows (CSV + PDF share them).
+function surplusRows(items) {
+  return items.map((i) => ({
+    description: i.description,
+    manufacturer: i.manufacturer || '',
+    part_number: i.part_number || '',
+    category: categoryLabel(i.category),
+    condition: conditionLabel(i.condition),
+    surplus_qty: n2(i.surplus_qty),
+    unit: i.unit_of_measure || 'each',
+    price: money(i.surplus_price_cents),
+    location: i.location || '',
+    notes: i.surplus_notes || '',
+  }));
+}
+
+function surplusCsv(items) {
+  const header = ['Description', 'Manufacturer', 'Part #', 'Category', 'Condition', 'Surplus qty', 'Unit', 'Asking price (each)', 'Location', 'Notes'];
+  return toCsv([header].concat(surplusRows(items).map((r) => [
+    r.description, r.manufacturer, r.part_number, r.category, r.condition, r.surplus_qty, r.unit, r.price, r.location, r.notes,
+  ])));
+}
+
+module.exports = {
+  PHOTOS_BUCKET, PHOTO_URL_TTL_SECONDS, CATEGORIES, CATEGORY_KEYS, CONDITIONS, TXN_TYPES,
+  InventoryError, postTxn, postCountSession, signPhotoUrls, num, n2, csvCell, toCsv, money,
+  conditionLabel, categoryLabel, surplusRows, surplusCsv,
+};

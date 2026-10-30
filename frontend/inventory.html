@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#F4F6FA" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Bates Electric" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="components.css" />
+  <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="ui-dialogs.css" />
+  <link rel="stylesheet" href="inventory.css" />
+  <title>Bates Electric — Inventory</title>
+  <script>
+    // Apply the saved Settings theme before first paint (no white flash in a dark warehouse).
+    try { if (localStorage.getItem('bates.theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+  </script>
+</head>
+<body class="hub-body dashboard-body inv-body">
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <main class="dashboard-main inv-main">
+    <div class="inv-head">
+      <h1 class="inv-h1"><a href="#/" class="inv-h1-link">Inventory</a></h1>
+      <button type="button" class="inv-sync" id="inv-sync" hidden aria-live="polite"></button>
+    </div>
+    <div id="inv-view" class="inv-view">
+      <div class="inv-skel"><span style="width:60%"></span><span style="width:85%"></span><span style="width:72%"></span></div>
+    </div>
+  </main>
+
+  <script src="shared-nav.js"></script>
+  <script src="ui-dialogs.js"></script>
+  <script src="barcode-normalize.js"></script>
+  <script src="inventory-store.js"></script>
+  <script src="scanner.js"></script>
+  <script src="inventory.js"></script>
+</body>
+</html>

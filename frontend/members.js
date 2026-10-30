@@ -32,6 +32,26 @@
     { key: 'texting',         label: 'Texting',         hint: 'Texts inbox, take over / hand back, send texts to customers' },
   ];
 
+  // Warehouse inventory access (sql/039): three nested flags shown as ONE
+  // level, so a member can never be "manage" without "view".
+  const INVENTORY_LEVELS = [
+    { key: 'none',   label: 'No access',             flags: { inventory_view: false, inventory_scan_out: false, inventory_manage: false } },
+    { key: 'view',   label: 'Look up',               flags: { inventory_view: true,  inventory_scan_out: false, inventory_manage: false } },
+    { key: 'scan',   label: 'Look up + scan out',    flags: { inventory_view: true,  inventory_scan_out: true,  inventory_manage: false } },
+    { key: 'manage', label: 'Full (warehouse)',      flags: { inventory_view: true,  inventory_scan_out: true,  inventory_manage: true } },
+  ];
+  const inventoryLevel = (p) => (!p ? 'none' : p.inventory_manage ? 'manage' : p.inventory_scan_out ? 'scan' : p.inventory_view ? 'view' : 'none');
+  function inventorySelectHtml(m) {
+    const level = inventoryLevel(m.permissions);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;">
+      <span class="gc-meta-value">Inventory</span>
+      <select data-inv-level data-member="${escapeHtml(m.id)}"${m.is_admin ? ' disabled' : ''} style="padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit;font-size:var(--fs-sm);">
+        ${INVENTORY_LEVELS.map((l) => `<option value="${l.key}"${l.key === level ? ' selected' : ''}>${escapeHtml(l.label)}</option>`).join('')}
+      </select>
+      <span class="gc-meta-label">Warehouse stock: look up, scan out, or full (add, count, adjust, surplus)</span>
+    </label>`;
+  }
+
   let me = null;          // profile from /me (with permissions + is_admin)
   let isAdmin = false;
   let staffList = [];     // office members (admin view, from /api/members)
@@ -97,6 +117,7 @@
     return `<div class="gc-card-row" data-panel-for="${escapeHtml(m.id)}" style="display:block;background:var(--surface-2, rgba(27,45,91,0.03));border-radius:8px;padding:10px 12px;">
       ${m.is_admin ? '<p class="gc-meta-label" style="margin:0 0 4px;">Admins have every permission; demote to use individual toggles.</p>' : ''}
       ${toggles}
+      ${inventorySelectHtml(m)}
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
         <button class="btn btn-secondary btn-sm" data-resend-staff="${escapeHtml(m.id)}">Resend set-password link</button>
         <button class="btn btn-secondary btn-sm" data-toggle-admin="${escapeHtml(m.id)}" data-make="${m.is_admin ? '0' : '1'}">${m.is_admin ? 'Remove admin' : 'Make admin'}</button>
@@ -133,6 +154,9 @@
     el.querySelectorAll('[data-perm]').forEach((cb) => {
       cb.addEventListener('change', () => setPermission(cb.dataset.member, cb.dataset.perm, cb.checked, cb));
     });
+    el.querySelectorAll('[data-inv-level]').forEach((sel) => {
+      sel.addEventListener('change', () => setInventoryLevel(sel.dataset.member, sel.value, sel));
+    });
     el.querySelectorAll('[data-resend-staff]').forEach((b) => {
       b.addEventListener('click', () => resendStaffInvite(b.dataset.resendStaff));
     });
@@ -164,6 +188,25 @@
         next: `Check the email address and try again. If ${name} already shows in the list, use "Resend set-password link" instead.`,
         danger: true,
       });
+    }
+  }
+
+  async function setInventoryLevel(memberId, levelKey, sel) {
+    const level = INVENTORY_LEVELS.find((l) => l.key === levelKey);
+    if (!level) return;
+    const member = staffList.concat(techList).find((m) => m.id === memberId);
+    const previous = member ? inventoryLevel(member.permissions) : 'none';
+    try {
+      const data = await api(`/api/members/${memberId}/permissions`, {
+        method: 'PATCH', headers: authHeaders(true), body: JSON.stringify(level.flags),
+      });
+      if (member) member.permissions = data.permissions;
+      renderStaffList();
+      renderTechsList();
+      showStatus(`Inventory access: ${level.label}.`, 'success');
+    } catch (e) {
+      if (sel) sel.value = previous;
+      showStatus(`Couldn't update inventory access: ${e.message}`, 'error');
     }
   }
 
@@ -268,7 +311,7 @@
       const selfSched = t.permissions
         ? `<label class="gc-meta-label" style="display:inline-flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;">
              <input type="checkbox" data-perm="tech_reschedule" data-member="${escapeHtml(t.id)}"${t.permissions.tech_reschedule ? ' checked' : ''} />
-             Can book/move their own appointments</label>`
+             Can book/move their own appointments</label>${inventorySelectHtml(t)}`
         : '';
       const lastSeen = t.permissions ? ` &middot; last sign-in ${escapeHtml(fmtStamp(t.last_sign_in_at))}` : '';
       return `<div class="gc-card-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;${inactive ? 'opacity:0.6;' : ''}">
@@ -291,6 +334,9 @@
     });
     el.querySelectorAll('[data-perm]').forEach((cb) => {
       cb.addEventListener('change', () => setPermission(cb.dataset.member, cb.dataset.perm, cb.checked, cb));
+    });
+    el.querySelectorAll('[data-inv-level]').forEach((sel) => {
+      sel.addEventListener('change', () => setInventoryLevel(sel.dataset.member, sel.value, sel));
     });
   }
 

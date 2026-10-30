@@ -12,6 +12,22 @@
 
 const crypto = require('crypto');
 
+// Postgres ILIKE: case-insensitive, % = any run, _ = one char, backslash escapes.
+const reEscape = (ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function ilikeMatch(value, pattern) {
+  if (value == null) return false;
+  let re = '';
+  const p = String(pattern);
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i];
+    if (c === '\\' && i + 1 < p.length) { re += reEscape(p[++i]); continue; }
+    if (c === '%') re += '.*';
+    else if (c === '_') re += '.';
+    else re += reEscape(c);
+  }
+  return new RegExp('^' + re + '$', 'is').test(String(value));
+}
+
 function memTable(initialRows = [], { idColumn = 'id', defaults } = {}) {
   const rows = initialRows.map((r) => ({ ...r }));
 
@@ -27,6 +43,7 @@ function memTable(initialRows = [], { idColumn = 'id', defaults } = {}) {
         case 'gte': if (!(row[col] != null && row[col] >= a)) return false; break;
         case 'lt': if (!(row[col] != null && row[col] < a)) return false; break;
         case 'lte': if (!(row[col] != null && row[col] <= a)) return false; break;
+        case 'ilike': if (!ilikeMatch(row[col], a)) return false; break;
         case 'not':
           if (a === 'is' && b === null) { if (row[col] == null) return false; break; }
           if (a === 'eq') { if (row[col] === b) return false; break; }
@@ -49,7 +66,7 @@ function memTable(initialRows = [], { idColumn = 'id', defaults } = {}) {
 
   function resolver(chain, terminal) {
     const op = chain.find((c) => ['select', 'insert', 'update', 'upsert', 'delete'].includes(c.method));
-    const filters = chain.filter((c) => ['eq', 'neq', 'is', 'in', 'gt', 'gte', 'lt', 'lte', 'not', 'or'].includes(c.method));
+    const filters = chain.filter((c) => ['eq', 'neq', 'is', 'in', 'gt', 'gte', 'lt', 'lte', 'not', 'or', 'ilike'].includes(c.method));
     const order = chain.find((c) => c.method === 'order');
     const limit = chain.find((c) => c.method === 'limit');
     const finish = (list) => {

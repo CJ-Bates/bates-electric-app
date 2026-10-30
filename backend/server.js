@@ -13,6 +13,7 @@ const generatorCareCronRouter = require('./routes/generator-care-cron');
 const generatorCarePublicRouter = require('./routes/generator-care-public');
 const customerRouter = require('./routes/customer');
 const membersRouter = require('./routes/members');
+const inventoryRouter = require('./routes/inventory');
 const smsInboundRouter = require('./routes/sms-inbound');
 const emailEventsRouter = require('./routes/email-events');
 const magicShortlinkRouter = require('./routes/magic-shortlink');
@@ -135,6 +136,9 @@ app.use('/api/sms', smsInboundRouter);
 app.use('/api/email', emailEventsRouter);
 // Member management (Members page) — admin-gated inside the router.
 app.use('/api/members', membersRouter);
+
+// Warehouse inventory (sql/039): office + tech, member inventory_* flags.
+app.use('/api/inventory', inventoryRouter);
 
 // Global error handler -- mounted LAST so it catches errors from every route
 // above (including the generator-care + cron routers). Logs + optional Sentry
