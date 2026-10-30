@@ -17,9 +17,10 @@ const crypto = require('crypto');
 
 const VENDOR = path.join(__dirname, '..', '..', 'frontend', 'vendor', 'zxing', 'zxing-library.min.js');
 const ZXing = require(VENDOR);
-const { create } = require('../../frontend/scanner-decode.js');
+const { create, screenBoxToVideo, inBox } = require('../../frontend/scanner-decode.js');
 const B = require('../lib/barcodes');
-const decode = create(ZXing);
+const decodeAll = create(ZXing);
+const decode = (px, w, h) => decodeAll(px, w, h)[0] || null;
 
 // ---- tiny renderers: module widths -> RGBA frame ---------------------------
 // widths alternate bar/space starting with a bar; `scale` px per module.
@@ -167,4 +168,87 @@ test('normalizer: one product, many spellings', () => {
   assert.equal(B.normalize(''), '');
   assert.equal(B.checkDigitOk('036000291452'), true);
   assert.equal(B.checkDigitOk('036000291453'), false);
+});
+
+// ---- aim-then-scan (2026-10-30): several codes in the box -------------------
+// Paint several 1D codes onto one frame at given positions.
+function compose(w, h, parts) {
+  const px = new Uint8ClampedArray(w * h * 4).fill(255);
+  for (const { widths, x, y, scale = 2, height = 70 } of parts) {
+    let cx = x;
+    widths.forEach((m, i) => {
+      if (i % 2 === 0) {
+        for (let xx = cx; xx < cx + m * scale; xx++) for (let yy = y; yy < y + height; yy++) {
+          const o = (yy * w + xx) * 4; px[o] = px[o + 1] = px[o + 2] = 0;
+        }
+      }
+      cx += m * scale;
+    });
+  }
+  return px;
+}
+
+test('two codes side by side in the box: both found, nearest the centre first', () => {
+  const W = 900; const H = 260;
+  const a = ean13Widths('0036000291452'); // UPC-A 036000291452
+  const b = ean13Widths('4006381333931');
+  const total = (ws) => ws.reduce((s, v) => s + v, 0) * 2;
+  // a sits left of centre, b is centred
+  const bx = Math.round(W / 2 - total(b) / 2);
+  const px = compose(W, H, [{ widths: a, x: 20, y: 95 }, { widths: b, x: bx, y: 95 }]);
+  const found = decodeAll(px, W, H);
+  assert.equal(found.length, 2, JSON.stringify(found));
+  assert.equal(found[0].text, '4006381333931', 'the centred one first');
+  assert.equal(found[1].text, '036000291452');
+  assert.ok(found[0].dist < found[1].dist);
+});
+
+test('two codes stacked one above the other are both found', () => {
+  const W = 400; const H = 300;
+  const px = compose(W, H, [{ widths: code128Widths('SHELF-A1'), x: 40, y: 30, height: 60 }, { widths: code128Widths('PN-7781'), x: 40, y: 200, height: 60 }]);
+  const texts = decodeAll(px, W, H).map((f) => f.text).sort();
+  assert.deepEqual(texts, ['PN-7781', 'SHELF-A1']);
+});
+
+test('one code: one result (masking never re-reports the same code)', () => {
+  const f = renderWidths(ean13Widths('4006381333931'));
+  const found = decodeAll(f.px, f.w, f.h);
+  assert.equal(found.length, 1);
+});
+
+test('aim box -> camera pixels through object-fit: cover', () => {
+  // 1920x1080 camera shown in a 400x800 portrait element: scale 800/1080,
+  // the visible picture is the centre 540 px of the width.
+  const video = { left: 0, top: 0, width: 400, height: 800 };
+  const box = { left: 40, top: 300, width: 320, height: 200 };
+  const r = screenBoxToVideo(box, video, 1920, 1080);
+  const scale = 800 / 1080;
+  const offX = (400 - 1920 * scale) / 2;
+  assert.ok(Math.abs(r.x - (40 - offX) / scale) < 0.01);
+  assert.ok(Math.abs(r.y - 300 / scale) < 0.01);
+  assert.ok(Math.abs(r.w - 320 / scale) < 0.01);
+  assert.ok(Math.abs(r.h - 200 / scale) < 0.01);
+});
+
+test('native detector results: only codes FULLY inside the box count, nearest centre first', () => {
+  const box = { x: 100, y: 100, w: 400, h: 200 };
+  const corners = (x, y, w, h) => [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+  const codes = [
+    { rawValue: 'OUTSIDE', format: 'ean_13', cornerPoints: corners(600, 120, 80, 40) },
+    { rawValue: 'HALF-IN', format: 'code_128', cornerPoints: corners(450, 150, 120, 40) },
+    { rawValue: 'EDGE', format: 'upc_a', cornerPoints: corners(110, 110, 80, 40) },
+    { rawValue: 'CENTRE', format: 'upc_a', cornerPoints: corners(260, 180, 80, 40) },
+  ];
+  assert.deepEqual(inBox(codes, box).map((c) => c.text), ['CENTRE', 'EDGE']);
+  assert.deepEqual(inBox([codes[0], codes[1]], box), [], 'nothing fully inside');
+});
+
+test('two short Code 128 labels close together (24 px gap) are both found - the first one is fully blanked', () => {
+  // Regression from the headless camera test: ZXing reports start/stop pattern
+  // CENTRES, so a padded mask left stop-pattern bars in the second code's quiet zone.
+  const W = 356; const H = 192;
+  const a = code128Widths('A1'); const b = code128Widths('B2');
+  const aw = a.reduce((s, v) => s + v, 0) * 2;
+  const px = compose(W, H, [{ widths: a, x: 52, y: 56, height: 80 }, { widths: b, x: 52 + aw + 24, y: 56, height: 80 }]);
+  assert.deepEqual(decodeAll(px, W, H).map((f) => f.text).sort(), ['A1', 'B2']);
 });

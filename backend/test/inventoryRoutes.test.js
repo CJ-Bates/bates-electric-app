@@ -52,7 +52,24 @@ function fakeRpc(name, a) {
     const it = items.find((i) => i.id === a.p_item_id);
     if (!it) return pgError('P0002', 'inventory item not found');
     let change;
-    if (it.serialized) {
+    let unitId = a.p_unit_id;
+    if (a.p_reverses_txn_id) {
+      // sql/040 undo rules
+      const orig = ledger.find((t) => t.id === a.p_reverses_txn_id);
+      if (!orig) return pgError('P0002', 'nothing to undo');
+      if (orig.reverses_txn_id) return pgError('22023', "an undo can't be undone");
+      const prior = ledger.find((t) => t.reverses_txn_id === orig.id);
+      if (prior) return { data: prior, error: null };
+      if (orig.unit_id) {
+        unitId = orig.unit_id;
+        const u = world.units.rows.find((x) => x.id === orig.unit_id);
+        if (orig.qty_change > 0) { if (u.status !== 'in_stock') return pgError('22023', 'no longer in stock'); u.status = 'pending'; change = -1; }
+        else { if (u.status === 'in_stock') return pgError('22023', 'already back in stock'); u.status = 'in_stock'; change = 1; }
+      } else {
+        change = -orig.qty_change;
+        if (it.qty_on_hand + change < 0) return pgError('22023', "only " + it.qty_on_hand + " on hand - can't undo");
+      }
+    } else if (it.serialized) {
       if (!a.p_unit_id) return pgError('22023', 'serialized item: pick the unit (serial number)');
       const u = world.units.rows.find((x) => x.id === a.p_unit_id && x.item_id === it.id);
       if (!u) return pgError('P0002', 'unit not found on this item');
@@ -75,7 +92,7 @@ function fakeRpc(name, a) {
     if (['sold', 'disposed'].includes(a.p_type)) surplus = Math.max(surplus + change, 0);
     surplus = Math.min(surplus, Math.max(result, 0));
     const row = {
-      id: crypto.randomUUID(), item_id: it.id, unit_id: a.p_unit_id, txn_type: a.p_type, qty_change: change, resulting_qty: result,
+      id: crypto.randomUUID(), item_id: it.id, unit_id: unitId, txn_type: a.p_type, reverses_txn_id: a.p_reverses_txn_id || null, qty_change: change, resulting_qty: result,
       actor_id: a.p_actor_id, client_op_id: a.p_client_op_id, session_id: a.p_session_id, job_note: a.p_job_note, customer_id: a.p_customer_id,
       note: a.p_note, source: a.p_source, created_at: new Date().toISOString(), allow_negative: a.p_allow_negative,
     };
@@ -347,4 +364,79 @@ test('catalog: techs see unit cost (no hiding), permissions echoed, last count a
   assert.deepEqual(res.body.permissions, { view: true, scan_out: true, manage: false });
   assert.equal(breaker.last_count.session_id, S);
   assert.equal(res.body.barcodes.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Undo (sql/040)
+const undoOp = (payload) => ({ kind: 'undo', payload: { client_op_id: crypto.randomUUID(), ...payload } });
+const rowFor = (opId) => world.txns.rows.find((t) => t.client_op_id === opId);
+
+test('undo: reverses my + In (by the original client_op_id), linked + noted; a second undo returns the first', async () => {
+  const op = crypto.randomUUID();
+  await sync(WAREHOUSE, [{ kind: 'txn', payload: { client_op_id: op, item_id: ITEM, type: 'received', qty: 3 } }]);
+  assert.equal(item(ITEM).qty_on_hand, 13);
+  let r = await sync(WAREHOUSE, [undoOp({ original_client_op_id: op })]);
+  assert.equal(r[0].ok, true, JSON.stringify(r[0]));
+  assert.equal(item(ITEM).qty_on_hand, 10);
+  const u = world.txns.rows.at(-1);
+  assert.equal(u.txn_type, 'adjustment');
+  assert.equal(u.qty_change, -3);
+  assert.equal(u.reverses_txn_id, rowFor(op).id);
+  assert.equal(u.note, 'undo of received');
+  assert.equal(world.txns.rows.length, 2, 'both rows stay in the ledger');
+  r = await sync(WAREHOUSE, [undoOp({ txn_id: rowFor(op).id })]);
+  assert.equal(r[0].ok, true);
+  assert.equal(r[0].result.already, true);
+  assert.equal(item(ITEM).qty_on_hand, 10, 'not undone twice');
+  r = await sync(WAREHOUSE, [undoOp({ txn_id: u.id })]);
+  assert.equal(r[0].status, 400, 'an undo cannot be undone');
+});
+
+test('undo rules: own changes only, 15 minutes, most recent still standing; count-session rows excluded; never-synced = 404', async () => {
+  const mine = crypto.randomUUID();
+  const theirs = crypto.randomUUID();
+  await sync(TECH, [{ kind: 'txn', payload: { client_op_id: theirs, item_id: ITEM, type: 'scanned_out', qty: 1 } }]);
+  await sync(WAREHOUSE, [{ kind: 'txn', payload: { client_op_id: mine, item_id: ITEM, type: 'received', qty: 2 } }]);
+  let r = await sync(WAREHOUSE, [undoOp({ original_client_op_id: theirs })]);
+  assert.equal(r[0].status, 403, 'someone else\'s change');
+  assert.match(r[0].error, /your own/);
+
+  rowFor(mine).created_at = new Date(Date.now() - 16 * 60000).toISOString();
+  r = await sync(WAREHOUSE, [undoOp({ original_client_op_id: mine })]);
+  assert.equal(r[0].status, 409);
+  assert.match(r[0].error, /15 minutes/);
+  rowFor(mine).created_at = new Date(Date.now() - 60000).toISOString();
+
+  const second = crypto.randomUUID();
+  await sync(WAREHOUSE, [{ kind: 'txn', payload: { client_op_id: second, item_id: ITEM, type: 'adjustment', set_qty: 20 } }]);
+  r = await sync(WAREHOUSE, [undoOp({ original_client_op_id: mine })]);
+  assert.equal(r[0].status, 409, 'not my most recent');
+  r = await sync(WAREHOUSE, [undoOp({ original_client_op_id: second }), undoOp({ original_client_op_id: mine })]);
+  assert.deepEqual(r.map((x) => x.ok), [true, true], 'undo the Count, then the + In before it');
+  assert.equal(item(ITEM).qty_on_hand, 9, '10 - 1 (tech) + 2 - 2, Count undone');
+
+  r = await sync(WAREHOUSE, [undoOp({ original_client_op_id: crypto.randomUUID() })]);
+  assert.equal(r[0].status, 404);
+  world.txns.rows.push({ id: crypto.randomUUID(), item_id: ITEM, txn_type: 'initial_count', qty_change: 5, actor_id: WAREHOUSE.id, session_id: crypto.randomUUID(), created_at: new Date().toISOString(), reverses_txn_id: null });
+  r = await sync(WAREHOUSE, [undoOp({ txn_id: world.txns.rows.at(-1).id })]);
+  assert.equal(r[0].status, 400, 'count-session rows are not undone here');
+});
+
+test('undo: a tech undoes their own scan-out (also a serialized unit -> back in stock) but cannot undo a receive', async () => {
+  const out = crypto.randomUUID();
+  await sync(TECH, [{ kind: 'txn', payload: { client_op_id: out, item_id: ATS, type: 'scanned_out', unit_id: 'u1000000-0000-4000-8000-000000000001' } }]);
+  assert.equal(world.units.rows[0].status, 'out');
+  assert.equal(item(ATS).qty_on_hand, 0);
+  let r = await sync(TECH, [undoOp({ original_client_op_id: out })]);
+  assert.equal(r[0].ok, true, JSON.stringify(r[0]));
+  assert.equal(world.units.rows[0].status, 'in_stock', 'the unit is back in stock');
+  assert.equal(item(ATS).qty_on_hand, 1);
+  assert.equal(world.txns.rows.at(-1).unit_id, 'u1000000-0000-4000-8000-000000000001');
+
+  // A receive made by the tech's account (e.g. promoted later) still needs manage to undo.
+  const recv = crypto.randomUUID();
+  await sync(WAREHOUSE, [{ kind: 'txn', payload: { client_op_id: recv, item_id: ITEM, type: 'received', qty: 1 } }]);
+  rowFor(recv).actor_id = TECH.id;
+  r = await sync(TECH, [undoOp({ original_client_op_id: recv })]);
+  assert.equal(r[0].status, 403);
 });

@@ -29,6 +29,9 @@ const CATEGORIES = [
 const CATEGORY_KEYS = new Set(CATEGORIES.map((c) => c[0]));
 const CONDITIONS = new Set(['new', 'open_box', 'used']);
 const TXN_TYPES = new Set(['initial_count', 'received', 'scanned_out', 'adjustment', 'sold', 'disposed']);
+// What Undo covers (+ In, - Out / scan-out, Count) and for how long.
+const UNDOABLE_TYPES = new Set(['received', 'scanned_out', 'adjustment']);
+const UNDO_WINDOW_MS = 15 * 60 * 1000;
 
 class InventoryError extends Error {
   constructor(status, message, extra) {
@@ -47,9 +50,9 @@ function mapRpcError(error) {
 
 // Post one ledger row. Returns the inventory_transactions row (the original
 // one when client_op_id was already used - an offline resend).
-async function postTxn({ itemId, type, actorId, qtyChange, setQty, unitId, clientOpId, sessionId, jobNote, customerId, note, occurredAt, source, allowNegative }) {
+async function postTxn({ itemId, type, actorId, qtyChange, setQty, unitId, clientOpId, sessionId, jobNote, customerId, note, occurredAt, source, allowNegative, reversesTxnId }) {
   if (!TXN_TYPES.has(type)) throw new InventoryError(400, 'Unknown transaction type.');
-  const { data, error } = await supabaseAdmin.rpc('inventory_post_txn', {
+  const args = {
     p_item_id: itemId,
     p_type: type,
     p_actor_id: actorId || null,
@@ -64,7 +67,10 @@ async function postTxn({ itemId, type, actorId, qtyChange, setQty, unitId, clien
     p_occurred_at: occurredAt || null,
     p_source: source || null,
     p_allow_negative: !!allowNegative,
-  });
+  };
+  // An undo (sql/040) reverses one earlier row; the key is sent only then.
+  if (reversesTxnId) args.p_reverses_txn_id = reversesTxnId;
+  const { data, error } = await supabaseAdmin.rpc('inventory_post_txn', args);
   if (error) throw mapRpcError(error);
   return Array.isArray(data) ? data[0] : data;
 }
@@ -139,7 +145,7 @@ function surplusCsv(items) {
 }
 
 module.exports = {
-  PHOTOS_BUCKET, PHOTO_URL_TTL_SECONDS, CATEGORIES, CATEGORY_KEYS, CONDITIONS, TXN_TYPES,
+  PHOTOS_BUCKET, PHOTO_URL_TTL_SECONDS, CATEGORIES, CATEGORY_KEYS, CONDITIONS, TXN_TYPES, UNDOABLE_TYPES, UNDO_WINDOW_MS,
   InventoryError, postTxn, postCountSession, signPhotoUrls, num, n2, csvCell, toCsv, money,
   conditionLabel, categoryLabel, surplusRows, surplusCsv,
 };

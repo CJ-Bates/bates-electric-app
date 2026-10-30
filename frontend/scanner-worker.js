@@ -1,20 +1,21 @@
 // frontend/scanner-worker.js
 // Off-main-thread barcode decoding for browsers without the native
-// BarcodeDetector (iPhone Safari). scanner.js posts a cropped, downscaled
-// frame; we answer { id, result: { text, format } | null }. Keeping ZXing
-// here keeps the camera preview smooth while it works.
+// BarcodeDetector (iPhone Safari). scanner.js posts the aim-box crop of a
+// frame; we answer { id, results: [{ text, format, cx, cy, dist }] }
+// nearest-centre first (empty when nothing reads). Keeping ZXing here keeps
+// the camera preview smooth while it works.
 /* global importScripts, ZXing, BatesScanDecode */
 importScripts('vendor/zxing/zxing-library.min.js', 'scanner-decode.js');
 
-var decode = BatesScanDecode.create(ZXing);
+var decodeAll = BatesScanDecode.create(ZXing);
 
 self.onmessage = function (e) {
   var m = e.data || {};
-  var result = null;
+  var results = [];
   try {
-    result = decode(new Uint8ClampedArray(m.buffer), m.width, m.height);
+    results = decodeAll(new Uint8ClampedArray(m.buffer), m.width, m.height);
   } catch (err) {
-    result = null;
+    results = [];
   }
-  self.postMessage({ id: m.id, result: result });
+  self.postMessage({ id: m.id, results: results });
 };
