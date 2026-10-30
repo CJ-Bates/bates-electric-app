@@ -9,9 +9,10 @@
    element so a real overflow still fails it. */
 body.inv-body { overflow-x: clip; }
 .inv-view, .inv-view > * { min-width: 0; }
-.inv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 12px; }
-.inv-h1 { margin: 0; font-size: var(--fs-xl); }
-.inv-h1-link { color: inherit; text-decoration: none; }
+/* No page heading: the top bar already says "Inventory". The head holds only
+   the sync chip, which shows only while something is waiting. */
+.inv-head { display: flex; justify-content: flex-end; margin: 0; }
+.inv-head .inv-sync:not([hidden]) { margin: 2px 0 12px; }
 .inv-view { display: flex; flex-direction: column; gap: 14px; }
 .inv-skel span { display: block; height: 14px; margin: 10px 0; border-radius: 6px; background: var(--surface-2); }
 .inv-muted { color: var(--ink-2); font-size: var(--fs-sm); }
@@ -60,15 +61,20 @@ body.inv-body { overflow-x: clip; }
 .inv-empty { padding: 28px 16px; text-align: center; color: var(--ink-2); }
 
 /* Item page */
-.inv-hero { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 14px; align-items: start; }
-.inv-hero > div { min-width: 0; overflow-wrap: anywhere; }
-@media (max-width: 380px) { .inv-hero { grid-template-columns: 84px minmax(0, 1fr); } .inv-hero-photo { width: 84px; height: 84px; } }
-.inv-hero-photo { width: 112px; height: 112px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--ink-3); cursor: pointer; padding: 0; }
+/* Item header: photo + name in one row, the quantity on its own full-width
+   row below - nothing can overlap at any phone width (CJ, iPhone 390px). */
+.inv-hero { display: flex; flex-direction: column; gap: 12px; }
+.inv-hero-top { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: start; }
+.inv-hero-text { min-width: 0; overflow-wrap: anywhere; }
+/* A fixed 72px box in every engine (Safari sizes a <button> by its content otherwise). */
+.inv-hero-photo { -webkit-appearance: none; appearance: none; box-sizing: border-box; flex: none; min-width: 72px; max-width: 72px; width: 72px; height: 72px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--ink-3); cursor: pointer; padding: 0; }
+.inv-hero-photo img, .inv-hero-photo svg { max-width: 100%; max-height: 100%; }
 .inv-hero-photo img { width: 100%; height: 100%; object-fit: cover; }
-.inv-hero h2 { margin: 0 0 4px; font-size: var(--fs-lg); line-height: 1.25; }
-.inv-onhand { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.inv-onhand b { font-size: 40px; line-height: 1; }
-.inv-split { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.inv-hero h2 { margin: 0 0 4px; font-size: var(--fs-lg); line-height: 1.25; text-wrap: balance; }
+.inv-hero-qty { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.inv-hero-num { font-size: 40px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.inv-hero-num.neg { color: var(--danger); }
+.inv-hero-qty .inv-badge { align-self: center; }
 .inv-stepper { display: flex; align-items: stretch; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .inv-stepper button { width: 56px; border: 0; background: var(--surface-2); color: var(--ink); font-size: 26px; font-weight: 700; cursor: pointer; }
 .inv-stepper input { width: 84px; text-align: center; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 24px; font-weight: 800; }
@@ -203,3 +209,39 @@ html.bsc-open, html.bsc-open body { overflow: hidden; }
 @keyframes inv-undo-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) { .inv-undo-bar { animation: none; } }
 .inv-hist-undo { margin-top: 4px; padding-left: 0; }
+
+/* Home: one big Scan, Bulk count, search + Filter + More */
+.inv-scan-main { min-height: 72px; font-size: var(--fs-lg); }
+.inv-bulk { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); text-decoration: none; min-width: 0; }
+.inv-bulk:active { background: var(--surface-2); }
+.inv-bulk-icon { width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
+.inv-bulk-text { display: flex; flex-direction: column; min-width: 0; }
+.inv-bulk-text span { font-size: var(--fs-sm); color: var(--ink-2); }
+.inv-toolbar { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
+.inv-toolbar .inv-search { flex: 1; min-width: 0; }
+.inv-tool { min-height: 46px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: var(--fs-sm); }
+.inv-tool.on { border-color: var(--accent); color: var(--accent); }
+.inv-filter-on { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inv-filter-on[hidden] { display: none; }
+.inv-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.inv-filter-chips .inv-chip { padding: 9px 14px; font-size: var(--fs-sm); }
+.inv-menu { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.inv-menu-item { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); text-decoration: none; font: inherit; text-align: left; cursor: pointer; width: 100%; min-width: 0; }
+.inv-menu-item > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.inv-menu-item svg { flex-shrink: 0; color: var(--accent); }
+
+/* A normal-sized way back, on every inventory sub-page */
+.inv-back { align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; padding: 0 14px; }
+
+/* After + In / - Out / Count: the next step */
+.inv-next { display: flex; flex-direction: column; gap: 10px; border-color: var(--ok); }
+.inv-next-msg { display: flex; align-items: center; gap: 8px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.inv-next-msg svg { color: var(--ok); flex-shrink: 0; }
+.inv-next-btns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.inv-next-btns .inv-bigbtn { min-height: 56px; font-size: var(--fs-md); }
+
+/* Sync details sheet */
+.inv-sync-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+
+/* Keep the Undo bar clear of the texting launcher when it's on the page */
+html.bts-has-launcher .inv-undo { bottom: calc(16px + 52px + 12px + env(safe-area-inset-bottom, 0px)); }

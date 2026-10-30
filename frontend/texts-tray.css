@@ -9,7 +9,18 @@
    left of the tray while it is open - see html.bts-open .modal), below the
    confirm/alert dialogs so they are never hidden behind it. */
 
-:root { --bts-w: 400px; --bts-launcher-bottom: 20px; }
+/* Launcher: pinned to the bottom-right corner, 16px from the edges plus the
+   iPhone safe-area insets, at every width (2026-10-30: the old 76px phone lift
+   cleared a bottom nav that no longer exists, so it floated over list rows).
+   html.bts-has-launcher pads the page bottom so the last row can scroll clear. */
+:root {
+  --bts-w: 400px;
+  --bts-launcher-size: 52px;
+  --bts-launcher-right: calc(16px + env(safe-area-inset-right, 0px));
+  --bts-launcher-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+html.bts-has-launcher body { padding-bottom: calc(var(--bts-launcher-size) + 32px + env(safe-area-inset-bottom, 0px)); }
+html.bts-has-launcher.bts-open body { padding-bottom: 0; }
 
 /* ---- Docking: the page shrinks to make room on wide screens ---- */
 html.bts-open body { padding-right: var(--bts-w); }
@@ -19,8 +30,8 @@ html.bts-resizing, html.bts-resizing * { cursor: col-resize !important; user-sel
 
 /* ---- Launcher ---- */
 .bts-launcher {
-  position: fixed; right: 20px; bottom: var(--bts-launcher-bottom); z-index: 1150;
-  width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer;
+  position: fixed; right: var(--bts-launcher-right); bottom: var(--bts-launcher-bottom); z-index: 1150;
+  width: var(--bts-launcher-size); height: var(--bts-launcher-size); border-radius: 50%; border: 0; cursor: pointer;
   background: var(--accent); color: var(--ink-inverse);
   box-shadow: var(--shadow-2); display: inline-flex; align-items: center; justify-content: center;
   font-family: inherit; transition: transform .15s ease, background .15s ease;
@@ -162,7 +173,7 @@ html.bts-open .bts-launcher { display: none; }
 .bts-blocked { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.8rem; color: var(--ink-2); padding: 10px 12px; border-top: 1px solid var(--line); }
 
 /* ---- Toast (new text while the tray is closed) ---- */
-.bts-toasts { position: fixed; right: 20px; bottom: calc(var(--bts-launcher-bottom) + 64px); z-index: 1150; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.bts-toasts { position: fixed; right: var(--bts-launcher-right); bottom: calc(var(--bts-launcher-bottom) + var(--bts-launcher-size) + 12px); z-index: 1150; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 html.bts-open .bts-toasts { right: calc(var(--bts-w) + 20px); }
 .bts-toast {
   display: flex; align-items: center; gap: 10px; max-width: 320px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--line);
@@ -194,8 +205,6 @@ html.bts-popout .bts-toasts { display: none; }
   .bts-compose textarea { font-size: 16px; }
 }
 @media (max-width: 640px) {
-  :root { --bts-launcher-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
-  .bts-launcher { right: 16px; }
   .bts-toasts { right: 12px; left: 12px; align-items: stretch; }
   .bts-toast { max-width: none; }
   .bts-compose { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }

@@ -499,6 +499,7 @@ router.post('/sync', requirePermission('inventory_view'), async (req, res) => {
       results.push({ op_id: op.op_id, ok: true, status: 200, result });
     } catch (err) {
       if (err instanceof inv.InventoryError && err.status < 500) {
+        // 4xx = final for this op; the phone shows it under "not saved".
         results.push({ op_id: op.op_id, ok: false, status: err.status, error: err.message, ...(err.extra || {}) });
         continue;
       }
@@ -506,8 +507,12 @@ router.post('/sync', requirePermission('inventory_view'), async (req, res) => {
       // A reference to an item that doesn't exist (e.g. its create was just
       // refused in this batch): the phone re-points and resends.
       if (err && err.code === '23503') { results.push({ op_id: op.op_id, ok: false, status: 409, error: 'That item is not on the server.' }); continue; }
-      console.error('[inventory] sync op failed:', op.kind, err && err.message);
-      results.push({ op_id: op.op_id, ok: false, status: 500, error: 'Server error - will retry.' });
+      // Staff-only API: the real message goes back so the phone's sync chip
+      // can show WHY something is waiting (2026-10-30 stuck-sync report).
+      const msg = (err && err.message) || 'unknown';
+      const p = op.payload || {};
+      console.error('[inventory] sync op failed:', op.kind, 'item', p.item_id || p.id || '-', 'op', p.client_op_id || op.op_id, '-', msg);
+      results.push({ op_id: op.op_id, ok: false, status: 500, error: 'Server error: ' + msg });
       break;
     }
   }
@@ -603,6 +608,51 @@ router.post('/items/:id/photos', requirePermission('inventory_manage'), async (r
     }
     const urls = await inv.signPhotoUrls([path]);
     res.json({ photo: { id: data.id, unit_id: data.unit_id, is_primary: data.is_primary, url: urls.get(path) || null, created_at: data.created_at } });
+  } catch (err) { send(res, err); }
+});
+
+// POST /items/:id/photos/upload { photo_id, unit_id?, data (base64) }
+// The phone's photo path since 2026-10-30: the JPEG comes to us and we store
+// it with the service role - no signed-URL PUT from the phone (CJ's iPhone
+// test left a photo retrying forever and 0 photos ever landed). Bytes are
+// checked (JPEG / PNG / WebP only; HEIC refused with a clear message) and a
+// storage refusal comes back as a 4xx the phone shows instead of retrying.
+// Idempotent on photo_id (a resend returns the same photo).
+router.post('/items/:id/photos/upload', requirePermission('inventory_manage'), async (req, res) => {
+  try {
+    const item = await loadItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    const { photo_id: photoId, unit_id: unitId, data } = req.body || {};
+    if (!isUuid(photoId)) return res.status(400).json({ error: 'Bad photo id.' });
+    if (unitId != null && !isUuid(unitId)) return res.status(400).json({ error: 'Bad unit.' });
+    if (typeof data !== 'string' || !data) return res.status(400).json({ error: 'No photo data.' });
+    const buf = Buffer.from(data.replace(/^data:[^,]*,/, ''), 'base64');
+    if (buf.length > inv.PHOTO_MAX_BYTES) return res.status(413).json({ error: 'Photo is too big (over 5 MB).' });
+    const type = inv.sniffImage(buf);
+    if (type === 'heic') return res.status(415).json({ error: 'Photo is HEIC - the app should have converted it to JPEG. Take it again.' });
+    if (!type) return res.status(415).json({ error: 'That file is not a JPEG, PNG or WebP photo.' });
+    const ext = type === 'image/png' ? 'png' : type === 'image/webp' ? 'webp' : 'jpg';
+    const path = item.id + '/' + photoId + '.' + ext;
+    let { data: row } = await supabaseAdmin.from('inventory_photos').select('id, unit_id, storage_path, is_primary, created_at').eq('storage_path', path).maybeSingle();
+    if (!row) {
+      const { error: upErr } = await inv.storagePut(path, buf, type);
+      if (upErr) {
+        const status = Number(upErr.statusCode || upErr.status) || 0;
+        console.error('[inventory] photo storage upload failed:', path, status, upErr.message);
+        // Storage said no for good (size/type/policy) -> 422, the phone shows it.
+        // Anything else (5xx, network) -> 502, the phone retries a few times.
+        if (status >= 400 && status < 500) return res.status(422).json({ error: 'Photo storage refused it: ' + upErr.message });
+        return res.status(502).json({ error: 'Photo storage error: ' + upErr.message });
+      }
+      const { data: existing } = await supabaseAdmin.from('inventory_photos').select('id').eq('item_id', item.id).is('unit_id', null).limit(1);
+      const ins = await supabaseAdmin.from('inventory_photos')
+        .insert({ id: photoId, item_id: item.id, unit_id: unitId || null, storage_path: path, is_primary: !unitId && !(existing && existing.length), uploaded_by: req.profile.id })
+        .select('id, unit_id, storage_path, is_primary, created_at').single();
+      if (ins.error && ins.error.code !== '23505') throw ins.error;
+      row = ins.data || (await supabaseAdmin.from('inventory_photos').select('id, unit_id, storage_path, is_primary, created_at').eq('storage_path', path).maybeSingle()).data;
+    }
+    const urls = await inv.signPhotoUrls([path]);
+    res.json({ photo: { id: row.id, unit_id: row.unit_id, is_primary: row.is_primary, url: urls.get(path) || null, created_at: row.created_at } });
   } catch (err) { send(res, err); }
 });
 
