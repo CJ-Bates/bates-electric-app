@@ -141,6 +141,7 @@
     logOut: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
     fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>`,
     zap: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+    box: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>`,
     mapPin: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
     };
 
@@ -157,6 +158,8 @@
         { label: 'Inspections', icon: 'clipboardCheck', href: '/inspection', id: 'drawer-inspection' },
         { label: 'Site Visit', icon: 'mapPin', href: '/site-visit', id: 'drawer-site-visit' },
         { label: 'Generator Care', icon: 'zap', href: '/generator-care', id: 'drawer-generator', officeOnly: true },
+        // Warehouse inventory (sql/039): office AND techs, by member flag.
+        { label: 'Inventory', icon: 'box', href: '/inventory', id: 'drawer-inventory', perm: 'inventory_view' },
         { label: 'Members', icon: 'users', href: '/members', id: 'drawer-members', officeOnly: true }
       ]
     },
@@ -186,7 +189,8 @@
     'documents': 'Documents',
     'safety-manual': 'Safety Manual',
     'sds-sheets': 'SDS Sheets',
-    'contacts': 'Contacts'
+    'contacts': 'Contacts',
+    'inventory': 'Inventory'
     // Generator Care and its Metrics / Accounting sub-tabs are intentionally NOT
     // listed, so getPageTitle() falls back to the default "Bates Electric" on all
     // three: the top ribbon stays the app-shell brand, while the centered page
@@ -213,6 +217,15 @@
     try {
       const profile = JSON.parse(localStorage.getItem('bates.profile') || '{}');
       return profile.role === 'office';
+    } catch {
+      return false;
+    }
+  }
+
+  function hasCachedPermission(flag) {
+    try {
+      const profile = JSON.parse(localStorage.getItem('bates.profile') || '{}');
+      return !!(profile.is_admin || (profile.permissions && profile.permissions[flag]));
     } catch {
       return false;
     }
@@ -262,6 +275,11 @@
             return '';
           }
           if (item.techOnly && isOffice) {
+            return '';
+          }
+          // Permission-gated items: hidden unless the cached /me profile has
+          // the flag (UI convenience only; the API enforces it).
+          if (item.perm && !hasCachedPermission(item.perm)) {
             return '';
           }
 

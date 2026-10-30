@@ -218,6 +218,9 @@
         return null;
       }
       document.documentElement.classList.remove('role-pending');
+      // Inventory card (sql/039): shown when this tech has inventory access.
+      const inv = document.getElementById('td-inventory-link');
+      if (inv) inv.hidden = !(profile.permissions && profile.permissions.inventory_view);
       return profile;
     } catch (e) {
       console.error('role check failed', e);

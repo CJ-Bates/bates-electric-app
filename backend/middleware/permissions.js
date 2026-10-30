@@ -18,7 +18,16 @@ const { supabaseAdmin } = require('../lib/supabase');
 // `texting` (sql/037): the Texts inbox + sending texts to customers.
 const OFFICE_FLAGS = ['accounting', 'refunds', 'billing_actions', 'customer_edit', 'tech_manage', 'texting'];
 const TECH_FLAGS = ['tech_reschedule'];
-const ALL_FLAGS = OFFICE_FLAGS.concat(TECH_FLAGS);
+// Warehouse inventory (sql/039). Unlike the flags above these apply to BOTH
+// roles, and their columns are NULLABLE: null = the role default below (a
+// column default can't differ by role). They nest: manage implies scan_out,
+// scan_out implies view - so a member can never "manage" stock they can't see.
+const INVENTORY_FLAGS = ['inventory_view', 'inventory_scan_out', 'inventory_manage'];
+const INVENTORY_ROLE_DEFAULTS = {
+  office: { inventory_view: true, inventory_scan_out: false, inventory_manage: false },
+  tech: { inventory_view: true, inventory_scan_out: true, inventory_manage: false },
+};
+const ALL_FLAGS = OFFICE_FLAGS.concat(TECH_FLAGS, INVENTORY_FLAGS);
 
 // The member_permissions row for a profile, or null when none exists.
 async function getPermissionRow(profileId) {
@@ -40,12 +49,20 @@ function effectivePermissions(profile, row) {
       perms[flag] = true;
     } else if (row && typeof row[flag] === 'boolean') {
       perms[flag] = row[flag];
+    } else if (INVENTORY_FLAGS.includes(flag)) {
+      perms[flag] = !!(INVENTORY_ROLE_DEFAULTS[profile.role] || {})[flag];
     } else if (OFFICE_FLAGS.includes(flag)) {
       perms[flag] = profile.role === 'office';
     } else {
       perms[flag] = profile.role === 'tech';
     }
   }
+  // Inventory nesting. Customers never get inventory, whatever a row says.
+  if (profile.role !== 'office' && profile.role !== 'tech' && profile.is_admin !== true) {
+    for (const flag of INVENTORY_FLAGS) perms[flag] = false;
+  }
+  if (perms.inventory_manage) perms.inventory_scan_out = true;
+  if (perms.inventory_scan_out) perms.inventory_view = true;
   return perms;
 }
 
@@ -84,6 +101,8 @@ function requireAdmin(req, res, next) {
 module.exports = {
   OFFICE_FLAGS,
   TECH_FLAGS,
+  INVENTORY_FLAGS,
+  INVENTORY_ROLE_DEFAULTS,
   ALL_FLAGS,
   getPermissionRow,
   effectivePermissions,

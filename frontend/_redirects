@@ -20,6 +20,7 @@ https://my.bates-electric.com/ /my.html 200!
 /metrics         /metrics.html         200
 /accounting      /accounting.html      200
 /members         /members.html         200
+/inventory       /inventory.html       200
 /contacts        /contacts.html        200
 /documents       /documents.html       200
 /safety-manual   /safety-manual.html   200

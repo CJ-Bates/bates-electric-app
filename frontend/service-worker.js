@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v156';
+const CACHE = 'bates-shell-v157';
 const ASSETS = [
   './',
   './role-guard.js',
@@ -28,6 +28,15 @@ const ASSETS = [
   './accounting.js',
   './members.html',
   './members.js',
+  './inventory.html',
+  './inventory.js',
+  './inventory.css',
+  './inventory-store.js',
+  './barcode-normalize.js',
+  './scanner.js',
+  './scanner-worker.js',
+  './scanner-decode.js',
+  './vendor/zxing/zxing-library.min.js',
   './metrics.html',
   './metrics.js',
   './settings.html',

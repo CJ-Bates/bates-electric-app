@@ -67,6 +67,9 @@
     { id: 'contacts',      icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', title: 'Contacts',         desc: 'Team directory',       href: '/contacts' },
   ];
 
+  // Warehouse inventory (sql/039): shown to members with inventory access.
+  const INVENTORY_LINK = { id: 'inventory', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>', title: 'Inventory', desc: 'Warehouse stock + scanning', href: '/inventory' };
+
   function formatHeroDate(d) {
     return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   }
@@ -126,7 +129,7 @@
     if (dateEl) dateEl.textContent = formatHeroDate(now);
 
     renderFeaturedActions(profile.role);
-    renderQuickLinks(profile.role);
+    renderQuickLinks(profile);
     BatesWeather.mount({
       wrapEl: document.getElementById('hero-weather'),
       iconEl: document.getElementById('hero-weather-icon'),
@@ -151,11 +154,12 @@
     }
   }
 
-  function renderQuickLinks() {
+  function renderQuickLinks(profile) {
     const grid = document.getElementById('quick-links-grid');
     if (!grid) return;
     grid.innerHTML = '';
-    for (const link of QUICK_LINKS) {
+    const links = (profile && profile.permissions && profile.permissions.inventory_view) ? [INVENTORY_LINK].concat(QUICK_LINKS) : QUICK_LINKS;
+    for (const link of links) {
       grid.appendChild(makeQuickCard(link));
     }
   }
