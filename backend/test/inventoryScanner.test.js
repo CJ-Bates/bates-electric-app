@@ -252,3 +252,11 @@ test('two short Code 128 labels close together (24 px gap) are both found - the 
   const px = compose(W, H, [{ widths: a, x: 52, y: 56, height: 80 }, { widths: b, x: 52 + aw + 24, y: 56, height: 80 }]);
   assert.deepEqual(decodeAll(px, W, H).map((f) => f.text).sort(), ['A1', 'B2']);
 });
+
+test('the iPhone decoder reads Code 128 "BATES-TEST-03" (hyphens, digits) exactly', () => {
+  const f = renderWidths(code128Widths('BATES-TEST-03'), { scale: 2, noise: 20 });
+  const r = decode(f.px, f.w, f.h);
+  assert.ok(r, 'read');
+  assert.equal(r.format, 'code_128');
+  assert.equal(r.text, 'BATES-TEST-03');
+});

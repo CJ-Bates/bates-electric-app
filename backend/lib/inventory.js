@@ -45,6 +45,9 @@ function mapRpcError(error) {
   const msg = (error && error.message) || 'Inventory update failed';
   if (error && error.code === '22023') return new InventoryError(400, msg);
   if (error && error.code === 'P0002') return new InventoryError(404, msg);
+  // PostgREST can't find the function (schema cache stale after a migration,
+  // or the migration missing): say so plainly instead of a bare 500.
+  if (error && error.code === 'PGRST202') return new InventoryError(500, 'The inventory database function is missing or out of date (' + msg + ')');
   return new InventoryError(500, msg);
 }
 
@@ -97,6 +100,25 @@ async function signPhotoUrls(paths, ttl = PHOTO_URL_TTL_SECONDS) {
   return out;
 }
 
+// Photo bytes -> 'image/jpeg' | 'image/png' | 'image/webp', 'heic', or null.
+// Checked on the bytes, not the claimed type: the bucket only takes JPEG /
+// PNG / WebP, and iPhone photos are HEIC unless the phone re-encodes them.
+function sniffImage(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (buf.toString('ascii', 4, 8) === 'ftyp' && /^(heic|heix|hevc|mif1|msf1)/.test(buf.toString('ascii', 8, 12))) return 'heic';
+  return null;
+}
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // the bucket's own limit (sql/039)
+
+// Store photo bytes in the private bucket with the service role. Wrapped so
+// tests can stand in for Storage. Resolves { error } like supabase-js.
+async function storagePut(path, buf, contentType) {
+  return supabaseAdmin.storage.from(PHOTOS_BUCKET).upload(path, buf, { contentType, upsert: true });
+}
+
 // Numbers from the API body: finite, rounded to cents (qty is numeric(12,2)).
 function num(v) {
   if (v === '' || v == null) return null;
@@ -147,5 +169,6 @@ function surplusCsv(items) {
 module.exports = {
   PHOTOS_BUCKET, PHOTO_URL_TTL_SECONDS, CATEGORIES, CATEGORY_KEYS, CONDITIONS, TXN_TYPES, UNDOABLE_TYPES, UNDO_WINDOW_MS,
   InventoryError, postTxn, postCountSession, signPhotoUrls, num, n2, csvCell, toCsv, money,
+  sniffImage, storagePut, PHOTO_MAX_BYTES,
   conditionLabel, categoryLabel, surplusRows, surplusCsv,
 };

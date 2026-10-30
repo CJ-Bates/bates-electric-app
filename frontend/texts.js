@@ -210,6 +210,7 @@
     body.appendChild(tray);
     body.appendChild(toasts);
     if (POPOUT) document.documentElement.classList.add('bts-popout');
+    else document.documentElement.classList.add('bts-has-launcher'); // page bottom padding (texts-tray.css)
 
     tray.querySelectorAll('.bts-tab').forEach((btn) => {
       btn.addEventListener('click', () => { state.filter = btn.dataset.filter; saveState(); renderList(); });

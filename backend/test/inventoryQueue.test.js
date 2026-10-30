@@ -268,3 +268,101 @@ test('undo of a serialized scan-out puts the unit back in stock on screen', asyn
   assert.equal(store.unitsOf(ITEM)[0].status, 'in_stock');
   assert.equal(store.item(ITEM).qty_on_hand, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Stuck sync (CJ, 2026-10-30: "1 scan waiting" for 2+ minutes on good Wi-Fi)
+test('a sync request that never answers no longer wedges the queue: the watchdog releases it and the resend counts once', async () => {
+  const srv = fakeServer(); srv.items.set(ITEM, 10);
+  const adapter = S.memoryAdapter();
+  let hang = true;
+  const store = S.create({ adapter, send: (ops) => (hang ? new Promise(() => {}) : srv.send(ops)), uploadPhoto: async () => 'ok', isOnline: () => true, stuckMs: 50 });
+  await store.load();
+  await store.setCatalog(catalog(10));
+  await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'received', qty: 1 });
+  await settle();
+  assert.equal(store.state().syncing, true, 'the request is hanging');
+  assert.equal(store.state().pending, 1);
+  await new Promise((r) => setTimeout(r, 80));
+  hang = false;
+  await store.flush();             // the next kick sees a pass older than stuckMs
+  await settle();
+  assert.equal(store.state().pending, 0, 'synced after the release');
+  assert.equal(srv.items.get(ITEM), 11);
+});
+
+test('an op the server keeps failing (5xx) moves to "not saved" after 5 tries - data kept, the ops behind it sync, Retry puts it back', async () => {
+  const srv = fakeServer(); srv.items.set(ITEM, 10);
+  const real = srv.send;
+  let broken = true;
+  srv.send = async (ops) => {
+    const out = [];
+    for (const o of ops) {
+      if (broken && o.payload.note === 'poison') { out.push({ op_id: o.op_id, ok: false, status: 500, error: 'Server error: boom' }); break; }
+      out.push((await real([o])).results[0]);
+    }
+    return { results: out };
+  };
+  const { store } = await makeStore(srv);
+  await store.setCatalog(catalog(10));
+  const bad = await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'received', qty: 5, note: 'poison' });
+  await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'received', qty: 1 });
+  await settle(); // queueing already made try 1
+  for (let i = 0; i < 3; i++) { await settle(); await store.retryNow(); }
+  let st = store.state();
+  assert.equal(st.pending, 2, 'still trying: nothing behind it has gone yet');
+  assert.equal(st.waiting[0].attempts, 4);
+  assert.match(st.waiting[0].lastError, /boom/);
+  assert.match(st.lastError, /boom/, 'the chip can show the last error');
+  await settle(); await store.retryNow(); await settle();
+  st = store.state();
+  assert.equal(st.failed.length, 1, 'gave up on it - shown, not spinning');
+  assert.match(st.failed[0].error, /boom.*gave up after 5 tries/);
+  assert.equal(st.failed[0].payload.qty, 5, 'its data is kept');
+  assert.equal(st.pending, 0, 'the op behind it synced');
+  assert.equal(srv.items.get(ITEM), 11);
+  broken = false;
+  await store.retryFailed(bad.op_id);
+  await settle(); await store.flush(); await settle();
+  assert.equal(store.state().failed.length, 0);
+  assert.equal(srv.items.get(ITEM), 16, 'Retry sent it (same op id)');
+});
+
+test('a request that times out every time is charged to the first op and given up on after 5 tries', async () => {
+  const srv = fakeServer(); srv.items.set(ITEM, 10);
+  const adapter = S.memoryAdapter();
+  const timeout = () => { const e = new Error('No answer from the server after 20 s'); e.name = 'TimeoutError'; return Promise.reject(e); };
+  let timeouts = true;
+  const store = S.create({ adapter, send: (ops) => (timeouts ? timeout() : srv.send(ops)), uploadPhoto: async () => 'ok', isOnline: () => true });
+  await store.load();
+  await store.setCatalog(catalog(10));
+  await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'received', qty: 2 });
+  for (let i = 0; i < 6; i++) { await settle(); await store.retryNow(); }
+  await settle();
+  assert.equal(store.state().failed.length, 1);
+  assert.match(store.state().failed[0].error, /No answer from the server.*gave up/);
+  store.stop();
+});
+
+test('a photo that keeps failing to upload is shown as "not saved" with the photo kept, and Retry re-queues it', async () => {
+  const srv = fakeServer();
+  let fail = true;
+  const adapter = S.memoryAdapter();
+  const store = S.create({ adapter, send: (ops) => srv.send(ops), uploadPhoto: async () => { if (fail) throw new Error('photo upload 500'); return 'ok'; }, isOnline: () => true });
+  await store.load();
+  await store.setCatalog(catalog(10));
+  await store.queuePhoto({ photo_id: 'ph1', item_id: ITEM, unit_id: null, blob: 'JPEGDATA' });
+  for (let i = 0; i < 6; i++) { await settle(); await store.retryNow(); }
+  await settle();
+  let st = store.state();
+  assert.equal(st.photos, 0);
+  assert.equal(st.failed.length, 1);
+  assert.equal(st.failed[0].kind, 'photo');
+  assert.equal(st.failed[0].photo.blob, 'JPEGDATA', 'the photo itself is kept');
+  fail = false;
+  await store.retryFailed('photo:ph1');
+  await settle(); await store.flush(); await settle();
+  st = store.state();
+  assert.equal(st.failed.length, 0);
+  assert.equal(st.photos, 0, 'uploaded on retry');
+  store.stop();
+});

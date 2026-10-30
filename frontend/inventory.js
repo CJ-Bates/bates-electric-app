@@ -1,8 +1,8 @@
 // frontend/inventory.js
 // Warehouse inventory (sql/039 + routes/inventory.js). One page, hash routes:
-//   #/                home: search, filters, Scan, Count session, links
+//   #/                home: Scan, Bulk count, search + Filter + More
 //   #/item/<id>       an item: big In / Out / Count, surplus, details, photos, history
-//   #/count           the rapid count session (initial scan-in)
+//   #/count           Bulk count (the rapid scan-in; "count session" in code)
 //   #/surplus         surplus list + CSV / PDF
 //   #/reports         simple numbers
 //
@@ -36,6 +36,8 @@
     tag: svg('<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>', 18),
     chart: svg('<path d="M3 3v18h18"/><path d="M7 15v-4M12 15V7M17 15v-6"/>', 18),
     download: svg('<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>', 18),
+    filter: svg('<path d="M3 5h18l-7 8v6l-4-2v-4z"/>', 18),
+    check: svg('<path d="m5 12 5 5 9-10"/>', 20),
   };
 
   // ---- formatting ----
@@ -55,14 +57,25 @@
   const uuid = () => crypto.randomUUID();
 
   // ---- API ----
+  // Every request has a time limit. Without one, an iPhone request that
+  // stalls (resume from background, a server swap mid-deploy) never settles
+  // and the sync queue waits on it forever (2026-10-30 "1 scan waiting").
+  const API_TIMEOUT_MS = 20000;
+  const UPLOAD_TIMEOUT_MS = 45000;
+  function timeoutError(ms) { const e = new Error(`No answer from the server after ${Math.round(ms / 1000)} s`); e.name = 'TimeoutError'; return e; }
+  async function withTimeout(ms, run) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    try { return await run(ctrl.signal); } catch (e) { if (ctrl.signal.aborted) throw timeoutError(ms); throw e; } finally { clearTimeout(t); }
+  }
   async function rawApi(path, opts = {}) {
     const headers = { Authorization: `Bearer ${getToken()}` };
     if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-    return BatesAuth.authFetch(`${API_BASE}${path}`, { method: opts.method || 'GET', headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
+    return withTimeout(opts.timeout || API_TIMEOUT_MS, (signal) => BatesAuth.authFetch(`${API_BASE}${path}`, { method: opts.method || 'GET', headers, signal, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) }));
   }
   async function api(path, opts) {
     const r = await rawApi(path, opts);
-    const data = await r.json().catch(() => ({}));
+    const data = await withTimeout(API_TIMEOUT_MS, () => r.json()).catch(() => ({}));
     if (!r.ok) { const e = new Error(data.error || `HTTP ${r.status}`); e.status = r.status; e.data = data; throw e; }
     return data;
   }
@@ -114,6 +127,10 @@
     store.onChange(renderSync);
     renderSync(store.state());
     window.addEventListener('online', () => { store.flush(); refreshCatalog(); });
+    // Keep nudging while anything waits: a wedged pass gets released by the
+    // store's watchdog on the next nudge, and a resumed iPhone syncs at once.
+    setInterval(() => { if (store.state().pending && online()) store.flush(); }, 15000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && store.state().pending) store.flush(); });
     window.addEventListener('offline', () => renderSync(store.state()));
     window.addEventListener('hashchange', route);
     BatesScanner.listenWedge((code, format, source) => {
@@ -144,40 +161,64 @@
   }
 
   // ---- sync chip ----
+  // The chip shows ONLY when something is waiting or wasn't saved. Tapping it
+  // opens the details: what's waiting, tries, the last error, Retry.
+  let syncSheet = null;
   function renderSync(st) {
     if (!st) return;
+    if (syncSheet) syncSheet.refresh(st);
     syncEl.className = 'inv-sync';
+    const waiting = st.pending;
     if (st.failed.length) {
       syncEl.classList.add('failed');
-      syncEl.innerHTML = `${ICON.alert} ${st.failed.length} not saved`;
-    } else if (!st.online) {
+      syncEl.innerHTML = `${ICON.alert} ${st.failed.length} not saved${waiting ? ` &middot; ${waiting} waiting` : ''}`;
+    } else if (waiting && !st.online) {
       syncEl.classList.add('offline');
-      syncEl.innerHTML = `${ICON.cloudOff} Offline${st.pending ? ` &middot; ${st.pending} waiting to sync` : ''}`;
-    } else if (st.pending) {
-      syncEl.classList.add('syncing');
-      syncEl.innerHTML = `${ICON.sync} ${st.pending} ${st.pending === 1 ? 'scan' : 'scans'} waiting to sync`;
+      syncEl.innerHTML = `${ICON.cloudOff} Offline &middot; ${waiting} waiting to sync`;
+    } else if (waiting) {
+      syncEl.classList.add(st.lastError ? 'failed' : 'syncing');
+      syncEl.innerHTML = `${st.lastError ? ICON.alert : ICON.sync} ${waiting} waiting to sync${st.lastError ? ' &middot; tap for details' : ''}`;
     } else {
       syncEl.hidden = true;
       return;
     }
     syncEl.hidden = false;
   }
-  syncEl.addEventListener('click', () => {
-    const st = store && store.state();
-    if (!st) return;
-    if (st.failed.length) return showFailures(st.failed);
-    if (st.online) store.flush();
-  });
+  syncEl.addEventListener('click', () => { if (store) showSyncDetails(); });
 
-  async function showFailures(list) {
-    const body = list.map((f) => `<li style="margin:8px 0;"><strong>${esc(describeOp(f))}</strong><br><span class="inv-muted">${esc(f.error)}</span><br>
-      <button type="button" class="btn btn-ghost btn-sm" data-dismiss="${esc(f.op_id)}">Dismiss</button></li>`).join('');
-    const sheet = openSheet(`<h3>Changes that weren't saved</h3><p class="inv-muted">The server refused these. Nothing else is affected. Check the item and redo the change if it's still needed.</p><ul style="padding-left:18px;">${body}</ul><div class="inv-sheet-actions"><button type="button" class="btn btn-secondary" data-close>Close</button></div>`);
-    sheet.el.querySelectorAll('[data-dismiss]').forEach((b) => b.addEventListener('click', async () => {
-      await store.dismissFailed(b.dataset.dismiss);
-      b.closest('li').remove();
-      if (!store.state().failed.length) sheet.close();
-    }));
+  function showSyncDetails() {
+    const s2 = openSheet('<div data-sync-body></div>', { onClose: () => { syncSheet = null; } });
+    const body = s2.el.querySelector('[data-sync-body]');
+    const draw = (st) => {
+      const waitingRows = st.waiting.map((w) => `<li><strong>${esc(describeOp(w))}</strong>${w.scans > 1 ? ` <span class="inv-small">(${w.scans} scans)</span>` : ''}
+        ${w.attempts ? `<br><span class="inv-small">${w.attempts} ${w.attempts === 1 ? 'try' : 'tries'}${w.lastError ? ' &middot; ' + esc(w.lastError) : ''}</span>` : ''}</li>`).join('');
+      const failedRows = st.failed.map((f) => `<li><strong>${esc(describeOp(f))}</strong><br><span class="inv-small" style="color:var(--danger);">${esc(f.error)}</span><br>
+        <span class="inv-row-gap" style="margin-top:4px;"><button type="button" class="btn btn-secondary btn-sm" data-retry-failed="${esc(f.op_id)}">Retry</button><button type="button" class="btn btn-ghost btn-sm" data-dismiss="${esc(f.op_id)}">Dismiss</button></span></li>`).join('');
+      body.innerHTML = `
+        <h3>Sync</h3>
+        <dl class="inv-dl" style="margin-top:10px;">
+          <dt>Waiting</dt><dd>${st.pending}${st.photos ? ` (incl. ${st.photos} photo${st.photos === 1 ? '' : 's'})` : ''}${st.syncing ? ' &middot; sending now' : ''}</dd>
+          <dt>Connection</dt><dd>${st.online ? 'Online' : 'Offline - it sends when you\'re back online'}</dd>
+          <dt>Last error</dt><dd>${st.lastError ? `<span style="color:var(--danger);">${esc(st.lastError)}</span> <span class="inv-small">${esc(fmtDateTime(st.lastErrorAt))}</span>` : 'None'}</dd>
+          <dt>Last synced</dt><dd>${st.lastSyncAt ? esc(fmtDateTime(st.lastSyncAt)) : '-'}</dd>
+        </dl>
+        ${waitingRows ? `<h4 style="margin:14px 0 4px;">Waiting to sync</h4><ul class="inv-sync-list">${waitingRows}</ul>` : ''}
+        ${failedRows ? `<h4 style="margin:14px 0 4px;">Not saved</h4><p class="inv-small" style="margin:0 0 6px;">These were refused or kept failing. They're kept on this phone - Retry sends them again, Dismiss throws them away.</p><ul class="inv-sync-list">${failedRows}</ul>` : ''}
+        <div class="inv-sheet-actions">
+          <button type="button" class="btn btn-secondary" data-close>Close</button>
+          ${st.pending ? `<button type="button" class="btn btn-primary" data-retry-now${st.online ? '' : ' disabled'}>Retry now</button>` : ''}
+        </div>`;
+      body.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => s2.close()));
+      const rn = body.querySelector('[data-retry-now]');
+      if (rn) rn.addEventListener('click', () => { store.retryNow(); showStatus('Trying again...', 'info'); });
+      body.querySelectorAll('[data-retry-failed]').forEach((b) => b.addEventListener('click', () => store.retryFailed(b.dataset.retryFailed)));
+      body.querySelectorAll('[data-dismiss]').forEach((b) => b.addEventListener('click', async () => {
+        const ok = await openConfirm({ title: 'Throw this change away?', message: 'It will never reach inventory. Redo it by hand if it\'s still needed.', confirmText: 'Dismiss', danger: true });
+        if (ok) store.dismissFailed(b.dataset.dismiss);
+      }));
+    };
+    syncSheet = { refresh: draw };
+    draw(store.state());
   }
   function describeOp(f) {
     const p = f.payload || {};
@@ -188,6 +229,10 @@
     if (f.kind === 'unit_create') return `Serial ${p.serial_number} - ${name}`;
     if (f.kind === 'photo') return `Photo - ${name}`;
     if (f.kind === 'undo') return `Undo - ${name}`;
+    if (f.kind === 'session_lines') return `Bulk count (${(p.lines || []).length} items)`;
+    if (f.kind === 'session_upsert') return 'Start bulk count';
+    if (f.kind === 'session_post') return 'Save bulk count';
+    if (f.kind === 'session_discard') return 'Discard bulk count';
     return f.kind.replace(/_/g, ' ');
   }
 
@@ -280,23 +325,40 @@
       input.addEventListener('change', async () => {
         const f = input.files && input.files[0];
         if (!f) return resolve(null);
-        try { resolve(await shrinkPhoto(f)); } catch (e) { resolve(null); }
+        // Always re-encoded to a <=1600px JPEG here (iPhone photos are HEIC;
+        // the bucket takes JPEG / PNG / WebP only).
+        let jpeg = null;
+        try { jpeg = await shrinkPhoto(f); } catch (e) { jpeg = null; }
+        if (!jpeg || jpeg.type !== 'image/jpeg') {
+          openAlert({ title: 'Couldn\'t use that photo', message: 'This phone couldn\'t turn it into a JPEG.', next: 'Take the photo again with the camera.' });
+          return resolve(null);
+        }
+        resolve(jpeg);
       });
       input.click();
     });
   }
 
-  // Photo upload, called by the store's queue: one-time signed URL -> PUT -> confirm.
+  // Photo upload, called by the store's queue. The JPEG goes to OUR backend
+  // (POST .../photos/upload), which stores it with the service role - no
+  // signed-URL PUT from the phone (CJ's iPhone test: a photo retried forever
+  // and none ever landed). Resolves 'ok', or { drop, error } when the server
+  // refused it for good (4xx - shown as "not saved"); throws to retry (5xx,
+  // timeout, offline) - the store gives up and shows it after 5 tries.
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ''));
+      r.onerror = () => reject(r.error || new Error('Could not read the photo on this phone'));
+      r.readAsDataURL(blob);
+    });
+  }
   async function uploadPhoto(rec) {
-    const a = await rawApi(`/api/inventory/items/${rec.item_id}/photos/upload-url`, { method: 'POST', body: { photo_id: rec.photo_id } });
-    if (a.status === 400 || a.status === 404 || a.status === 403) return 'drop';
-    if (!a.ok) throw new Error('upload url ' + a.status);
-    const { signed_url: signedUrl } = await a.json();
-    const put = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', 'x-upsert': 'true' }, body: rec.blob });
-    if (!put.ok) throw new Error('photo upload ' + put.status);
-    const c = await rawApi(`/api/inventory/items/${rec.item_id}/photos`, { method: 'POST', body: { photo_id: rec.photo_id, unit_id: rec.unit_id || null } });
-    if (c.status === 400 || c.status === 404 || c.status === 403) return 'drop';
-    if (!c.ok) throw new Error('photo confirm ' + c.status);
+    const data = await blobToBase64(rec.blob);
+    const r = await rawApi(`/api/inventory/items/${rec.item_id}/photos/upload`, { method: 'POST', body: { photo_id: rec.photo_id, unit_id: rec.unit_id || null, data }, timeout: UPLOAD_TIMEOUT_MS });
+    const body = await r.json().catch(() => ({}));
+    if (r.status >= 400 && r.status < 500) return { drop: true, error: body.error || `The server refused this photo (${r.status}).` };
+    if (!r.ok) throw new Error(body.error || `Photo upload failed (${r.status})`);
     if (currentRoute === 'item' && location.hash.indexOf(rec.item_id) !== -1 && rerender) rerender(true);
     return 'ok';
   }
@@ -531,28 +593,22 @@
   homeState.q = homeState.q || ''; homeState.cat = homeState.cat || ''; homeState.chips = homeState.chips || {}; homeState.sort = homeState.sort || 'name';
   const saveHome = () => { try { sessionStorage.setItem('bates.inv.home', JSON.stringify(homeState)); } catch (e) { /* fine */ } };
 
+  const FILTER_CHIPS = [['instock', 'In stock'], ['surplus', 'Surplus'], ['serialized', 'Serialized'], ['recount', 'Needs recount']];
+  const SORTS = [['name', 'Name'], ['qty', 'Most on hand'], ['recent', 'Recently changed'], ['location', 'Location']];
+  const activeFilters = () => (homeState.cat ? 1 : 0) + FILTER_CHIPS.filter((c) => homeState.chips[c[0]]).length;
+
   function renderHome() {
-    const chip = (k, label) => `<button type="button" class="inv-chip${homeState.chips[k] ? ' on' : ''}" data-chip="${k}">${label}</button>`;
     viewEl.innerHTML = `
-      <form class="inv-search" data-search autocomplete="off">
-        <input type="search" enterkeyhint="search" placeholder="Search barcode, part #, description, maker" value="${esc(homeState.q)}" aria-label="Search inventory" />
-      </form>
-      <div class="inv-actions">
-        <button type="button" class="inv-bigbtn primary${perms.manage ? '' : ' full'}" data-scan>${ICON.scan} Scan</button>
-        ${perms.manage ? `<a class="inv-bigbtn" href="#/count">${ICON.count} Count session</a>` : ''}
+      <button type="button" class="inv-bigbtn primary full inv-scan-main" data-scan>${ICON.scan} Scan</button>
+      ${perms.manage ? `<a class="inv-bulk" href="#/count"><span class="inv-bulk-icon">${ICON.count}</span><span class="inv-bulk-text"><strong>Bulk count</strong><span>Scan many items, then save all at once</span></span></a>` : ''}
+      <div class="inv-toolbar">
+        <form class="inv-search" data-search autocomplete="off">
+          <input type="search" enterkeyhint="search" placeholder="Search barcode, part #, name" value="${esc(homeState.q)}" aria-label="Search inventory" />
+        </form>
+        <button type="button" class="btn btn-secondary inv-tool" data-filter aria-haspopup="dialog">${ICON.filter} Filter</button>
+        <button type="button" class="btn btn-secondary inv-tool" data-more aria-haspopup="dialog">More</button>
       </div>
-      <div class="inv-links">
-        <a class="btn btn-secondary btn-sm" href="#/surplus">${ICON.tag} Surplus</a>
-        <a class="btn btn-secondary btn-sm" href="#/reports">${ICON.chart} Reports</a>
-        ${perms.manage ? '<button type="button" class="btn btn-secondary btn-sm" data-new>+ New item (no barcode)</button>' : ''}
-      </div>
-      <div class="inv-filters">
-        <select data-cat aria-label="Category"><option value="">All categories</option>${categories.map((c) => `<option value="${esc(c[0])}"${homeState.cat === c[0] ? ' selected' : ''}>${esc(c[1])}</option>`).join('')}</select>
-        ${chip('instock', 'In stock')}${chip('surplus', 'Surplus')}${chip('serialized', 'Serialized')}${chip('recount', 'Needs recount')}
-        <select data-sort aria-label="Sort">
-          ${[['name', 'Name'], ['qty', 'Most on hand'], ['recent', 'Recently changed'], ['location', 'Location']].map((o) => `<option value="${o[0]}"${homeState.sort === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}
-        </select>
-      </div>
+      <div class="inv-filter-on" data-filter-on hidden></div>
       <div data-count class="inv-small"></div>
       <div class="inv-list" data-list></div>`;
     const input = $('[data-search] input', viewEl);
@@ -567,17 +623,21 @@
       drawList();
     });
     $('[data-scan]', viewEl).addEventListener('click', scanFromHome);
-    const n = $('[data-new]', viewEl);
-    if (n) n.addEventListener('click', async () => { const c = await quickAdd({}); if (c) location.hash = '#/item/' + c.id; });
-    $('[data-cat]', viewEl).addEventListener('change', (e) => { homeState.cat = e.target.value; saveHome(); drawList(); });
-    $('[data-sort]', viewEl).addEventListener('change', (e) => { homeState.sort = e.target.value; saveHome(); drawList(); });
-    viewEl.querySelectorAll('[data-chip]').forEach((b) => b.addEventListener('click', () => {
-      homeState.chips[b.dataset.chip] = !homeState.chips[b.dataset.chip];
-      b.classList.toggle('on', !!homeState.chips[b.dataset.chip]);
-      saveHome(); drawList();
-    }));
+    $('[data-filter]', viewEl).addEventListener('click', () => openFilterSheet(drawList));
+    $('[data-more]', viewEl).addEventListener('click', openMoreMenu);
     let limit = 150;
+    function drawFilterChip() {
+      const n = activeFilters();
+      const el = $('[data-filter-on]', viewEl);
+      if (!el) return;
+      el.hidden = !n;
+      el.innerHTML = n ? `<span class="inv-chip on">${n} ${n === 1 ? 'filter' : 'filters'} on</span><button type="button" class="btn btn-ghost btn-sm" data-clear-filters>Clear</button>` : '';
+      const c = el.querySelector('[data-clear-filters]');
+      if (c) c.addEventListener('click', () => { homeState.cat = ''; homeState.chips = {}; saveHome(); drawList(); });
+      $('[data-filter]', viewEl).classList.toggle('on', !!n);
+    }
     function drawList() {
+      drawFilterChip();
       let items = store.search(homeState.q);
       if (homeState.cat) items = items.filter((i) => i.category === homeState.cat);
       if (homeState.chips.instock) items = items.filter((i) => i.qty_on_hand > 0);
@@ -595,7 +655,7 @@
       $('[data-count]', viewEl).textContent = total ? `${items.length} of ${total} items` : '';
       const listEl = $('[data-list]', viewEl);
       if (!total) {
-        listEl.innerHTML = `<div class="inv-empty">${store.view().generated_at ? 'Nothing in inventory yet.' : (online() ? 'Loading&hellip;' : 'Offline - inventory loads the first time you\'re online.')}${perms.manage && store.view().generated_at ? '<br>Start with a <a href="#/count">count session</a>.' : ''}</div>`;
+        listEl.innerHTML = `<div class="inv-empty">${store.view().generated_at ? 'Nothing in inventory yet.' : (online() ? 'Loading&hellip;' : 'Offline - inventory loads the first time you\'re online.')}${perms.manage && store.view().generated_at ? '<br>Start with a <a href="#/count">bulk count</a>.' : ''}</div>`;
         return;
       }
       if (!items.length) { listEl.innerHTML = '<div class="inv-empty">No items match.</div>'; return; }
@@ -606,6 +666,52 @@
     }
     drawList();
     rerender = drawList;
+  }
+
+  // Filter: category, in stock / surplus / serialized / needs recount, sort.
+  // Applies as you tap; Done closes.
+  function openFilterSheet(onChange) {
+    const s2 = openSheet(`
+      <h3>Filter</h3>
+      <label class="inv-field">Category<select data-f-cat><option value="">All categories</option>${categories.map((c) => `<option value="${esc(c[0])}"${homeState.cat === c[0] ? ' selected' : ''}>${esc(c[1])}</option>`).join('')}</select></label>
+      <div class="inv-field">Show only
+        <div class="inv-filter-chips">${FILTER_CHIPS.map((c) => `<button type="button" class="inv-chip${homeState.chips[c[0]] ? ' on' : ''}" data-f-chip="${c[0]}" aria-pressed="${!!homeState.chips[c[0]]}">${c[1]}</button>`).join('')}</div>
+      </div>
+      <label class="inv-field">Sort by<select data-f-sort>${SORTS.map((o) => `<option value="${o[0]}"${homeState.sort === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
+      <div class="inv-sheet-actions" style="justify-content:space-between;">
+        <button type="button" class="btn btn-ghost" data-f-clear>Clear filters</button>
+        <button type="button" class="btn btn-primary" data-close>Done</button>
+      </div>`);
+    const changed = () => { saveHome(); onChange(); };
+    s2.el.querySelector('[data-f-cat]').addEventListener('change', (e) => { homeState.cat = e.target.value; changed(); });
+    s2.el.querySelector('[data-f-sort]').addEventListener('change', (e) => { homeState.sort = e.target.value; changed(); });
+    s2.el.querySelectorAll('[data-f-chip]').forEach((b) => b.addEventListener('click', () => {
+      const k = b.dataset.fChip;
+      homeState.chips[k] = !homeState.chips[k];
+      b.classList.toggle('on', !!homeState.chips[k]);
+      b.setAttribute('aria-pressed', String(!!homeState.chips[k]));
+      changed();
+    }));
+    s2.el.querySelector('[data-f-clear]').addEventListener('click', () => {
+      homeState.cat = ''; homeState.chips = {};
+      s2.el.querySelector('[data-f-cat]').value = '';
+      s2.el.querySelectorAll('[data-f-chip]').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); });
+      changed();
+    });
+  }
+
+  function openMoreMenu() {
+    const s2 = openSheet(`
+      <h3>More</h3>
+      <div class="inv-menu">
+        <a class="inv-menu-item" href="#/surplus">${ICON.tag}<span><strong>Surplus list</strong><span class="inv-small">What we're selling - CSV and PDF for dealers</span></span></a>
+        <a class="inv-menu-item" href="#/reports">${ICON.chart}<span><strong>Reports</strong><span class="inv-small">Totals, value, recently out, not touched in 12 months</span></span></a>
+        ${perms.manage ? `<button type="button" class="inv-menu-item" data-m-new>${ICON.box}<span><strong>New item (no barcode)</strong><span class="inv-small">Add something that has no barcode</span></span></button>` : ''}
+      </div>
+      <div class="inv-sheet-actions"><button type="button" class="btn btn-secondary" data-close>Close</button></div>`);
+    s2.el.querySelectorAll('a.inv-menu-item').forEach((a) => a.addEventListener('click', () => s2.close()));
+    const n = s2.el.querySelector('[data-m-new]');
+    if (n) n.addEventListener('click', async () => { s2.close(); const c = await quickAdd({}); if (c) location.hash = '#/item/' + c.id; });
   }
 
   function itemRow(i) {
@@ -629,6 +735,18 @@
     let stepQty = 1;
     const focusUnit = params.get('unit');
     const alive = routeToken();
+    let lastResult = null; // what the last + In / - Out / Count did (shows Scan next / Back)
+
+    function nextStep() {
+      if (!lastResult) return '';
+      return `<section class="card inv-next" aria-live="polite">
+        <div class="inv-next-msg">${ICON.check}<span>${esc(lastResult)}</span></div>
+        <div class="inv-next-btns">
+          <button type="button" class="inv-bigbtn primary" data-next-scan>${ICON.scan} Scan next</button>
+          <a class="inv-bigbtn" href="#/">Back to inventory</a>
+        </div>
+      </section>`;
+    }
 
     async function load(force) {
       if (!online() || loading) return;
@@ -746,18 +864,24 @@
         </section>` : '';
 
       viewEl.innerHTML = `
-        <a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a>
+        <a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a>
         <section class="card inv-hero">
-          <button type="button" class="inv-hero-photo" data-act="${perms.manage ? 'photo' : ''}" aria-label="${heroImg ? 'Photo' : 'Add a photo'}">${heroImg ? `<img src="${esc(heroImg)}" alt="" />` : ICON.camera}</button>
-          <div>
-            <h2>${esc(it.description)}</h2>
-            <div class="inv-small">${[it.part_number && 'Part # ' + it.part_number, it.manufacturer].filter(Boolean).map(esc).join(' &middot; ')}</div>
-            <div class="inv-onhand" style="margin-top:8px;"><b class="${q < 0 ? 'inv-qty neg' : ''}">${fmtQty(q)}</b><span class="inv-muted">${esc(it.unit_of_measure || 'each')} on hand</span>${it._pending ? '<span class="inv-badge pending">Syncing</span>' : ''}</div>
-            ${it.surplus_qty > 0 ? `<div class="inv-split"><span class="inv-badge">Keep ${fmtQty(keep)}</span><span class="inv-badge surplus">Surplus ${fmtQty(it.surplus_qty)}</span></div>` : ''}
-            ${q < 0 ? '<div class="inv-split"><span class="inv-badge warn">Needs recount</span></div>' : ''}
+          <div class="inv-hero-top">
+            <button type="button" class="inv-hero-photo" data-act="${perms.manage ? 'photo' : ''}" aria-label="${heroImg ? 'Photo' : 'Add a photo'}">${heroImg ? `<img src="${esc(heroImg)}" alt="" />` : ICON.camera}</button>
+            <div class="inv-hero-text">
+              <h2>${esc(it.description)}</h2>
+              <div class="inv-small">${[it.part_number && 'Part # ' + it.part_number, it.manufacturer].filter(Boolean).map(esc).join(' &middot; ')}</div>
+            </div>
+          </div>
+          <div class="inv-hero-qty">
+            <span class="inv-hero-num${q < 0 ? ' neg' : ''}">${fmtQty(q)}</span>
+            <span class="inv-muted">${esc(it.unit_of_measure || 'each')} on hand</span>
+            ${it._pending ? '<span class="inv-badge pending">Syncing</span>' : ''}
+            ${it.surplus_qty > 0 ? `<span class="inv-badge">Keep ${fmtQty(keep)}</span><span class="inv-badge surplus">Surplus ${fmtQty(it.surplus_qty)}</span>` : ''}
+            ${q < 0 ? '<span class="inv-badge warn">Needs recount</span>' : ''}
           </div>
         </section>
-        ${actions}${surplus}${unitsCard}${details}${photosCard}${history}
+        ${actions}${nextStep()}${surplus}${unitsCard}${details}${photosCard}${history}
         ${!detail && !online() ? '<p class="inv-muted">Offline: showing what this phone has. History and photos load when you\'re back online.</p>' : ''}`;
       wire(it, units, inStockUnits);
     }
@@ -776,6 +900,8 @@
       viewEl.querySelectorAll('[data-primary]').forEach((b) => b.addEventListener('click', () => photoAction(b.dataset.primary, 'primary')));
       viewEl.querySelectorAll('[data-rm-photo]').forEach((b) => b.addEventListener('click', () => photoAction(b.dataset.rmPhoto, 'delete')));
       viewEl.querySelectorAll('[data-undo-txn]').forEach((b) => b.addEventListener('click', () => undoFromHistory(b.dataset.undoTxn)));
+      const sn = $('[data-next-scan]', viewEl);
+      if (sn) sn.addEventListener('click', scanFromHome);
     }
 
     // My most recent change on this item that still stands, if it can still
@@ -806,6 +932,8 @@
 
     async function txn(type, payload, doneMsg) {
       const op = await store.enqueue('txn', { client_op_id: uuid(), item_id: id, type, occurred_at: new Date().toISOString(), source: 'item_page', ...payload });
+      const now = store.item(id);
+      lastResult = doneMsg + (now ? ` - ${fmtQty(now.qty_on_hand)} ${now.unit_of_measure || 'each'} on hand` : '');
       draw();
       if (UNDOABLE.has(type)) showUndo(doneMsg, op.op_id);
       else showStatus(doneMsg + (online() ? '' : ' (saved on this phone, will sync)'), 'success');
@@ -848,6 +976,8 @@
         const existing = store.unitsOf(id).find((u) => String(u.serial_number).toUpperCase() === serial.trim().toUpperCase());
         if (existing && existing.status === 'in_stock') return openAlert({ title: 'Already in stock', message: `Serial ${serial} is already in stock on this item.` });
         const op = await store.enqueue('unit_create', { id: existing ? existing.id : uuid(), item_id: id, serial_number: serial.trim(), type: 'received', client_op_id: uuid(), occurred_at: new Date().toISOString(), source: 'item_page' });
+        const nowU = store.item(id);
+        lastResult = `Received serial ${serial}` + (nowU ? ` - ${fmtQty(nowU.qty_on_hand)} on hand` : '');
         draw();
         showUndo(`Received serial ${serial}`, op.op_id);
         setTimeout(() => load(), 900);
@@ -1034,7 +1164,7 @@
 
   async function renderCount() {
     if (!perms.manage) {
-      viewEl.innerHTML = '<section class="card"><p>Count sessions are for warehouse staff. Ask an administrator if you need this.</p><a class="btn btn-secondary btn-sm" href="#/">Back</a></section>';
+      viewEl.innerHTML = '<section class="card"><p>Bulk count is for warehouse staff. Ask an administrator if you need this.</p><a class="btn btn-secondary btn-sm" href="#/">Back</a></section>';
       return;
     }
     const alive = routeToken();
@@ -1042,11 +1172,11 @@
     if (!alive()) return;
     if (!s) {
       viewEl.innerHTML = `
-        <a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a>
+        <a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a>
         <section class="card">
-          <h3 class="gc-card-h">Count session</h3>
+          <h3 class="gc-card-h">Bulk count</h3>
           <p class="inv-muted" style="margin-top:0;">For the big scan-in: scan, scan, scan. Each scan of a known item adds 1 (you can adjust). An unknown barcode opens a quick-add form, then you keep scanning. Everything is saved on this phone as you go, even with no signal, and posts to inventory when you tap Finish.</p>
-          <button type="button" class="inv-bigbtn primary full" data-start style="width:100%;">${ICON.count} Start count session</button>
+          <button type="button" class="inv-bigbtn primary full" data-start style="width:100%;">${ICON.count} Start bulk count</button>
         </section>`;
       $('[data-start]', viewEl).addEventListener('click', async () => { await store.startSession(); renderCount(); });
       return;
@@ -1061,8 +1191,8 @@
     const t = sessionTotals(s);
     const order = (s.order || []).filter((id) => s.lines[id] || (s.serialCounts || {})[id]);
     viewEl.innerHTML = `
-      <a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a>
-      <div class="inv-small">Count session started ${esc(fmtDateTime(s.started_at))}</div>
+      <a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a>
+      <div class="inv-small">Bulk count started ${esc(fmtDateTime(s.started_at))}</div>
       <div class="inv-count-stats">
         <div class="inv-stat"><b>${t.items}</b><span>items</span></div>
         <div class="inv-stat"><b>${fmtQty(t.pieces)}</b><span>pieces</span></div>
@@ -1079,7 +1209,7 @@
       <div class="inv-list">${order.length ? order.map((id) => countRow(s, id)).join('') : '<div class="inv-empty">Nothing counted yet. Tap Scan.</div>'}</div>
       <div class="inv-sheet-actions" style="justify-content:space-between;">
         <button type="button" class="btn btn-danger-soft" data-cdiscard>Discard session</button>
-        <button type="button" class="btn btn-primary" data-cfinish${t.items ? '' : ' disabled'}>Finish &amp; post</button>
+        <button type="button" class="btn btn-primary" data-cfinish${t.items ? '' : ' disabled'}>Save all</button>
       </div>`;
     $('[data-cscan]', viewEl).addEventListener('click', openCountScanner);
     viewEl.querySelectorAll('[data-cmode]').forEach((b) => b.addEventListener('click', () => { setCountMode(b.dataset.cmode); drawCount(); }));
@@ -1129,7 +1259,7 @@
   function openCountScanner() {
     const mode = getCountMode();
     const sc = BatesScanner.open({
-      title: mode === 'continuous' ? 'Count session - continuous' : 'Count session',
+      title: mode === 'continuous' ? 'Bulk count - continuous' : 'Bulk count',
       mode,
       stayOpen: true,
       footer: mode === 'continuous' ? 'Each barcode in the box adds 1. Move off it and back to count it again.' : 'Each Scan adds 1.',
@@ -1146,7 +1276,7 @@
   // One scan in a count session -> { html, kind } for the scanner status line.
   async function countScan(code, format, source, sc) {
     const s = countState.session || await currentSession();
-    if (!s) return { html: 'Start a count session first.', kind: 'warn' };
+    if (!s) return { html: 'Start a bulk count first.', kind: 'warn' };
 
     // Waiting for a serial number for a serial-tracked item.
     if (countState.awaitSerialFor) {
@@ -1224,15 +1354,15 @@
     if (!s) return;
     const t = sessionTotals(s);
     const ok = await openConfirm({
-      title: 'Post this count?',
+      title: 'Save this bulk count?',
       message: `${t.items} items, ${fmtQty(t.pieces)} pieces, ${t.created} new items. This adds them to inventory (or replaces the earlier count where you chose that).`,
-      confirmText: 'Post count',
+      confirmText: 'Save all',
     });
     if (!ok) return;
     await store.finishSession(s);
     countState.session = null;
     await openSuccessFlash({
-      title: online() ? 'Count posted' : 'Count saved',
+      title: online() ? 'Bulk count saved' : 'Bulk count saved on this phone',
       message: online() ? `${t.items} items, ${fmtQty(t.pieces)} pieces added to inventory.` : 'Saved on this phone. It posts to inventory as soon as you\'re back online.',
     });
     location.hash = '#/';
@@ -1241,7 +1371,7 @@
   async function discardCount() {
     const s = countState.session;
     if (!s) return;
-    const ok = await openConfirm({ title: 'Discard this count session?', message: 'Nothing from it is added to inventory. New items you created stay (with no quantity).', confirmText: 'Discard', danger: true });
+    const ok = await openConfirm({ title: 'Discard this bulk count?', message: 'Nothing from it is added to inventory. New items you created stay (with no quantity).', confirmText: 'Discard', danger: true });
     if (!ok) return;
     await store.discardSession(s);
     countState.session = null;
@@ -1252,7 +1382,7 @@
   // Surplus
   // ============================================================================
   async function renderSurplus() {
-    const head = `<a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a>
+    const head = `<a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a>
       <section class="card">
         <h3 class="gc-card-h">Surplus list</h3>
         <p class="inv-muted" style="margin-top:0;">Stock marked for sale (set "Surplus qty" on an item). Send the PDF or CSV to other dealers or a liquidator.</p>
@@ -1290,18 +1420,18 @@
   // Reports
   // ============================================================================
   async function renderReports() {
-    viewEl.innerHTML = '<a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a><div class="inv-skel"><span style="width:60%"></span><span style="width:80%"></span></div>';
+    viewEl.innerHTML = '<a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a><div class="inv-skel"><span style="width:60%"></span><span style="width:80%"></span></div>';
     const alive = routeToken();
     let r;
     try { r = await api('/api/inventory/reports'); } catch (e) {
       if (!alive()) return;
-      viewEl.innerHTML = '<a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a><section class="card"><p>Reports need a connection.</p></section>';
+      viewEl.innerHTML = '<a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a><section class="card"><p>Reports need a connection.</p></section>';
       return;
     }
     if (!alive()) return;
     const list = (rows, empty, fn) => (rows.length ? `<ul class="inv-hist">${rows.map(fn).join('')}</ul>` : `<p class="inv-muted">${empty}</p>`);
     viewEl.innerHTML = `
-      <a href="#/" class="btn btn-ghost btn-sm" style="align-self:flex-start;">&larr; Inventory</a>
+      <a href="#/" class="btn btn-secondary inv-back">&larr; Back to inventory</a>
       <div class="inv-tiles">
         <div class="inv-tile"><b>${r.totals.items}</b><span>items</span></div>
         <div class="inv-tile"><b>${fmtQty(r.totals.pieces)}</b><span>pieces on hand</span></div>

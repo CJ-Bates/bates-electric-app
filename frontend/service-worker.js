@@ -1,4 +1,4 @@
-const CACHE = 'bates-shell-v158';
+const CACHE = 'bates-shell-v159';
 const ASSETS = [
   './',
   './role-guard.js',

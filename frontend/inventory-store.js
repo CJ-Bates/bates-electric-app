@@ -16,7 +16,13 @@
 //               barcode: later ops for the local item are re-pointed to the
 //               existing one (no twin items)
 //   other 4xx -> moved to `failed` (shown to the user), queue continues
-//   5xx / network -> stop, keep everything, retry with backoff
+//   5xx / timeout -> that op's attempts += 1 (error kept); after MAX_ATTEMPTS
+//               it moves to `failed` (data kept, Retry puts it back) so one
+//               bad op can't block the queue forever; otherwise backoff + retry
+//   offline / network error -> keep everything, retry with backoff
+// A pass that never settles (an iPhone fetch or IndexedDB write that hangs)
+// is released by a watchdog after STUCK_MS so syncing can't wedge silently
+// (2026-10-30: "1 scan waiting" for 2+ minutes on good Wi-Fi, no error).
 //
 // COUNT SESSIONS live here first (hundreds of scans must stay instant): each
 // scan bumps an ABSOLUTE count in the local session; one coalesced
@@ -36,6 +42,13 @@
   'use strict';
 
   var SYNC_BATCH = 50;
+  // An op the server keeps failing (5xx / timeouts) moves to "not saved"
+  // after this many tries instead of retrying forever and blocking the queue
+  // behind it. It keeps its data; the user can Retry it.
+  var MAX_ATTEMPTS = 5;
+  // A sync pass that hasn't finished in this long is treated as wedged (an
+  // iPhone fetch or IndexedDB write that never settles) and is released.
+  var STUCK_MS = 45000;
   var round2 = function (n) { return Math.round(Number(n) * 100) / 100; };
   var clone = function (o) { return JSON.parse(JSON.stringify(o)); };
 
@@ -179,12 +192,17 @@
   function create(opts) {
     var adapter = opts.adapter;
     var send = opts.send;                 // (ops) -> Promise<{ results }>
-    var uploadPhoto = opts.uploadPhoto;   // (photoRecord) -> Promise
+    var uploadPhoto = opts.uploadPhoto;   // (photoRecord) -> Promise<'ok' | { drop, error }>; rejects = retry
     var isOnline = opts.isOnline || function () { return true; };
     var uuid = opts.uuid || function () { return crypto.randomUUID(); };
     var listeners = [];
     var seqCounter = 0;
     var flushing = null;
+    var stuckMs = opts.stuckMs || STUCK_MS;
+    var flushGen = 0;          // which pass owns `flushing` (a late, released pass can't clobber a new one)
+    var flushStartedAt = 0;
+    var lastErrorAt = null;
+    var lastSyncAt = null;
     var retryTimer = null;
     var backoff = 2000;
     var base = emptyCatalog();
@@ -204,7 +222,14 @@
     function state() {
       var unsyncedScans = 0;
       pending.forEach(function (op) { unsyncedScans += op.kind === 'session_lines' ? (op.scans || 1) : 1; });
-      return { pending: unsyncedScans + photosPending, failed: failed.slice(), syncing: !!flushing, online: isOnline(), lastError: lastError, catalogAt: base.generated_at };
+      return {
+        pending: unsyncedScans + photosPending, failed: failed.slice(), syncing: !!flushing, online: isOnline(),
+        lastError: lastError, lastErrorAt: lastErrorAt, lastSyncAt: lastSyncAt, catalogAt: base.generated_at,
+        photos: photosPending,
+        waiting: pending.slice().sort(function (a, b) { return a.seq - b.seq; }).map(function (o) {
+          return { op_id: o.op_id, kind: o.kind, payload: o.payload, attempts: o.attempts || 0, lastError: o.lastError || null, scans: o.kind === 'session_lines' ? (o.scans || 1) : 1 };
+        }),
+      };
     }
     function nextSeq() { seqCounter += 1; return Date.now() * 1000 + (seqCounter % 1000); }
 
@@ -361,32 +386,86 @@
       return Promise.all([adapter.put('failed', f.op_id, f), adapter.del('ops', op.op_id)]);
     }
 
+    function setError(msg) {
+      lastError = msg;
+      lastErrorAt = new Date().toISOString();
+      try { console.warn('[inventory] sync: ' + msg); } catch (e) { /* no console */ }
+    }
+
+    // Move an op out of the queue into `failed`, data intact (Retry re-queues it).
+    function failOp(stored, status, error) {
+      var f = { op_id: stored.op_id, kind: stored.kind, payload: stored.payload, error: error || 'Not saved', status: status, attempts: stored.attempts || 0, at: new Date().toISOString() };
+      failed.push(f);
+      pending = pending.filter(function (o) { return o.op_id !== stored.op_id; });
+      return Promise.all([adapter.put('failed', f.op_id, f), adapter.del('ops', stored.op_id)]);
+    }
+
+    // A server-side failure of one op: count it; give up on it after MAX_ATTEMPTS.
+    // Resolves true when the op left the queue.
+    function recordAttempt(opId, status, error) {
+      var stored = pending.find(function (o) { return o.op_id === opId; });
+      if (!stored) return Promise.resolve(false);
+      stored.attempts = (stored.attempts || 0) + 1;
+      stored.lastError = error;
+      if (stored.attempts >= MAX_ATTEMPTS) return failOp(stored, status, error + ' (gave up after ' + stored.attempts + ' tries)').then(function () { return true; });
+      return adapter.put('ops', stored.op_id, stored).then(function () { return false; });
+    }
+
     function flush() {
+      if (flushing && Date.now() - flushStartedAt > stuckMs) {
+        // The pass on the wire never settled: release it. Anything it was
+        // sending is still queued; resending is safe (the server dedupes).
+        setError('Sync got stuck (no answer for ' + Math.round((Date.now() - flushStartedAt) / 1000) + ' s) - restarted it');
+        flushing = null;
+        inFlight = new Set();
+      }
       if (flushing) return flushing;
       if (!pending.length && !photosPending) return Promise.resolve(state());
       if (!isOnline()) { notify(); return Promise.resolve(state()); }
+      var gen = ++flushGen;
+      var mine = function () { return gen === flushGen; };
+      flushStartedAt = Date.now();
       flushing = (function loop() {
+        if (!mine()) return Promise.resolve();
         var batch = pending.slice().sort(function (a, b) { return a.seq - b.seq; }).slice(0, SYNC_BATCH).map(clone);
         if (!batch.length) return flushPhotos();
         var before = pending.map(function (o) { return o.op_id + ':' + o.v + ':' + JSON.stringify(o.payload); }).join('|');
         notify();
         inFlight = new Set(batch.map(function (o) { return o.op_id; }));
-        return send(batch.map(function (o) { return { op_id: o.op_id, kind: o.kind, payload: o.payload }; })).then(function (resp) {
+        return send(batch.map(function (o) { return { op_id: o.op_id, kind: o.kind, payload: o.payload }; })).catch(function (e) {
+          // A timeout is charged to the first op (the server may be choking on
+          // it); a plain network error isn't any op's fault.
+          var msg = (e && e.message) || 'Sync failed';
+          if (e && e.name === 'TimeoutError') {
+            return recordAttempt(batch[0].op_id, 504, msg).then(function (gone) { if (gone) return { results: [], released: true }; throw e; });
+          }
+          throw e;
+        }).then(function (resp) {
+          if (!mine()) return; // released by the watchdog; a newer pass owns the queue
           inFlight = new Set();
           var results = (resp && resp.results) || [];
-          var stop = false;
+          if (resp && resp.released) { rebuild(); return loop(); }
+          var stop = null;
+          var released = false;
           var chain = Promise.resolve();
           batch.forEach(function (op, i) {
             var r = results[i];
             if (!r || stop) return;
-            if (r.status >= 500) { stop = true; return; }
+            if (r.status >= 500) {
+              stop = r;
+              chain = chain.then(function () { return recordAttempt(op.op_id, r.status, r.error || ('Server error ' + r.status)); }).then(function (gone) { if (gone) released = true; });
+              return;
+            }
             chain = chain.then(function () { return handleResult(op, r); });
           });
           return chain.then(function () {
             rebuild();
-            if (stop || results.length < batch.length) throw new Error('Server busy - will retry');
+            if (stop && !released) throw new Error(stop.error || 'Server error - will retry');
+            if (!stop && results.length < batch.length) throw new Error('The server answered only part of the batch - will retry');
             backoff = 2000;
             lastError = null;
+            lastErrorAt = null;
+            lastSyncAt = new Date().toISOString();
             // Go again only if this round changed something (an op finished,
             // or a re-point rewrote one); otherwise back off instead of spinning.
             var after = pending.map(function (o) { return o.op_id + ':' + o.v + ':' + JSON.stringify(o.payload); }).join('|');
@@ -395,11 +474,14 @@
           });
         });
       })().catch(function (e) {
+        if (!mine()) return;
         inFlight = new Set();
-        lastError = (e && e.message) || 'Sync failed';
+        setError((e && e.message) || 'Sync failed');
+        clearTimeout(retryTimer);
         retryTimer = later(function () { flush(); }, backoff);
         backoff = Math.min(backoff * 2, 60000);
       }).then(function () {
+        if (!mine()) return state();
         flushing = null;
         if (baseDirty) { baseDirty = false; adapter.put('kv', 'catalog', base).catch(function () { /* next refresh rewrites it */ }); }
         if (recentDirty) { recentDirty = false; adapter.put('kv', 'recent', recent).catch(function () { /* undo falls back to history */ }); }
@@ -427,15 +509,29 @@
             return uploadPhoto(ph).then(function (outcome) {
               photosPending -= 1;
               var done = adapter.del('photos', ph.photo_id);
-              if (outcome !== 'drop') return done;
-              var f = { op_id: 'photo:' + ph.photo_id, kind: 'photo', payload: { item_id: ph.item_id }, error: 'A photo could not be saved.', status: 400, at: new Date().toISOString() };
-              failed.push(f);
-              return Promise.all([done, adapter.put('failed', f.op_id, f)]);
+              var refused = outcome === 'drop' || (outcome && outcome.drop);
+              if (!refused) return done;
+              return Promise.all([done, failPhoto(ph, (outcome && outcome.error) || 'The server refused this photo.')]);
+            }, function (e) {
+              // Count it; after MAX_ATTEMPTS it shows as "not saved" (photo kept) instead of retrying forever.
+              ph.attempts = (ph.attempts || 0) + 1;
+              ph.lastError = (e && e.message) || 'Upload failed';
+              if (ph.attempts >= MAX_ATTEMPTS) {
+                photosPending -= 1;
+                return Promise.all([adapter.del('photos', ph.photo_id), failPhoto(ph, ph.lastError + ' (gave up after ' + ph.attempts + ' tries)')]);
+              }
+              return adapter.put('photos', ph.photo_id, ph).then(function () { throw new Error('Photo upload: ' + ph.lastError); });
             });
           });
         });
         return chain;
       });
+    }
+
+    function failPhoto(ph, error) {
+      var f = { op_id: 'photo:' + ph.photo_id, kind: 'photo', payload: { item_id: ph.item_id }, photo: ph, error: error, status: 400, attempts: ph.attempts || 0, at: new Date().toISOString() };
+      failed.push(f);
+      return adapter.put('failed', f.op_id, f);
     }
 
     function queuePhoto(rec) {
@@ -474,6 +570,32 @@
         item_id: row.item_id,
         reverse: { delta: -Number(row.qty_change || 0), unit_id: row.unit_id || null, unit_status: Number(row.qty_change) < 0 ? 'in_stock' : 'out' },
       }).then(function () { return { queued: true }; });
+    }
+
+    // "Retry" on the sync sheet: try now, skipping the backoff wait.
+    function retryNow() {
+      clearTimeout(retryTimer);
+      backoff = 2000;
+      if (flushing && Date.now() - flushStartedAt > 10000) { flushing = null; inFlight = new Set(); flushGen++; }
+      return flush();
+    }
+
+    // Put a "not saved" item back in the queue, data unchanged (same op id, so
+    // the server still recognises a resend).
+    function retryFailed(opId) {
+      var f = failed.find(function (x) { return x.op_id === opId; });
+      if (!f) return Promise.resolve();
+      failed = failed.filter(function (x) { return x !== f; });
+      var back;
+      if (f.kind === 'photo' && f.photo) {
+        var ph = f.photo; ph.attempts = 0; ph.lastError = null;
+        back = adapter.put('photos', ph.photo_id, ph).then(function () { photosPending += 1; });
+      } else {
+        var op = { op_id: f.op_id, seq: nextSeq(), kind: f.kind, payload: f.payload, v: 1, created_at: new Date().toISOString(), attempts: 0 };
+        pending.push(op);
+        back = adapter.put('ops', op.op_id, op);
+      }
+      return Promise.all([back, adapter.del('failed', opId)]).then(function () { rebuild(); notify(); return retryNow(); });
     }
 
     function dismissFailed(opId) {
@@ -520,7 +642,7 @@
 
     return {
       load: load, setCatalog: setCatalog, enqueue: enqueue, flush: flush, queuePhoto: queuePhoto, dismissFailed: dismissFailed,
-      undo: undo, undoTxn: undoTxn,
+      undo: undo, undoTxn: undoTxn, retryNow: retryNow, retryFailed: retryFailed,
       state: state, onChange: function (fn) { listeners.push(fn); },
       stop: function () { clearTimeout(retryTimer); },
       view: function () { return view; }, lookup: function (code, format) { return lookup(view, index, code, format); },

@@ -440,3 +440,58 @@ test('undo: a tech undoes their own scan-out (also a serialized unit -> back in 
   r = await sync(TECH, [undoOp({ original_client_op_id: recv })]);
   assert.equal(r[0].status, 403);
 });
+
+test('Code 128 with hyphens (CJ\'s BATES-TEST-03): normalizes cleanly, quick-adds, and a lookup finds it', async () => {
+  const B = require('../lib/barcodes');
+  assert.equal(B.normalize('BATES-TEST-03', 'code_128'), 'BATES-TEST-03');
+  assert.equal(B.normalize(']C1bates-test-03\r\n'), 'BATES-TEST-03', 'scanner prefix + lower case + CRLF');
+  const id = crypto.randomUUID();
+  const r = await sync(WAREHOUSE, [{ kind: 'item_create', payload: { id, description: 'Code 128 test', barcode: { code: 'BATES-TEST-03', format: 'code_128' }, qty: 1, client_op_id: crypto.randomUUID() } }]);
+  assert.equal(r[0].ok, true, JSON.stringify(r[0]));
+  assert.equal(world.barcodes.rows.find((b) => b.item_id === id).code_norm, 'BATES-TEST-03');
+  assert.equal(item(id).qty_on_hand, 1);
+  const lookup = getRouteHandler(router, 'get', '/lookup');
+  const res = makeRes();
+  await lookup({ profile: TECH, query: { code: 'bates-test-03', format: 'code_128' }, _memberPermRow: null }, res);
+  assert.equal(res.body.found, true);
+  assert.equal(res.body.item_id, id);
+});
+
+test('photo upload through the backend: JPEG stored once (resend-safe); HEIC / junk refused; storage refusal -> 422, storage outage -> 502', async () => {
+  const handler = getRouteHandler(router, 'post', '/items/:id/photos/upload');
+  const puts = [];
+  let storageResult = { error: null };
+  const realPut = inv.storagePut; const realSign = inv.signPhotoUrls;
+  inv.storagePut = async (p, buf, type) => { puts.push({ p, n: buf.length, type }); return storageResult; };
+  inv.signPhotoUrls = async (paths) => new Map(paths.map((x) => [x, 'https://signed/' + x]));
+  try {
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 7)]).toString('base64');
+    const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(100)]).toString('base64');
+    const call = async (body) => { const res = makeRes(); await handler({ params: { id: ITEM }, body, profile: WAREHOUSE }, res); return res; };
+    const pid = crypto.randomUUID();
+    let res = await call({ photo_id: pid, data: 'data:image/jpeg;base64,' + jpeg });
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    assert.deepEqual(puts.map((x) => [x.p, x.type]), [[ITEM + '/' + pid + '.jpg', 'image/jpeg']]);
+    assert.equal(world.photos.rows.length, 1);
+    assert.equal(world.photos.rows[0].is_primary, true, 'first photo is the main one');
+    res = await call({ photo_id: pid, data: jpeg });
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1, 'a resend does not store twice');
+    assert.equal(world.photos.rows.length, 1);
+
+    res = await call({ photo_id: crypto.randomUUID(), data: heic });
+    assert.equal(res.statusCode, 415);
+    assert.match(res.body.error, /HEIC/);
+    res = await call({ photo_id: crypto.randomUUID(), data: Buffer.from('hello world, not a photo').toString('base64') });
+    assert.equal(res.statusCode, 415);
+
+    storageResult = { error: { statusCode: '400', message: 'mime type image/heic is not supported' } };
+    res = await call({ photo_id: crypto.randomUUID(), data: jpeg });
+    assert.equal(res.statusCode, 422, 'storage said no for good: the phone shows it, no endless retry');
+    assert.match(res.body.error, /mime type/);
+    storageResult = { error: { statusCode: '503', message: 'upstream unavailable' } };
+    res = await call({ photo_id: crypto.randomUUID(), data: jpeg });
+    assert.equal(res.statusCode, 502, 'a storage outage is retryable');
+    assert.equal(world.photos.rows.length, 1, 'no row without a stored object');
+  } finally { inv.storagePut = realPut; inv.signPhotoUrls = realSign; }
+});
