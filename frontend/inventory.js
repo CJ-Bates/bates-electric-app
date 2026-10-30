@@ -45,6 +45,10 @@
   const fmtDateTime = (iso) => (iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
   const COND = { new: 'New', open_box: 'New - open box', used: 'Used' };
   const TXN_LABEL = { initial_count: 'Initial count', received: 'Received', scanned_out: 'Scanned out', adjustment: 'Count adjusted', sold: 'Sold', disposed: 'Disposed' };
+  // Undo (sql/040): + In, - Out / scan-out and Count, for 15 minutes.
+  const UNDOABLE = new Set(['received', 'scanned_out', 'adjustment']);
+  const UNDO_WINDOW_MS = 15 * 60 * 1000;
+  const UNDO_TOAST_MS = 10000;
   let categories = [];
   const catLabel = (k) => ((categories.find((c) => c[0] === k) || [k, k])[1]) || '';
   const online = () => navigator.onLine !== false;
@@ -183,6 +187,7 @@
     if (f.kind === 'item_create') return `New item - ${name}`;
     if (f.kind === 'unit_create') return `Serial ${p.serial_number} - ${name}`;
     if (f.kind === 'photo') return `Photo - ${name}`;
+    if (f.kind === 'undo') return `Undo - ${name}`;
     return f.kind.replace(/_/g, ' ');
   }
 
@@ -309,6 +314,31 @@
     } catch (e) {
       openAlert({ title: 'Download failed', message: e.message, next: 'Check your connection and try again.', danger: true });
     }
+  }
+
+  // ============================================================================
+  // Undo toast: ~10 s after + In / - Out / Count / scan-out
+  // ============================================================================
+  let undoToast = null;
+  function showUndo(message, opId) {
+    if (undoToast) undoToast.remove();
+    const el = document.createElement('div');
+    el.className = 'inv-undo';
+    el.setAttribute('role', 'status');
+    el.innerHTML = `<span class="inv-undo-msg">${esc(message)}${online() ? '' : ' <span class="inv-small">(saved on this phone)</span>'}</span>
+      <button type="button" class="inv-undo-btn">Undo</button><i class="inv-undo-bar" style="animation-duration:${UNDO_TOAST_MS}ms"></i>`;
+    document.body.appendChild(el);
+    undoToast = el;
+    const timer = setTimeout(() => { if (undoToast === el) { el.remove(); undoToast = null; } }, UNDO_TOAST_MS);
+    el.querySelector('.inv-undo-btn').addEventListener('click', async () => {
+      clearTimeout(timer);
+      el.remove();
+      if (undoToast === el) undoToast = null;
+      const r = await store.undo(opId);
+      if (r.error) return openAlert({ title: 'Nothing to undo', message: r.error });
+      showStatus(r.dropped ? 'Undone - it never left this phone.' : (online() ? 'Undone.' : 'Undone (saved on this phone, will sync).'), 'success');
+      if (rerender) rerender();
+    });
   }
 
   // ============================================================================
@@ -703,12 +733,15 @@
             ${perms.manage ? `<span class="inv-photo-tools">${p.is_primary ? '' : `<button type="button" data-primary="${esc(p.id)}">Main</button>`}<button type="button" data-rm-photo="${esc(p.id)}">Delete</button></span>` : ''}</div>`).join('')}</div>` : '<span class="inv-muted">No photos yet.</span>') : '<span class="inv-muted">Photos load when you\'re online.</span>'}
         </section>`;
 
+      const undoable = detail ? undoCandidate(detail.history) : null;
+      const undoneIds = new Set(detail ? detail.history.filter((h) => h.reverses_txn_id).map((h) => h.reverses_txn_id) : []);
       const history = detail ? `
         <section class="card">
           <h3 class="inv-section-h">History</h3>
           <ul class="inv-hist">${detail.history.length ? detail.history.map((h) => `<li>
-            <span><strong>${esc(TXN_LABEL[h.txn_type] || h.txn_type)}</strong>${h.serial_number ? ` &middot; SN ${esc(h.serial_number)}` : ''}<br>
-              <span class="inv-small">${esc(fmtDateTime(h.occurred_at || h.created_at))}${h.actor ? ' &middot; ' + esc(h.actor) : ''}${h.job_note ? ' &middot; ' + esc(h.job_note) : ''}${h.customer ? ' &middot; ' + esc(h.customer) : ''}${h.note ? ' &middot; ' + esc(h.note) : ''}</span></span>
+            <span class="inv-hist-what"><strong>${h.reverses_txn_id ? 'Undo' : esc(TXN_LABEL[h.txn_type] || h.txn_type)}</strong>${h.serial_number ? ` &middot; SN ${esc(h.serial_number)}` : ''}${undoneIds.has(h.id) ? ' <span class="inv-badge">Undone</span>' : ''}<br>
+              <span class="inv-small">${esc(fmtDateTime(h.occurred_at || h.created_at))}${h.actor ? ' &middot; ' + esc(h.actor) : ''}${h.job_note ? ' &middot; ' + esc(h.job_note) : ''}${h.customer ? ' &middot; ' + esc(h.customer) : ''}${h.note ? ' &middot; ' + esc(h.note) : ''}</span>
+              ${undoable && undoable.id === h.id ? `<br><button type="button" class="btn btn-ghost btn-sm inv-hist-undo" data-undo-txn="${esc(h.id)}">Undo this</button>` : ''}</span>
             <span class="chg ${h.qty_change < 0 ? 'minus' : (h.qty_change > 0 ? 'plus' : '')}">${h.qty_change > 0 ? '+' : ''}${fmtQty(h.qty_change)}<br><span class="inv-small">= ${fmtQty(h.resulting_qty)}</span></span></li>`).join('') : '<li><span class="inv-muted">Nothing yet.</span></li>'}</ul>
         </section>` : '';
 
@@ -742,14 +775,40 @@
       viewEl.querySelectorAll('[data-rm-code]').forEach((b) => b.addEventListener('click', () => removeCode(b.dataset.rmCode)));
       viewEl.querySelectorAll('[data-primary]').forEach((b) => b.addEventListener('click', () => photoAction(b.dataset.primary, 'primary')));
       viewEl.querySelectorAll('[data-rm-photo]').forEach((b) => b.addEventListener('click', () => photoAction(b.dataset.rmPhoto, 'delete')));
+      viewEl.querySelectorAll('[data-undo-txn]').forEach((b) => b.addEventListener('click', () => undoFromHistory(b.dataset.undoTxn)));
+    }
+
+    // My most recent change on this item that still stands, if it can still
+    // be undone (type, 15 minutes, permission). The server re-checks all of it.
+    function undoCandidate(history) {
+      if (!me) return null;
+      const undone = new Set(history.filter((h) => h.reverses_txn_id).map((h) => h.reverses_txn_id));
+      const mine = history.find((h) => h.actor_id === me.id && !h.reverses_txn_id && !undone.has(h.id));
+      if (!mine || mine.session_id || !UNDOABLE.has(mine.txn_type)) return null;
+      if (Date.now() - new Date(mine.created_at).getTime() > UNDO_WINDOW_MS) return null;
+      if (mine.txn_type === 'scanned_out' ? !perms.scan_out : !perms.manage) return null;
+      return mine;
+    }
+
+    async function undoFromHistory(txnId) {
+      const h = detail && detail.history.find((x) => x.id === txnId);
+      if (!h) return;
+      const what = `${TXN_LABEL[h.txn_type] || h.txn_type} ${h.qty_change > 0 ? '+' : ''}${fmtQty(h.qty_change)}${h.serial_number ? ' (SN ' + h.serial_number + ')' : ''}`;
+      const ok = await openConfirm({ title: 'Undo this change?', message: `${what}, ${fmtDateTime(h.created_at)}. Both lines stay in the history.`, confirmText: 'Undo' });
+      if (!ok) return;
+      await store.undoTxn({ id: h.id, item_id: id, qty_change: h.qty_change, unit_id: h.unit_id });
+      draw();
+      showStatus(online() ? 'Undone.' : 'Undone (saved on this phone, will sync).', 'success');
+      setTimeout(() => load(), 900);
     }
 
     const qtyNow = () => { const s = $('[data-stepq]', viewEl); return s ? Number(s.value) || 0 : stepQty; };
 
     async function txn(type, payload, doneMsg) {
-      await store.enqueue('txn', { client_op_id: uuid(), item_id: id, type, occurred_at: new Date().toISOString(), source: 'item_page', ...payload });
+      const op = await store.enqueue('txn', { client_op_id: uuid(), item_id: id, type, occurred_at: new Date().toISOString(), source: 'item_page', ...payload });
       draw();
-      showStatus(doneMsg + (online() ? '' : ' (saved on this phone, will sync)'), 'success');
+      if (UNDOABLE.has(type)) showUndo(doneMsg, op.op_id);
+      else showStatus(doneMsg + (online() ? '' : ' (saved on this phone, will sync)'), 'success');
       setTimeout(() => load(), 900);
     }
 
@@ -788,9 +847,9 @@
         if (!serial) return;
         const existing = store.unitsOf(id).find((u) => String(u.serial_number).toUpperCase() === serial.trim().toUpperCase());
         if (existing && existing.status === 'in_stock') return openAlert({ title: 'Already in stock', message: `Serial ${serial} is already in stock on this item.` });
-        await store.enqueue('unit_create', { id: existing ? existing.id : uuid(), item_id: id, serial_number: serial.trim(), type: 'received', client_op_id: uuid(), occurred_at: new Date().toISOString(), source: 'item_page' });
+        const op = await store.enqueue('unit_create', { id: existing ? existing.id : uuid(), item_id: id, serial_number: serial.trim(), type: 'received', client_op_id: uuid(), occurred_at: new Date().toISOString(), source: 'item_page' });
         draw();
-        showStatus(`Received serial ${serial}`, 'success');
+        showUndo(`Received serial ${serial}`, op.op_id);
         setTimeout(() => load(), 900);
         return;
       }
@@ -951,6 +1010,10 @@
   // Count session
   // ============================================================================
   const countState = { session: null, awaitSerialFor: null, scanner: null };
+  // "Tap to scan" (default) or "Continuous", remembered on this device.
+  const COUNT_MODE_KEY = 'bates.inv.countScanMode';
+  const getCountMode = () => { try { return localStorage.getItem(COUNT_MODE_KEY) === 'continuous' ? 'continuous' : 'tap'; } catch (e) { return 'tap'; } };
+  const setCountMode = (m) => { try { localStorage.setItem(COUNT_MODE_KEY, m); } catch (e) { /* per-visit only */ } };
 
   async function currentSession() {
     const open = await store.openSessions();
@@ -1005,7 +1068,12 @@
         <div class="inv-stat"><b>${fmtQty(t.pieces)}</b><span>pieces</span></div>
         <div class="inv-stat"><b>${t.created}</b><span>new items</span></div>
       </div>
+      <div class="inv-seg" role="radiogroup" aria-label="How the camera reads">
+        <button type="button" role="radio" data-cmode="tap" aria-checked="${getCountMode() === 'tap'}">Tap to scan</button>
+        <button type="button" role="radio" data-cmode="continuous" aria-checked="${getCountMode() === 'continuous'}">Continuous</button>
+      </div>
       <button type="button" class="inv-bigbtn primary full" data-cscan>${ICON.scan} Scan</button>
+      <div class="inv-small" style="margin-top:-6px;">${getCountMode() === 'tap' ? 'Aim at one barcode, tap Scan for each one.' : 'Reads every barcode you hold in the box - for counting one item fast.'}</div>
       <form class="inv-search" data-cadd autocomplete="off"><input type="search" placeholder="No barcode? Search to add +1" aria-label="Search to add" /></form>
       <div class="inv-list" data-cresults hidden></div>
       <div class="inv-list">${order.length ? order.map((id) => countRow(s, id)).join('') : '<div class="inv-empty">Nothing counted yet. Tap Scan.</div>'}</div>
@@ -1014,6 +1082,7 @@
         <button type="button" class="btn btn-primary" data-cfinish${t.items ? '' : ' disabled'}>Finish &amp; post</button>
       </div>`;
     $('[data-cscan]', viewEl).addEventListener('click', openCountScanner);
+    viewEl.querySelectorAll('[data-cmode]').forEach((b) => b.addEventListener('click', () => { setCountMode(b.dataset.cmode); drawCount(); }));
     $('[data-cfinish]', viewEl).addEventListener('click', finishCount);
     $('[data-cdiscard]', viewEl).addEventListener('click', discardCount);
     const addInput = $('[data-cadd] input', viewEl);
@@ -1058,10 +1127,12 @@
   }
 
   function openCountScanner() {
+    const mode = getCountMode();
     const sc = BatesScanner.open({
-      title: 'Count session',
-      continuous: true,
-      footer: 'Each scan adds 1. Move off a barcode and back to count it again.',
+      title: mode === 'continuous' ? 'Count session - continuous' : 'Count session',
+      mode,
+      stayOpen: true,
+      footer: mode === 'continuous' ? 'Each barcode in the box adds 1. Move off it and back to count it again.' : 'Each Scan adds 1.',
       onScan: async (code, format, source) => {
         const m = await countScan(code, format, source, sc);
         if (m) sc.setStatus(m.html, m.kind);

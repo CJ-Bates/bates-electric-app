@@ -176,7 +176,7 @@ router.get('/items/:id', requirePermission('inventory_view'), async (req, res) =
       supabaseAdmin.from('inventory_units').select('id, serial_number, condition, notes, status, created_at').eq('item_id', item.id).order('serial_number', { ascending: true }),
       supabaseAdmin.from('inventory_photos').select('id, unit_id, storage_path, is_primary, created_at').eq('item_id', item.id).order('created_at', { ascending: true }),
       supabaseAdmin.from('inventory_transactions')
-        .select('id, unit_id, txn_type, qty_change, resulting_qty, actor_id, created_at, occurred_at, job_note, customer_id, note, session_id, source')
+        .select('id, unit_id, txn_type, qty_change, resulting_qty, actor_id, created_at, occurred_at, job_note, customer_id, note, session_id, source, reverses_txn_id')
         .eq('item_id', item.id).order('created_at', { ascending: false }).limit(200),
       lastCounts([item.id]),
     ]);
@@ -424,6 +424,52 @@ const OPS = {
     await ensureSession({ sessionId: p.session_id, actorId: actor });
     const posted = await inv.postCountSession({ sessionId: p.session_id, actorId: actor });
     return { posted };
+  },
+
+  // { client_op_id, txn_id | original_client_op_id } - Undo (sql/040).
+  // Posts a reversing 'adjustment' linked to the original. Rules: your own
+  // change, your most recent one still standing on that item, within 15
+  // minutes, never a count-session row or another undo. A second undo of
+  // the same change returns the first (double tap / offline resend).
+  async undo(p, actor, perms) {
+    let q = supabaseAdmin.from('inventory_transactions').select('id, item_id, unit_id, txn_type, qty_change, actor_id, created_at, session_id, reverses_txn_id');
+    if (isUuid(p.txn_id)) q = q.eq('id', p.txn_id);
+    else if (isUuid(p.original_client_op_id)) q = q.eq('client_op_id', p.original_client_op_id);
+    else throw new inv.InventoryError(400, 'Nothing to undo.');
+    const { data: orig, error } = await q.maybeSingle();
+    if (error) throw error;
+    if (!orig) throw new inv.InventoryError(404, 'Nothing to undo - that change never reached the server.');
+    if (!inv.UNDOABLE_TYPES.has(orig.txn_type) || orig.reverses_txn_id || orig.session_id) {
+      throw new inv.InventoryError(400, 'This change cannot be undone. Use Count to fix the number.');
+    }
+    need(perms, orig.txn_type === 'scanned_out' ? 'inventory_scan_out' : 'inventory_manage');
+    const { data: prior, error: pErr } = await supabaseAdmin.from('inventory_transactions').select('*').eq('reverses_txn_id', orig.id).maybeSingle();
+    if (pErr) throw pErr;
+    if (prior) return { txn: { ...prior, qty_change: inv.n2(prior.qty_change), resulting_qty: inv.n2(prior.resulting_qty) }, already: true };
+    if (orig.actor_id !== actor) throw new inv.InventoryError(403, 'You can only undo your own changes.');
+    if (Date.now() - new Date(orig.created_at).getTime() > inv.UNDO_WINDOW_MS) {
+      throw new inv.InventoryError(409, 'Too late to undo (15 minutes). Use Count to fix the number.');
+    }
+    // Your most recent change still standing: anything later of yours on this
+    // item must already be undone.
+    const { data: later, error: lErr } = await supabaseAdmin.from('inventory_transactions').select('id')
+      .eq('item_id', orig.item_id).eq('actor_id', actor).is('reverses_txn_id', null).gt('created_at', orig.created_at);
+    if (lErr) throw lErr;
+    if (later && later.length) {
+      const { data: undone, error: uErr } = await supabaseAdmin.from('inventory_transactions').select('reverses_txn_id').in('reverses_txn_id', later.map((r) => r.id));
+      if (uErr) throw uErr;
+      const undoneIds = new Set((undone || []).map((r) => r.reverses_txn_id));
+      if (later.some((r) => !undoneIds.has(r.id))) {
+        throw new inv.InventoryError(409, 'Only your most recent change on this item can be undone.');
+      }
+    }
+    const label = { received: 'received', scanned_out: 'scanned out', adjustment: 'count' }[orig.txn_type] || orig.txn_type;
+    const row = await inv.postTxn({
+      itemId: orig.item_id, type: 'adjustment', actorId: actor, reversesTxnId: orig.id,
+      clientOpId: isUuid(p.client_op_id) ? p.client_op_id : null,
+      note: 'undo of ' + label, source: 'undo',
+    });
+    return { txn: { ...row, qty_change: inv.n2(row.qty_change), resulting_qty: inv.n2(row.resulting_qty) } };
   },
 
   async session_discard(p, actor, perms) {

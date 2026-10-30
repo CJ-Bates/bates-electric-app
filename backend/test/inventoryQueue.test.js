@@ -172,3 +172,99 @@ test('offline quick-add whose barcode another phone already added: re-pointed to
   assert.equal(srv.items.get(EXISTING), 9, 'the quick-add qty (2) and the later scan (3) landed on the existing item');
   assert.equal(store.state().failed.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Undo on the phone (sql/040). The fake server reverses by client_op_id.
+function withUndo(srv) {
+  const send = srv.send;
+  srv.undos = [];
+  srv.ledger = new Map(); // client_op_id -> applied delta
+  srv.send = async (ops) => {
+    for (const o of ops) {
+      if (o.kind === 'txn' && !srv.applied.has(o.payload.client_op_id)) {
+        srv.ledger.set(o.payload.client_op_id, { item: o.payload.item_id, delta: o.payload.type === 'scanned_out' ? -o.payload.qty : o.payload.qty });
+      }
+    }
+    const resp = await send(ops.filter((o) => o.kind !== 'undo'));
+    const byId = new Map((resp.results || []).map((r) => [r.op_id, r]));
+    return {
+      results: ops.map((o) => {
+        if (o.kind !== 'undo') return byId.get(o.op_id);
+        const orig = srv.ledger.get(o.payload.original_client_op_id);
+        if (!orig) return { op_id: o.op_id, ok: false, status: 404, error: 'Nothing to undo' };
+        if (!srv.undos.includes(o.payload.original_client_op_id)) {
+          srv.undos.push(o.payload.original_client_op_id);
+          srv.items.set(orig.item, srv.items.get(orig.item) - orig.delta);
+        }
+        return { op_id: o.op_id, ok: true, status: 200, result: { txn: { qty_change: -orig.delta } } };
+      }),
+    };
+  };
+  return srv;
+}
+
+test('undo of a not-yet-synced action just drops it: nothing reaches the server', async () => {
+  const srv = withUndo(fakeServer()); srv.items.set(ITEM, 10);
+  const { store, net } = await makeStore(srv, { online: false });
+  await store.setCatalog(catalog(10));
+  const op = await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'received', qty: 4 });
+  assert.equal(store.item(ITEM).qty_on_hand, 14);
+  const r = await store.undo(op.op_id);
+  assert.deepEqual(r, { dropped: true });
+  assert.equal(store.item(ITEM).qty_on_hand, 10);
+  assert.equal(store.state().pending, 0);
+  net.online = true;
+  await store.flush();
+  assert.equal(srv.calls, 0, 'nothing was ever sent');
+  assert.equal(srv.items.get(ITEM), 10);
+});
+
+test('undo of a synced action queues a reversing op by client_op_id; the view reverses at once', async () => {
+  const srv = withUndo(fakeServer()); srv.items.set(ITEM, 10);
+  const { store } = await makeStore(srv);
+  await store.setCatalog(catalog(10));
+  const op = await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'adjustment', set_qty: 7 });
+  await settle(); await store.flush(); await settle();
+  assert.equal(srv.items.has(ITEM), true);
+  const r = await store.undo(op.op_id);
+  assert.deepEqual(r, { queued: true });
+  assert.equal(store.item(ITEM).qty_on_hand, 10, 'Count of 7 undone on screen (delta +3)');
+  await settle(); await store.flush(); await settle();
+  assert.deepEqual(srv.undos, [op.payload.client_op_id]);
+  assert.equal(store.item(ITEM).qty_on_hand, 10);
+  assert.equal(store.state().pending, 0);
+});
+
+test('undo while the original is on the wire: not dropped (it may already be applied) - an undo is queued behind it', async () => {
+  const srv = withUndo(fakeServer()); srv.items.set(ITEM, 10);
+  const { store } = await makeStore(srv);
+  await store.setCatalog(catalog(10));
+  const real = srv.send;
+  let release;
+  let held = false;
+  srv.send = (b) => { if (held) return real(b); held = true; return new Promise((res) => { release = () => res(real(b)); }); };
+  const op = await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'scanned_out', qty: 2 });
+  await settle();
+  const r = await store.undo(op.op_id);
+  assert.deepEqual(r, { queued: true });
+  release();
+  await settle(); await store.flush(); await settle();
+  srv.send = real;
+  assert.equal(srv.items.get(ITEM), 10, 'out 2, then undone');
+  assert.equal(store.item(ITEM).qty_on_hand, 10);
+});
+
+test('undo of a serialized scan-out puts the unit back in stock on screen', async () => {
+  const srv = withUndo(fakeServer()); srv.items.set(ITEM, 10);
+  const { store } = await makeStore(srv, { online: false });
+  const cat = catalog(1);
+  cat.items[0].serialized = true;
+  cat.units = [{ id: 'unit-1', item_id: ITEM, serial_number: 'SN-1', status: 'in_stock' }];
+  await store.setCatalog(cat);
+  const op = await store.enqueue('txn', { client_op_id: crypto.randomUUID(), item_id: ITEM, type: 'scanned_out', unit_id: 'unit-1' });
+  assert.equal(store.unitsOf(ITEM)[0].status, 'out');
+  const r = await store.undo(op.op_id); // still queued (offline) -> dropped
+  assert.deepEqual(r, { dropped: true });
+  assert.equal(store.unitsOf(ITEM)[0].status, 'in_stock');
+  assert.equal(store.item(ITEM).qty_on_hand, 1);
+});

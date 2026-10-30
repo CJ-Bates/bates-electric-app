@@ -77,6 +77,17 @@
         if (p.type === 'sold' || p.type === 'disposed') it.surplus_qty = Math.max(0, round2((it.surplus_qty || 0) - q));
       }
       it.surplus_qty = Math.min(it.surplus_qty || 0, Math.max(it.qty_on_hand, 0));
+    } else if (op.kind === 'undo') {
+      // Optimistic reversal (the server posts the real reversing row).
+      var target = item(p.item_id);
+      var rev = p.reverse || {};
+      if (!target) return cat;
+      target.qty_on_hand = round2(target.qty_on_hand + (Number(rev.delta) || 0));
+      if (rev.unit_id) {
+        var uu = cat.units.find(function (x) { return x.id === rev.unit_id; });
+        if (uu && rev.unit_status) uu.status = rev.unit_status;
+      }
+      target.surplus_qty = Math.min(target.surplus_qty || 0, Math.max(target.qty_on_hand, 0));
     } else if (op.kind === 'unit_create') {
       var parent = item(p.item_id);
       if (!parent) return cat;
@@ -184,6 +195,9 @@
     var photosPending = 0;
     var lastError = null;
     var remapped = new Map();            // local item id -> existing server id (this session)
+    var inFlight = new Set();            // op ids in the request on the wire right now
+    var recent = [];                     // acknowledged undoable ops: { op_id, payload, effect, txn }
+    var recentDirty = false;
     var baseDirty = false;
 
     function notify() { listeners.forEach(function (fn) { try { fn(state()); } catch (e) { /* listener bug */ } }); }
@@ -201,7 +215,8 @@
     }
 
     function load() {
-      return Promise.all([adapter.get('kv', 'catalog'), adapter.all('ops'), adapter.all('failed'), adapter.all('photos')]).then(function (r) {
+      return Promise.all([adapter.get('kv', 'catalog'), adapter.all('ops'), adapter.all('failed'), adapter.all('photos'), adapter.get('kv', 'recent')]).then(function (r) {
+        recent = r[4] || [];
         base = r[0] || emptyCatalog();
         pending = r[1] || [];
         failed = r[2] || [];
@@ -218,9 +233,30 @@
 
     // Queue an op. `offline` is recorded so the server lets an offline
     // scan-out take stock below zero (the part already left the building).
+    // What an op does to the screen right now (for Undo): item, qty delta,
+    // unit and its status before. Measured against the current view.
+    function effectOf(kind, p) {
+      var it = index.byId.get(p.item_id);
+      if (!it) return null;
+      if (kind === 'unit_create') {
+        var prev = view.units.find(function (u) { return u.id === p.id; });
+        return { item_id: p.item_id, delta: 1, unit_id: p.id, unit_status_before: prev ? prev.status : 'pending' };
+      }
+      if (kind !== 'txn') return null;
+      var out = p.type === 'scanned_out' || p.type === 'sold' || p.type === 'disposed';
+      if (p.unit_id) {
+        var u = view.units.find(function (x) { return x.id === p.unit_id; });
+        return { item_id: p.item_id, delta: out ? -1 : 1, unit_id: p.unit_id, unit_status_before: u ? u.status : 'in_stock' };
+      }
+      var delta = p.type === 'adjustment' && p.set_qty != null ? round2(p.set_qty - it.qty_on_hand)
+        : (p.type === 'adjustment' ? Number(p.qty) || 0 : (out ? -1 : 1) * Math.abs(Number(p.qty) || 0));
+      return { item_id: p.item_id, delta: delta, unit_id: null };
+    }
+
     function enqueue(kind, payload, extra) {
       var op = { op_id: (extra && extra.op_id) || uuid(), seq: nextSeq(), kind: kind, payload: payload, v: 1, created_at: new Date().toISOString() };
       if (kind === 'txn' && payload.type === 'scanned_out' && !isOnline()) payload.queued_offline = true;
+      if (kind === 'txn' || kind === 'unit_create') op.effect = effectOf(kind, payload);
       if (extra && extra.scans) op.scans = extra.scans;
       var existing = pending.findIndex(function (o) { return o.op_id === op.op_id; });
       if (existing !== -1) { op.v = (pending[existing].v || 1) + 1; pending.splice(existing, 1); }
@@ -287,6 +323,11 @@
           // reverting) until the next catalog refresh replaces the copy.
           applyOp(base, stored);
           baseDirty = true;
+          if (stored.effect) {
+            recent.unshift({ op_id: stored.op_id, kind: stored.kind, payload: stored.payload, effect: stored.effect, txn: res.result && res.result.txn ? { id: res.result.txn.id, qty_change: res.result.txn.qty_change } : null });
+            recent = recent.slice(0, 100);
+            recentDirty = true;
+          }
           pending = pending.filter(function (o) { return o !== stored; });
           return adapter.del('ops', op.op_id);
         }
@@ -329,7 +370,9 @@
         if (!batch.length) return flushPhotos();
         var before = pending.map(function (o) { return o.op_id + ':' + o.v + ':' + JSON.stringify(o.payload); }).join('|');
         notify();
+        inFlight = new Set(batch.map(function (o) { return o.op_id; }));
         return send(batch.map(function (o) { return { op_id: o.op_id, kind: o.kind, payload: o.payload }; })).then(function (resp) {
+          inFlight = new Set();
           var results = (resp && resp.results) || [];
           var stop = false;
           var chain = Promise.resolve();
@@ -352,12 +395,14 @@
           });
         });
       })().catch(function (e) {
+        inFlight = new Set();
         lastError = (e && e.message) || 'Sync failed';
         retryTimer = later(function () { flush(); }, backoff);
         backoff = Math.min(backoff * 2, 60000);
       }).then(function () {
         flushing = null;
         if (baseDirty) { baseDirty = false; adapter.put('kv', 'catalog', base).catch(function () { /* next refresh rewrites it */ }); }
+        if (recentDirty) { recentDirty = false; adapter.put('kv', 'recent', recent).catch(function () { /* undo falls back to history */ }); }
         rebuild();
         notify();
         // Something queued during the last request: go again shortly.
@@ -395,6 +440,40 @@
 
     function queuePhoto(rec) {
       return adapter.put('photos', rec.photo_id, rec).then(function () { photosPending += 1; notify(); scheduleFlush(); });
+    }
+
+    // ---- undo ----
+    // Undo one of this phone's actions by its op id:
+    //   still queued (not sent)  -> just drop it; nothing ever reaches the server
+    //   on the wire or synced    -> queue an 'undo' op naming the original's
+    //                               client_op_id; the server posts the reversing
+    //                               row (after the original, by queue order)
+    // Resolves { dropped } | { queued } | { error }.
+    function undo(opId) {
+      var p = pending.find(function (o) { return o.op_id === opId; });
+      if (p && !inFlight.has(opId)) {
+        pending = pending.filter(function (o) { return o !== p; });
+        return adapter.del('ops', opId).then(function () { rebuild(); notify(); return { dropped: true }; });
+      }
+      var src = p || recent.find(function (r) { return r.op_id === opId; });
+      if (!src || !src.effect) return Promise.resolve({ error: 'Nothing to undo.' });
+      var eff = src.effect;
+      var delta = src.txn && src.txn.qty_change != null ? Number(src.txn.qty_change) : eff.delta;
+      return enqueue('undo', {
+        client_op_id: uuid(),
+        original_client_op_id: src.payload.client_op_id,
+        item_id: eff.item_id,
+        reverse: { delta: -delta, unit_id: eff.unit_id || null, unit_status: delta < 0 ? 'in_stock' : (eff.unit_status_before || 'pending') },
+      }).then(function () { return { queued: true }; });
+    }
+    // Undo a ledger row seen in the item's history (server id).
+    function undoTxn(row) {
+      return enqueue('undo', {
+        client_op_id: uuid(),
+        txn_id: row.id,
+        item_id: row.item_id,
+        reverse: { delta: -Number(row.qty_change || 0), unit_id: row.unit_id || null, unit_status: Number(row.qty_change) < 0 ? 'in_stock' : 'out' },
+      }).then(function () { return { queued: true }; });
     }
 
     function dismissFailed(opId) {
@@ -441,6 +520,7 @@
 
     return {
       load: load, setCatalog: setCatalog, enqueue: enqueue, flush: flush, queuePhoto: queuePhoto, dismissFailed: dismissFailed,
+      undo: undo, undoTxn: undoTxn,
       state: state, onChange: function (fn) { listeners.push(fn); },
       stop: function () { clearTimeout(retryTimer); },
       view: function () { return view; }, lookup: function (code, format) { return lookup(view, index, code, format); },
